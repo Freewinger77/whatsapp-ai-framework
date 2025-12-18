@@ -626,6 +626,21 @@
             </div>
         </div>
 
+        <!-- AI Configuration Card -->
+        <div class="card" style="margin-bottom: 20px;">
+            <div class="card-header">
+                <span class="card-title">AI Configuration</span>
+            </div>
+
+            <div class="input-group" style="margin-bottom: 16px;">
+                <label>n8n Webhook URL</label>
+                <input type="text" id="input-webhook-url" placeholder="https://your-n8n.com/webhook/whatsapp" style="width: 100%;">
+                <p style="font-size: 0.7rem; color: var(--text-secondary); margin-top: 4px;">This is the URL where messages will be sent for AI processing.</p>
+            </div>
+
+            <button class="btn-save-settings" id="btn-save-webhook">Save Webhook URL</button>
+        </div>
+
         <!-- Anti-Ban Settings Card -->
         <div class="card" style="margin-bottom: 20px;">
             <div class="card-header">
@@ -793,7 +808,10 @@
                 barChatsHour: document.getElementById('bar-chats-hour'),
                 barChatsDay: document.getElementById('bar-chats-day'),
                 usageWarnings: document.getElementById('usage-warnings'),
-                warningsList: document.getElementById('warnings-list')
+                warningsList: document.getElementById('warnings-list'),
+                // Webhook elements
+                inputWebhookUrl: document.getElementById('input-webhook-url'),
+                btnSaveWebhook: document.getElementById('btn-save-webhook')
             };
 
             // Anti-ban state
@@ -836,6 +854,9 @@
                         }
                         if (data.data.antiBanSettings) {
                             updateAntiBanSettings(data.data.antiBanSettings);
+                        }
+                        if (data.data.webhookUrl) {
+                            elements.inputWebhookUrl.value = data.data.webhookUrl === 'YOUR_N8N_WEBHOOK_URL_HERE' ? '' : data.data.webhookUrl;
                         }
                         break;
                     case 'status':
@@ -1181,6 +1202,43 @@
                     elements.btnSaveSettings.disabled = false;
                     elements.btnSaveSettings.textContent = 'Save Settings';
                     alert('Error saving settings: ' + error.message);
+                });
+            });
+
+            // Save webhook button
+            elements.btnSaveWebhook.addEventListener('click', function() {
+                var url = elements.inputWebhookUrl.value.trim();
+                if (!url) {
+                    alert('Please enter a valid URL');
+                    return;
+                }
+
+                elements.btnSaveWebhook.disabled = true;
+                elements.btnSaveWebhook.textContent = 'Saving...';
+
+                fetch('/api/settings/webhook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ webhookUrl: url })
+                })
+                .then(function(response) { return response.json(); })
+                .then(function(result) {
+                    elements.btnSaveWebhook.disabled = false;
+                    elements.btnSaveWebhook.textContent = 'Save Webhook URL';
+
+                    if (result.error) {
+                        alert('Error: ' + result.error);
+                    } else {
+                        elements.btnSaveWebhook.textContent = 'Saved!';
+                        setTimeout(function() {
+                            elements.btnSaveWebhook.textContent = 'Save Webhook URL';
+                        }, 1500);
+                    }
+                })
+                .catch(function(error) {
+                    elements.btnSaveWebhook.disabled = false;
+                    elements.btnSaveWebhook.textContent = 'Save Webhook URL';
+                    alert('Error saving webhook: ' + error.message);
                 });
             });
 

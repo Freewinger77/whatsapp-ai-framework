@@ -1,0 +1,85 @@
+{
+  "name": "WhatsApp AI Basic Chat",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp",
+        "options": {}
+      },
+      "id": "e98e2730-81f1-460d-bc01-f10d7a040b71",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        400,
+        400
+      ],
+      "webhookId": "whatsapp-bot-trigger"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.message }}",
+        "options": {
+          "systemMessage": "You are a helpful assistant for a Malaysian business. Keep your replies concise and friendly. You support English, Bahasa Malaysia, and Mandarin."
+        }
+      },
+      "id": "456c2e12-326d-4952-ba63-789a123bc456",
+      "name": "AI Agent",
+      "type": "n8n-nodes-base.aiAgent",
+      "typeVersion": 1,
+      "position": [
+        620,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini"
+      },
+      "id": "789a123b-456c-4d12-8901-234567890abc",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        580,
+        600
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

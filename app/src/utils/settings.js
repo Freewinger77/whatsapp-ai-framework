@@ -20,7 +20,8 @@ const DEFAULT_SETTINGS = {
         messagesPerDay: 300,
         uniqueChatsPerHour: 25,
         uniqueChatsPerDay: 100
-    }
+    },
+    n8nWebhookUrl: ''
 };
 
 let currentSettings = { ...DEFAULT_SETTINGS };

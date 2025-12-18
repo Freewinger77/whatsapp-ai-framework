@@ -1,0 +1,237 @@
+{
+  "name": "WhatsApp AI - Advanced Gemini Chat (RAG Capable)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.body.message }}",
+        "options": {
+          "systemMessage": "## CRITICAL FORMATTING RULES (MUST FOLLOW)\nYou are responding via WhatsApp which does NOT support markdown.\n\nNEVER DO THIS:\n- [text](url) - WRONG\n- **bold** - WRONG\n- # headers - WRONG\n- bullet points with dashes at start of message\n\nALWAYS DO THIS:\n- Just paste URLs directly: https://example.com\n- Use *single asterisks* for emphasis (WhatsApp bold)\n- Use _underscores_ for italic\n- Use plain text, line breaks, and emojis\n- Start with a friendly greeting or direct answer\n\n---\n\n## YOUR IDENTITY\n\nYou are the AI assistant for *{{BUSINESS_NAME}}*.\n\nYour name: {{BOT_NAME}}\nOwner: {{OWNER_NAME}}\nBased in: {{LOCATION}}\n\n---\n\n## YOUR GOALS (in order of priority)\n\n1. *ENGAGE* - Be helpful, friendly, answer their questions\n2. *QUALIFY* - Understand if they're a good fit\n3. *CONVERT* - Guide interested leads toward booking a consultation\n4. *SUPPORT* - Help existing clients with questions\n\n---\n\n## CONVERSATION STRATEGIES\n\n*For New Inquiries:*
+- Welcome them warmly\n- Ask what brought them here\n- Listen for pain points\n\n*For Price Questions:*
+- Share pricing confidently: {{INSERT_PRICING_HERE}}\n- Emphasize value\n\n*For Handoff:*
+- If the user asks for a human or you are stuck, simply reply with the specific tag: [HANDOFF_REQUESTED]\n- Do not output the tag unless necessary.\n"
+        }
+      },
+      "id": "ai-agent",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-1.5-flash",
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "id": "gemini-model",
+      "name": "Google Gemini",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -120,
+        520
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YOUR_CREDENTIAL_ID_HERE",
+          "name": "Google Gemini Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.body.fromJid }}",
+        "contextWindowLength": 10
+      },
+      "id": "memory",
+      "name": "Window Buffer Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        120,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.output }}",
+              "rightValue": "[HANDOFF_REQUESTED]",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-handoff",
+      "name": "Check Handoff",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { reply: \"I'll connect you with a human agent. Please wait a moment!\", handoff: true } }];"
+      },
+      "id": "handoff-response",
+      "name": "Handoff Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { reply: $input.first().json.output, handoff: false } }];"
+      },
+      "id": "normal-response",
+      "name": "Normal Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ reply: $json.reply, handoff: $json.handoff }) }}",
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        800,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Check Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Window Buffer Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Handoff": {
+      "main": [
+        [
+          {
+            "node": "Handoff Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normal Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handoff Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normal Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

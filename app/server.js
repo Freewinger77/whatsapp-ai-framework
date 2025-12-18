@@ -540,7 +540,10 @@ async function handleIncomingMessage(msg) {
         }
 
         // Check if n8n webhook is configured
-        if (N8N_WEBHOOK_URL === 'YOUR_N8N_WEBHOOK_URL_HERE') {
+        const { getSetting } = require('./src/utils/settings');
+        const activeWebhookUrl = getSetting('n8nWebhookUrl') || N8N_WEBHOOK_URL;
+
+        if (activeWebhookUrl === 'YOUR_N8N_WEBHOOK_URL_HERE' || !activeWebhookUrl) {
             console.log('[Message] n8n not configured, sending default reply');
             if (antiBanManager) {
                 // Use safe send with anti-ban protections even for default reply
@@ -582,7 +585,7 @@ async function handleIncomingMessage(msg) {
             messageType: messageType
         };
 
-        const response = await axios.post(N8N_WEBHOOK_URL, webhookPayload, {
+        const response = await axios.post(activeWebhookUrl, webhookPayload, {
             timeout: 30000 // 30 second timeout
         });
 
@@ -770,6 +773,9 @@ wss.on('connection', (ws) => {
     wsClients.add(ws);
 
     // Send current state
+    const { getSettings } = require('./src/utils/settings');
+    const settings = getSettings();
+    
     ws.send(JSON.stringify({
         type: 'init',
         data: {
@@ -779,7 +785,8 @@ wss.on('connection', (ws) => {
             connectedAt: connectedAt,
             logs: activityLog.slice(0, 50),
             antiBan: antiBanManager ? antiBanManager.getHealth() : null,
-            antiBanSettings: antiBanManager ? getAntiBanSettings() : null
+            antiBanSettings: antiBanManager ? getAntiBanSettings() : null,
+            webhookUrl: settings.n8nWebhookUrl || N8N_WEBHOOK_URL
         }
     }));
 
@@ -850,10 +857,30 @@ app.post('/api/disconnect', async (req, res) => {
 
 // Get settings
 app.get('/api/settings', (req, res) => {
+    const { getSettings } = require('./src/utils/settings');
+    const settings = getSettings();
     res.json({
-        webhookUrl: N8N_WEBHOOK_URL,
+        webhookUrl: settings.n8nWebhookUrl || N8N_WEBHOOK_URL,
         hasPassword: !!ADMIN_PASSWORD
     });
+});
+
+// Update n8n webhook URL
+app.post('/api/settings/webhook', async (req, res) => {
+    try {
+        const { webhookUrl } = req.body;
+        if (!webhookUrl) {
+            return res.status(400).json({ error: 'Webhook URL is required' });
+        }
+
+        const { updateSettings } = require('./src/utils/settings');
+        await updateSettings(null, { n8nWebhookUrl: webhookUrl });
+
+        logActivity('n8n Webhook URL updated', 'info');
+        res.json({ success: true, webhookUrl });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // Health check

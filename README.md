@@ -42,17 +42,22 @@
     npm install
     ```
 
-3.  **Configure environment:**
-    ```bash
-    cp .env.example .env
-    # Edit .env and add your n8n Webhook URL
-    ```
-
-4.  **Run the bot:**
+3.  **Run the bot:**
     ```bash
     npm start
     ```
     Access the admin panel at `http://localhost:3000`.
+
+4.  **Configure the "Brain" (n8n):**
+    *   Open your n8n instance.
+    *   Click **Import from File** and select `n8n-workflows/basic-chat.json`.
+    *   Configure your AI credentials (OpenAI/Gemini) in the n8n node.
+    *   **Copy the Webhook URL** from the n8n Webhook node.
+
+5.  **Connect it together:**
+    *   In the Bot Admin Panel (`localhost:3000`), paste your n8n Webhook URL into the **AI Configuration** section and click **Save**.
+    *   Scan the WhatsApp QR code.
+    *   Your bot is now live!
 
 ## Architecture
 
