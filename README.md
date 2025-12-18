@@ -4,6 +4,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Status](https://img.shields.io/badge/status-stable-green.svg)
+![Node](https://img.shields.io/badge/node-v18%2B-green)
 
 **Note:** This is the open-source community edition of the internal framework used by [GX Automation Tech](https://gxautomation.tech). For enterprise-grade, fully compliant WhatsApp solutions (Green Tick verification), please contact us for our official **respond.io** implementation services.
 
@@ -20,15 +21,42 @@
 
 ---
 
-## Key Features
+## 🌟 Key Features
 
-*   **🛡️ Advanced Anti-Ban System:** Simulates human typing speed, reading time, and variable delays based on message length and time of day.
-*   **🧠 n8n Integration:** Seamlessly offload logic to n8n workflows for AI processing, RAG (Retrieval Augmented Generation), and database lookups.
+*   **🛡️ Advanced Anti-Ban System:**
+    *   **Variable Delays:** Calculates "human reading time" + "typing time" before replying.
+    *   **Typing Simulation:** Shows "Typing..." status to the user during the delay.
+    *   **Rate Limiting:** configurable limits (e.g., max 50 msgs/hour) with visual health bars.
+    *   **Time-of-Day Logic:** Slower response times at night to mimic human sleep cycles.
+*   **🧠 n8n Integration:**
+    *   Offload all logic to n8n (Visual Workflow Editor).
+    *   Supports OpenAI, Google Gemini, Anthropic, or Local LLMs via n8n.
+    *   Supports RAG (Retrieval Augmented Generation) for Knowledge Base lookups.
 *   **🔌 Plug-and-Play Architecture:** Built on Node.js + Express.
-*   **📊 Web Admin Panel:** Monitor connection status, scan QR codes, and view logs via a browser interface.
+*   **📊 Web Admin Panel:**
+    *   Scan QR Codes directly in the browser.
+    *   Real-time connection status.
+    *   Live Activity Logs.
+    *   Dynamic Configuration (Update Webhook URLs without restarting).
 *   **🌍 Multi-Language Support:** Ready for English, Bahasa Malaysia, and Mandarin.
 
-## Quick Start
+---
+
+## 📋 Prerequisites
+
+Before you begin, ensure you have:
+
+1.  **Node.js (v18 or higher):** [Download Here](https://nodejs.org/)
+2.  **n8n Instance:**
+    *   **Cloud:** [Sign up for n8n Cloud](https://n8n.io/) (Easiest)
+    *   **Self-Hosted:** `npm install n8n -g` (Free)
+3.  **A WhatsApp Number:** We recommend using a secondary number for testing first.
+
+---
+
+## 🚀 Installation & Setup Guide
+
+### Step 1: Install the Bot
 
 1.  **Clone the repository:**
     ```bash
@@ -42,37 +70,104 @@
     npm install
     ```
 
-3.  **Run the bot:**
+3.  **Start the Server:**
     ```bash
     npm start
     ```
-    Access the admin panel at `http://localhost:3000`.
+    You will see a message: `🌐 Web UI: http://localhost:3000`
 
-4.  **Configure the "Brain" (n8n):**
-    *   Open your n8n instance.
-    *   Click **Import from File** and select `n8n-workflows/basic-chat.json`.
-    *   Configure your AI credentials (OpenAI/Gemini) in the n8n node.
-    *   **Copy the Webhook URL** from the n8n Webhook node.
+---
 
-5.  **Connect it together:**
-    *   In the Bot Admin Panel (`localhost:3000`), paste your n8n Webhook URL into the **AI Configuration** section and click **Save**.
-    *   Scan the WhatsApp QR code.
-    *   Your bot is now live!
+### Step 2: Configure the "Brain" (n8n)
 
-## Architecture
+This bot needs a "brain" to decide what to say. We use **n8n** for this.
 
-This framework acts as a bridge between **WhatsApp** and **n8n**:
+1.  **Open n8n:** Go to your n8n dashboard.
+2.  **Import Workflow:**
+    *   Click **Add Workflow** > **Import from File**.
+    *   Select `n8n-workflows/advanced-chat-gemini.json` from this project folder.
+3.  **Configure Credentials:**
+    *   Double-click the **Google Gemini** node (or OpenAI node).
+    *   Select "Create New Credential" and paste your API Key.
+4.  **Activate the Webhook:**
+    *   Double-click the **Webhook** node.
+    *   Ensure "HTTP Method" is `POST`.
+    *   **IMPORTANT:** If you are running the bot locally and n8n in the cloud, n8n gives you a URL like `https://your-n8n.cloud/webhook/whatsapp-webhook`. Copy this URL.
+    *   *Note: If running n8n locally, use a tunnel like `ngrok` or `tunnelmole` to make it accessible.*
+5.  **Save & Activate:** Click **Save** and toggle **Active** to true.
 
-```
-[WhatsApp User] <---> [This Bot (Baileys)] <---> [n8n Workflow] <---> [OpenAI / Gemini / RAG]
-```
+---
 
-1.  **Bot receives message.**
-2.  **Bot sends "Typing..." status.**
-3.  **Bot forwards payload to n8n Webhook.**
-4.  **n8n processes logic (AI, Database, etc.) and returns text.**
-5.  **Bot calculates "Human Reading Time" + "Typing Time" delay.**
-6.  **Bot sends reply.**
+### Step 3: Connect the Bot to the Brain
+
+1.  Open the **Bot Admin Panel** at `http://localhost:3000`.
+2.  Scroll down to the **AI Configuration** card.
+3.  Paste your **n8n Webhook URL** (from Step 2) into the input field.
+4.  Click **Save Webhook URL**.
+    *   *This saves the URL to `settings.json`, so it persists even if you restart.*
+
+---
+
+### Step 4: Connect WhatsApp
+
+1.  In the Admin Panel, look at the **Connection Info** card.
+2.  Click the green **Connect** button.
+3.  Wait a moment for the **QR Code** to appear.
+4.  Open WhatsApp on your phone:
+    *   **iOS:** Settings > Linked Devices > Link a Device.
+    *   **Android:** Three dots > Linked Devices > Link a Device.
+5.  Scan the QR code.
+6.  The status should change to **Connected** (Green).
+
+🎉 **Your bot is now live!** Send a message to your WhatsApp number from a different phone to test it.
+
+---
+
+## 🛡️ Anti-Ban Configuration
+
+The bot comes with pre-configured "Human Behavior" profiles. You can change these in the **Anti-Ban Settings** card.
+
+| Preset | Messages/Hour | Description |
+|--------|---------------|-------------|
+| **New Account** | 30 | Strict limits. Use this for numbers < 1 month old. |
+| **Balanced** | 50 | Recommended default. Good balance of speed and safety. |
+| **Higher** | 80 | For established business numbers (> 6 months old). |
+| **Custom** | ??? | Define your own limits. |
+
+**How it works:**
+1.  **Limit Reached:** If the bot hits the hourly limit (e.g., 51st message), it will **stop replying** until the next hour to protect your number. The user logs will show "Rate Limited".
+2.  **Health Bars:** Watch the "Current Usage" bars in the dashboard.
+    *   **Green:** Safe zone.
+    *   **Yellow:** Caution.
+    *   **Red:** Limit reached.
+
+---
+
+## ☁️ Google Drive Backup (Optional)
+
+To automatically backup your chat logs to Google Drive:
+
+1.  Place your `google-credentials.json` (Service Account Key) in the `app/` folder.
+2.  Add `GOOGLE_DRIVE_FOLDER_ID=your_folder_id` to your `.env` file.
+3.  The bot will now sync logs to the cloud every 30 days or when you click "Backup" manually.
+
+---
+
+## ❓ Troubleshooting
+
+**Q: The QR code isn't loading.**
+A: Click "Disconnect", wait 5 seconds, and click "Connect" again. If that fails, click "Clear Auth" to reset the session.
+
+**Q: The bot isn't replying.**
+A:
+1.  Check the **Activity Log** in the dashboard. Does it say "Sending to n8n..."?
+2.  If yes, check your **n8n Executions** tab. Did the workflow run?
+3.  If no, check if your **n8n Webhook URL** is correct in the Admin Panel.
+
+**Q: The reply is too slow.**
+A: This is a feature, not a bug! The bot calculates how long a human would take to read the message and type a reply. You can adjust the math in `app/src/utils/anti-ban.js` if you want it faster (but it increases ban risk).
+
+---
 
 ## License
 
