@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp AI Bot - Admin Panel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0a0a0a;
+            --bg-secondary: #141414;
+            --bg-card: #1a1a1a;
+            --border-color: #2a2a2a;
+            --text-primary: #ffffff;
+            --text-secondary: #888888;
+            --accent-green: #22c55e;
+            --accent-yellow: #eab308;
+            --accent-red: #ef4444;
+            --accent-blue: #3b82f6;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 32px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        header h1 {
+            font-size: 1.75rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+            letter-spacing: -0.5px;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 100px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .status-badge::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-connected {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--accent-green);
+        }
+        .status-connected::before {
+            background: var(--accent-green);
+        }
+
+        .status-connecting {
+            background: rgba(234, 179, 8, 0.15);
+            color: var(--accent-yellow);
+        }
+        .status-connecting::before {
+            background: var(--accent-yellow);
+        }
+
+        .status-disconnected {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--accent-red);
+        }
+        .status-disconnected::before {
+            background: var(--accent-red);
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+
+        .card-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+        }
+
+        .qr-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 280px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 24px;
+        }
+
+        .qr-code {
+            max-width: 220px;
+            border-radius: 8px;
+            background: white;
+            padding: 8px;
+        }
+
+        .qr-placeholder {
+            text-align: center;
+            color: var(--text-secondary);
+        }
+
+        .qr-placeholder-icon {
+            font-size: 3rem;
+            margin-bottom: 12px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-connect {
+            background: var(--accent-green);
+            color: #000;
+        }
+
+        .btn-connect:hover:not(:disabled) {
+            background: #16a34a;
+        }
+
+        .btn-disconnect {
+            background: var(--accent-red);
+            color: #fff;
+        }
+
+        .btn-disconnect:hover:not(:disabled) {
+            background: #dc2626;
+        }
+
+        .btn-clear {
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-clear:hover:not(:disabled) {
+            background: var(--border-color);
+            color: var(--text-primary);
+        }
+
+        .btn-small {
+            flex: none;
+            padding: 8px 12px;
+            font-size: 0.75rem;
+        }
+
+        .btn-export {
+            background: var(--accent-blue);
+            color: #fff;
+        }
+
+        .btn-export:hover:not(:disabled) {
+            background: #2563eb;
+        }
+
+        .btn-backup {
+            background: var(--accent-yellow);
+            color: #000;
+        }
+
+        .btn-backup:hover:not(:disabled) {
+            background: #ca8a04;
+        }
+
+        .log-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .log-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .info-grid {
+            display: grid;
+            gap: 16px;
+        }
+
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+        }
+
+        .info-label {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        .info-value {
+            font-weight: 500;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.875rem;
+        }
+
+        .log-container {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            display: flex;
+            gap: 12px;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.8125rem;
+            font-family: 'Monaco', 'Consolas', monospace;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-time {
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+
+        .log-message {
+            flex: 1;
+            word-break: break-word;
+        }
+
+        .log-info { color: var(--accent-blue); }
+        .log-success { color: var(--accent-green); }
+        .log-warning { color: var(--accent-yellow); }
+        .log-error { color: var(--accent-red); }
+
+        .log-empty {
+            padding: 40px;
+            text-align: center;
+            color: var(--text-secondary);
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #3a3a3a;
+        }
+
+        .ws-indicator {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .ws-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+
+        .ws-connected .ws-dot {
+            background: var(--accent-green);
+        }
+
+        .ws-disconnected .ws-dot {
+            background: var(--accent-red);
+        }
+
+        /* Anti-Ban Settings Styles */
+        .preset-buttons {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .preset-btn {
+            flex: 1;
+            min-width: 80px;
+            padding: 12px 8px;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-align: center;
+        }
+
+        .preset-btn:hover {
+            border-color: var(--accent-blue);
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .preset-btn.active {
+            border-color: var(--accent-blue);
+            background: rgba(59, 130, 246, 0.2);
+        }
+
+        .preset-btn-title {
+            font-weight: 600;
+            font-size: 0.875rem;
+            margin-bottom: 4px;
+        }
+
+        .preset-btn-desc {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+        }
+
+        .custom-inputs {
+            display: none;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .custom-inputs.show {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+        }
+
+        @media (max-width: 500px) {
+            .custom-inputs.show {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .input-group label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .input-group input {
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 0.875rem;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        .btn-save-settings {
+            width: 100%;
+            padding: 12px;
+            background: var(--accent-blue);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s ease;
+            margin-bottom: 20px;
+        }
+
+        .btn-save-settings:hover {
+            background: #2563eb;
+        }
+
+        .btn-save-settings:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .usage-section {
+            margin-top: 16px;
+        }
+
+        .usage-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .usage-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 100px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .usage-status.healthy {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--accent-green);
+        }
+
+        .usage-status.warning {
+            background: rgba(234, 179, 8, 0.15);
+            color: var(--accent-yellow);
+        }
+
+        .usage-status.limited {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--accent-red);
+        }
+
+        .usage-bars {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .usage-bar-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .usage-bar-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+        }
+
+        .usage-bar-label-text {
+            color: var(--text-secondary);
+        }
+
+        .usage-bar-label-value {
+            color: var(--text-primary);
+            font-family: 'Monaco', 'Consolas', monospace;
+        }
+
+        .usage-bar {
+            height: 8px;
+            background: var(--bg-primary);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .usage-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s ease, background 0.3s ease;
+        }
+
+        .usage-bar-fill.low {
+            background: var(--accent-green);
+        }
+
+        .usage-bar-fill.medium {
+            background: var(--accent-yellow);
+        }
+
+        .usage-bar-fill.high {
+            background: var(--accent-red);
+        }
+
+        .usage-warnings {
+            margin-top: 12px;
+            padding: 8px 12px;
+            background: rgba(234, 179, 8, 0.1);
+            border: 1px solid rgba(234, 179, 8, 0.3);
+            border-radius: 6px;
+            font-size: 0.75rem;
+            color: var(--accent-yellow);
+        }
+
+        .usage-warnings ul {
+            margin: 0;
+            padding-left: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>WhatsApp AI Bot</h1>
+            <div id="status-badge" class="status-badge status-disconnected">
+                Disconnected
+            </div>
+        </header>
+
+        <div class="grid">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">QR Code</span>
+                </div>
+                <div class="qr-container" id="qr-container">
+                    <div class="qr-placeholder" id="qr-placeholder">
+                        <div class="qr-placeholder-icon" id="qr-icon"></div>
+                        <p id="qr-text">Click "Connect" to generate QR code</p>
+                    </div>
+                    <img id="qr-code" class="qr-code" style="display: none;" alt="QR Code" />
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Controls</span>
+                </div>
+
+                <div class="controls">
+                    <button id="btn-connect" class="btn btn-connect">Connect</button>
+                    <button id="btn-disconnect" class="btn btn-disconnect" disabled>Disconnect</button>
+                    <button id="btn-clear" class="btn btn-clear">Clear Auth</button>
+                </div>
+
+                <div class="card-header">
+                    <span class="card-title">Connection Info</span>
+                </div>
+
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">Status</span>
+                        <span class="info-value" id="info-status">Disconnected</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Phone Number</span>
+                        <span class="info-value" id="info-phone">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Connected Since</span>
+                        <span class="info-value" id="info-connected">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Anti-Ban Settings Card -->
+        <div class="card" style="margin-bottom: 20px;">
+            <div class="card-header">
+                <span class="card-title">Anti-Ban Settings</span>
+            </div>
+
+            <div class="preset-buttons">
+                <button class="preset-btn" data-preset="new">
+                    <div class="preset-btn-title">New Account</div>
+                    <div class="preset-btn-desc">30/hour</div>
+                </button>
+                <button class="preset-btn active" data-preset="balanced">
+                    <div class="preset-btn-title">Balanced</div>
+                    <div class="preset-btn-desc">50/hour</div>
+                </button>
+                <button class="preset-btn" data-preset="higher">
+                    <div class="preset-btn-title">Higher</div>
+                    <div class="preset-btn-desc">80/hour</div>
+                </button>
+                <button class="preset-btn" data-preset="custom">
+                    <div class="preset-btn-title">Custom</div>
+                    <div class="preset-btn-desc">Configure</div>
+                </button>
+            </div>
+
+            <div class="custom-inputs" id="custom-inputs">
+                <div class="input-group">
+                    <label>Messages / Hour</label>
+                    <input type="number" id="input-msgs-hour" min="1" max="200" value="50">
+                </div>
+                <div class="input-group">
+                    <label>Messages / Day</label>
+                    <input type="number" id="input-msgs-day" min="1" max="1000" value="300">
+                </div>
+                <div class="input-group">
+                    <label>Unique Chats / Hour</label>
+                    <input type="number" id="input-chats-hour" min="1" max="100" value="25">
+                </div>
+                <div class="input-group">
+                    <label>Unique Chats / Day</label>
+                    <input type="number" id="input-chats-day" min="1" max="500" value="100">
+                </div>
+            </div>
+
+            <button class="btn-save-settings" id="btn-save-settings">Save Settings</button>
+
+            <div class="usage-section">
+                <div class="usage-header">
+                    <span class="card-title">Current Usage</span>
+                    <span class="usage-status healthy" id="usage-status">Healthy</span>
+                </div>
+
+                <div class="usage-bars">
+                    <div class="usage-bar-item">
+                        <div class="usage-bar-label">
+                            <span class="usage-bar-label-text">Messages This Hour</span>
+                            <span class="usage-bar-label-value" id="usage-msgs-hour">0/50</span>
+                        </div>
+                        <div class="usage-bar">
+                            <div class="usage-bar-fill low" id="bar-msgs-hour" style="width: 0%;"></div>
+                        </div>
+                    </div>
+
+                    <div class="usage-bar-item">
+                        <div class="usage-bar-label">
+                            <span class="usage-bar-label-text">Messages Today</span>
+                            <span class="usage-bar-label-value" id="usage-msgs-day">0/300</span>
+                        </div>
+                        <div class="usage-bar">
+                            <div class="usage-bar-fill low" id="bar-msgs-day" style="width: 0%;"></div>
+                        </div>
+                    </div>
+
+                    <div class="usage-bar-item">
+                        <div class="usage-bar-label">
+                            <span class="usage-bar-label-text">Unique Chats This Hour</span>
+                            <span class="usage-bar-label-value" id="usage-chats-hour">0/25</span>
+                        </div>
+                        <div class="usage-bar">
+                            <div class="usage-bar-fill low" id="bar-chats-hour" style="width: 0%;"></div>
+                        </div>
+                    </div>
+
+                    <div class="usage-bar-item">
+                        <div class="usage-bar-label">
+                            <span class="usage-bar-label-text">Unique Chats Today</span>
+                            <span class="usage-bar-label-value" id="usage-chats-day">0/100</span>
+                        </div>
+                        <div class="usage-bar">
+                            <div class="usage-bar-fill low" id="bar-chats-day" style="width: 0%;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="usage-warnings" id="usage-warnings" style="display: none;">
+                    <ul id="warnings-list"></ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header log-header">
+                <div>
+                    <span class="card-title">Activity Log</span>
+                    <span class="card-title" style="margin-left: 12px;" id="log-count">0 entries</span>
+                </div>
+                <div class="log-actions">
+                    <button id="btn-export-json" class="btn btn-small btn-export">Export JSON</button>
+                    <button id="btn-export-csv" class="btn btn-small btn-export">Export CSV</button>
+                    <button id="btn-backup" class="btn btn-small btn-backup">Backup & Clear</button>
+                </div>
+            </div>
+            <div class="log-container" id="log-container">
+                <div class="log-empty" id="log-empty">No activity yet</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="ws-indicator ws-disconnected" id="ws-indicator">
+        <span class="ws-dot"></span>
+        <span id="ws-status">Connecting...</span>
+    </div>
+
+    <script>
+        (function() {
+            'use strict';
+
+            let ws = null;
+            let reconnectTimeout = null;
+
+            const elements = {
+                statusBadge: document.getElementById('status-badge'),
+                qrPlaceholder: document.getElementById('qr-placeholder'),
+                qrIcon: document.getElementById('qr-icon'),
+                qrText: document.getElementById('qr-text'),
+                qrCode: document.getElementById('qr-code'),
+                btnConnect: document.getElementById('btn-connect'),
+                btnDisconnect: document.getElementById('btn-disconnect'),
+                btnClear: document.getElementById('btn-clear'),
+                btnExportJson: document.getElementById('btn-export-json'),
+                btnExportCsv: document.getElementById('btn-export-csv'),
+                btnBackup: document.getElementById('btn-backup'),
+                infoStatus: document.getElementById('info-status'),
+                infoPhone: document.getElementById('info-phone'),
+                infoConnected: document.getElementById('info-connected'),
+                logContainer: document.getElementById('log-container'),
+                logEmpty: document.getElementById('log-empty'),
+                logCount: document.getElementById('log-count'),
+                wsIndicator: document.getElementById('ws-indicator'),
+                wsStatus: document.getElementById('ws-status'),
+                // Anti-ban elements
+                customInputs: document.getElementById('custom-inputs'),
+                btnSaveSettings: document.getElementById('btn-save-settings'),
+                inputMsgsHour: document.getElementById('input-msgs-hour'),
+                inputMsgsDay: document.getElementById('input-msgs-day'),
+                inputChatsHour: document.getElementById('input-chats-hour'),
+                inputChatsDay: document.getElementById('input-chats-day'),
+                usageStatus: document.getElementById('usage-status'),
+                usageMsgsHour: document.getElementById('usage-msgs-hour'),
+                usageMsgsDay: document.getElementById('usage-msgs-day'),
+                usageChatsHour: document.getElementById('usage-chats-hour'),
+                usageChatsDay: document.getElementById('usage-chats-day'),
+                barMsgsHour: document.getElementById('bar-msgs-hour'),
+                barMsgsDay: document.getElementById('bar-msgs-day'),
+                barChatsHour: document.getElementById('bar-chats-hour'),
+                barChatsDay: document.getElementById('bar-chats-day'),
+                usageWarnings: document.getElementById('usage-warnings'),
+                warningsList: document.getElementById('warnings-list')
+            };
+
+            // Anti-ban state
+            let currentPreset = 'balanced';
+            const presetButtons = document.querySelectorAll('.preset-btn');
+
+            function connectWebSocket() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                ws = new WebSocket(protocol + '//' + window.location.host + '/ws');
+
+                ws.onopen = function() {
+                    elements.wsIndicator.className = 'ws-indicator ws-connected';
+                    elements.wsStatus.textContent = 'Live';
+                };
+
+                ws.onclose = function() {
+                    elements.wsIndicator.className = 'ws-indicator ws-disconnected';
+                    elements.wsStatus.textContent = 'Reconnecting...';
+                    clearTimeout(reconnectTimeout);
+                    reconnectTimeout = setTimeout(connectWebSocket, 3000);
+                };
+
+                ws.onerror = function(error) {
+                    console.error('[WS] Error:', error);
+                };
+
+                ws.onmessage = function(event) {
+                    var data = JSON.parse(event.data);
+                    handleWebSocketMessage(data);
+                };
+            }
+
+            function handleWebSocketMessage(data) {
+                switch (data.type) {
+                    case 'init':
+                        updateStatus(data.data.status, data.data.qr, data.data.phone, data.data.connectedAt);
+                        renderLogs(data.data.logs || []);
+                        if (data.data.antiBan) {
+                            updateAntiBanUsage(data.data.antiBan);
+                        }
+                        if (data.data.antiBanSettings) {
+                            updateAntiBanSettings(data.data.antiBanSettings);
+                        }
+                        break;
+                    case 'status':
+                        updateStatus(data.data.status, data.data.qr, data.data.phone, data.data.connectedAt);
+                        break;
+                    case 'log':
+                        appendLog(data.data);
+                        break;
+                    case 'antiBanStats':
+                        updateAntiBanUsage(data.data);
+                        break;
+                    case 'antiBanSettings':
+                        updateAntiBanSettings(data.data);
+                        break;
+                }
+            }
+
+            function updateStatus(status, qr, phone, connectedAt) {
+                elements.statusBadge.className = 'status-badge status-' + status;
+                elements.statusBadge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+
+                elements.infoStatus.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+                elements.infoPhone.textContent = phone || '-';
+                elements.infoConnected.textContent = connectedAt
+                    ? new Date(connectedAt).toLocaleString()
+                    : '-';
+
+                elements.btnConnect.disabled = status !== 'disconnected';
+                elements.btnDisconnect.disabled = status === 'disconnected';
+
+                if (qr) {
+                    elements.qrCode.src = qr;
+                    elements.qrCode.style.display = 'block';
+                    elements.qrPlaceholder.style.display = 'none';
+                } else if (status === 'connected') {
+                    elements.qrCode.style.display = 'none';
+                    elements.qrPlaceholder.style.display = 'flex';
+                    elements.qrIcon.textContent = '\u2705';
+                    elements.qrText.textContent = 'Connected to WhatsApp';
+                } else if (status === 'connecting') {
+                    elements.qrCode.style.display = 'none';
+                    elements.qrPlaceholder.style.display = 'flex';
+                    elements.qrIcon.textContent = '\u23F3';
+                    elements.qrText.textContent = 'Generating QR code...';
+                } else {
+                    elements.qrCode.style.display = 'none';
+                    elements.qrPlaceholder.style.display = 'flex';
+                    elements.qrIcon.textContent = '\uD83D\uDCF1';
+                    elements.qrText.textContent = 'Click "Connect" to generate QR code';
+                }
+            }
+
+            function renderLogs(logs) {
+                if (!logs || logs.length === 0) {
+                    elements.logEmpty.style.display = 'block';
+                    elements.logCount.textContent = '0 entries';
+                    return;
+                }
+
+                elements.logEmpty.style.display = 'none';
+
+                while (elements.logContainer.firstChild) {
+                    if (elements.logContainer.firstChild === elements.logEmpty) {
+                        break;
+                    }
+                    elements.logContainer.removeChild(elements.logContainer.firstChild);
+                }
+
+                logs.forEach(function(log) {
+                    var entry = createLogEntry(log);
+                    elements.logContainer.insertBefore(entry, elements.logEmpty);
+                });
+
+                elements.logCount.textContent = logs.length + ' entries';
+            }
+
+            function appendLog(log) {
+                elements.logEmpty.style.display = 'none';
+
+                var entry = createLogEntry(log);
+                elements.logContainer.insertBefore(entry, elements.logContainer.firstChild);
+
+                var entries = elements.logContainer.querySelectorAll('.log-entry');
+                elements.logCount.textContent = entries.length + ' entries';
+
+                while (entries.length > 100) {
+                    var lastEntry = entries[entries.length - 1];
+                    lastEntry.parentNode.removeChild(lastEntry);
+                    entries = elements.logContainer.querySelectorAll('.log-entry');
+                }
+            }
+
+            function createLogEntry(log) {
+                var entry = document.createElement('div');
+                entry.className = 'log-entry';
+
+                var timeSpan = document.createElement('span');
+                timeSpan.className = 'log-time';
+                timeSpan.textContent = new Date(log.timestamp).toLocaleTimeString();
+
+                var messageSpan = document.createElement('span');
+                messageSpan.className = 'log-message log-' + log.level;
+                messageSpan.textContent = log.message;
+
+                entry.appendChild(timeSpan);
+                entry.appendChild(messageSpan);
+
+                return entry;
+            }
+
+            function apiCall(endpoint, method) {
+                method = method || 'GET';
+                return fetch('/api' + endpoint, { method: method })
+                    .then(function(response) {
+                        return response.json();
+                    })
+                    .catch(function(error) {
+                        console.error('API error:', error);
+                        return { error: error.message };
+                    });
+            }
+
+            elements.btnConnect.addEventListener('click', function() {
+                elements.btnConnect.disabled = true;
+                apiCall('/connect', 'POST').then(function(result) {
+                    if (result.error) {
+                        alert('Error: ' + result.error);
+                        elements.btnConnect.disabled = false;
+                    }
+                });
+            });
+
+            elements.btnDisconnect.addEventListener('click', function() {
+                if (!confirm('Are you sure you want to disconnect?')) return;
+
+                elements.btnDisconnect.disabled = true;
+                apiCall('/disconnect', 'POST').then(function(result) {
+                    if (result.error) {
+                        alert('Error: ' + result.error);
+                        elements.btnDisconnect.disabled = false;
+                    }
+                });
+            });
+
+            elements.btnClear.addEventListener('click', function() {
+                if (!confirm('Clear auth data? This will log out and delete saved credentials. You will need to scan the QR code again.')) return;
+
+                elements.btnClear.disabled = true;
+                apiCall('/clear-auth', 'POST').then(function(result) {
+                    elements.btnClear.disabled = false;
+                    if (result.error) {
+                        alert('Error: ' + result.error);
+                    } else {
+                        alert('Auth cleared! Click Connect to scan a new QR code.');
+                    }
+                });
+            });
+
+            // Export logs as JSON
+            elements.btnExportJson.addEventListener('click', function() {
+                window.location.href = '/api/logs/export?format=json';
+            });
+
+            // Export logs as CSV
+            elements.btnExportCsv.addEventListener('click', function() {
+                window.location.href = '/api/logs/export?format=csv';
+            });
+
+            // Backup and clear logs
+            elements.btnBackup.addEventListener('click', function() {
+                if (!confirm('Backup and clear all logs? This will save current logs to a backup file and clear the log display.')) return;
+
+                elements.btnBackup.disabled = true;
+                apiCall('/logs/backup', 'POST').then(function(result) {
+                    elements.btnBackup.disabled = false;
+                    if (result.error) {
+                        alert('Error: ' + result.error);
+                    } else {
+                        alert('Logs backed up successfully!');
+                        // Clear the log display
+                        while (elements.logContainer.firstChild) {
+                            if (elements.logContainer.firstChild === elements.logEmpty) break;
+                            elements.logContainer.removeChild(elements.logContainer.firstChild);
+                        }
+                        elements.logEmpty.style.display = 'block';
+                        elements.logCount.textContent = '0 entries';
+                    }
+                });
+            });
+
+            // ========================================
+            // ANTI-BAN FUNCTIONS
+            // ========================================
+
+            function updateAntiBanUsage(health) {
+                if (!health) return;
+
+                var stats = health.stats || {};
+                var limits = stats.limits || {};
+
+                // Update status badge
+                elements.usageStatus.className = 'usage-status ' + health.status;
+                elements.usageStatus.textContent = health.status.charAt(0).toUpperCase() + health.status.slice(1);
+
+                // Update progress bars
+                updateUsageBar(
+                    elements.usageMsgsHour,
+                    elements.barMsgsHour,
+                    stats.messagesThisHour || 0,
+                    limits.messagesPerHour || 50,
+                    health.hourlyUsage || 0
+                );
+                updateUsageBar(
+                    elements.usageMsgsDay,
+                    elements.barMsgsDay,
+                    stats.messagesThisDay || 0,
+                    limits.messagesPerDay || 300,
+                    health.dailyUsage || 0
+                );
+                updateUsageBar(
+                    elements.usageChatsHour,
+                    elements.barChatsHour,
+                    stats.uniqueChatsThisHour || 0,
+                    limits.uniqueChatsPerHour || 25,
+                    health.hourlyChatsUsage || 0
+                );
+                updateUsageBar(
+                    elements.usageChatsDay,
+                    elements.barChatsDay,
+                    stats.uniqueChatsThisDay || 0,
+                    limits.uniqueChatsPerDay || 100,
+                    health.dailyChatsUsage || 0
+                );
+
+                // Update warnings
+                if (health.warnings && health.warnings.length > 0) {
+                    elements.usageWarnings.style.display = 'block';
+                    elements.warningsList.innerHTML = health.warnings.map(function(w) {
+                        return '<li>' + w + '</li>';
+                    }).join('');
+                } else {
+                    elements.usageWarnings.style.display = 'none';
+                }
+            }
+
+            function updateUsageBar(labelEl, barEl, current, max, percentage) {
+                labelEl.textContent = current + '/' + max;
+                barEl.style.width = Math.min(percentage, 100) + '%';
+                barEl.className = 'usage-bar-fill ' + getBarColorClass(percentage);
+            }
+
+            function getBarColorClass(percentage) {
+                if (percentage >= 80) return 'high';
+                if (percentage >= 50) return 'medium';
+                return 'low';
+            }
+
+            function updateAntiBanSettings(settings) {
+                if (!settings) return;
+
+                currentPreset = settings.preset || 'balanced';
+
+                // Update preset buttons
+                presetButtons.forEach(function(btn) {
+                    var preset = btn.getAttribute('data-preset');
+                    btn.classList.toggle('active', preset === currentPreset);
+                });
+
+                // Show/hide custom inputs
+                if (currentPreset === 'custom') {
+                    elements.customInputs.classList.add('show');
+                } else {
+                    elements.customInputs.classList.remove('show');
+                }
+
+                // Update input values
+                elements.inputMsgsHour.value = settings.messagesPerHour || 50;
+                elements.inputMsgsDay.value = settings.messagesPerDay || 300;
+                elements.inputChatsHour.value = settings.uniqueChatsPerHour || 25;
+                elements.inputChatsDay.value = settings.uniqueChatsPerDay || 100;
+            }
+
+            function selectPreset(preset) {
+                currentPreset = preset;
+
+                // Update buttons
+                presetButtons.forEach(function(btn) {
+                    var btnPreset = btn.getAttribute('data-preset');
+                    btn.classList.toggle('active', btnPreset === preset);
+                });
+
+                // Show/hide custom inputs
+                if (preset === 'custom') {
+                    elements.customInputs.classList.add('show');
+                } else {
+                    elements.customInputs.classList.remove('show');
+                }
+            }
+
+            // Preset button click handlers
+            presetButtons.forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var preset = btn.getAttribute('data-preset');
+                    selectPreset(preset);
+                });
+            });
+
+            // Save settings button
+            elements.btnSaveSettings.addEventListener('click', function() {
+                elements.btnSaveSettings.disabled = true;
+                elements.btnSaveSettings.textContent = 'Saving...';
+
+                var payload = { preset: currentPreset };
+
+                if (currentPreset === 'custom') {
+                    payload.messagesPerHour = parseInt(elements.inputMsgsHour.value) || 50;
+                    payload.messagesPerDay = parseInt(elements.inputMsgsDay.value) || 300;
+                    payload.uniqueChatsPerHour = parseInt(elements.inputChatsHour.value) || 25;
+                    payload.uniqueChatsPerDay = parseInt(elements.inputChatsDay.value) || 100;
+                }
+
+                fetch('/api/anti-ban/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                })
+                .then(function(response) { return response.json(); })
+                .then(function(result) {
+                    elements.btnSaveSettings.disabled = false;
+                    elements.btnSaveSettings.textContent = 'Save Settings';
+
+                    if (result.error) {
+                        alert('Error: ' + result.error);
+                    } else {
+                        // Settings will be updated via WebSocket broadcast
+                        elements.btnSaveSettings.textContent = 'Saved!';
+                        setTimeout(function() {
+                            elements.btnSaveSettings.textContent = 'Save Settings';
+                        }, 1500);
+                    }
+                })
+                .catch(function(error) {
+                    elements.btnSaveSettings.disabled = false;
+                    elements.btnSaveSettings.textContent = 'Save Settings';
+                    alert('Error saving settings: ' + error.message);
+                });
+            });
+
+            connectWebSocket();
+        })();
+    </script>
+</body>
+</html>

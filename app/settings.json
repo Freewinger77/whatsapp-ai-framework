@@ -1,0 +1,9 @@
+{
+  "antiBan": {
+    "preset": "balanced",
+    "messagesPerHour": 50,
+    "messagesPerDay": 300,
+    "uniqueChatsPerHour": 25,
+    "uniqueChatsPerDay": 100
+  }
+}
