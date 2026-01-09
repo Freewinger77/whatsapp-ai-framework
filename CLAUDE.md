@@ -1,6 +1,6 @@
 # Claude Code Instructions for WhatsApp AI Chatbot
 
-> **Last Updated:** December 17, 2025
+> **Last Updated:** January 9, 2026
 
 This file provides project-specific instructions for Claude Code sessions.
 
@@ -8,12 +8,15 @@ This file provides project-specific instructions for Claude Code sessions.
 
 ## Project Overview
 
-Production-ready WhatsApp AI chatbot with:
+Production-ready WhatsApp AI chatbot platform with:
+- **Multi-Instance Support** - Manage multiple WhatsApp numbers from one server
+- **RESTful API** - Full API for external platform integration
 - **Baileys** for WhatsApp connection (NOT Evolution API)
 - **n8n** for AI orchestration (RAG queries, LLM calls, memory, handoff)
 - **Cloudflare AutoRAG** for knowledge base
-- **Web Admin Panel** (QR display, device management, anti-ban monitoring)
-- **Anti-Ban Protection** (rate limiting, human-like delays)
+- **Web Admin Panel** (multi-instance dashboard, QR display, anti-ban monitoring)
+- **Anti-Ban Protection** (rate limiting, human-like delays per instance)
+- **API Key Authentication** for secure external access
 - Multi-language support (EN, BM, Mandarin)
 
 ---
@@ -80,94 +83,102 @@ mcp__context7__resolve-library-id({ libraryName: "qrcode npm" })
 ## Project Structure
 
 ```
-AI-chat-bot-whatsapp/
+whatsapp-ai-framework/
 ├── README.md                    # Project overview
 ├── CLAUDE.md                    # This file (dev instructions)
 │
 ├── app/                         # Main Node.js application
 │   ├── package.json             # Dependencies
-│   ├── server.js                # Main server (993 lines)
-│   ├── settings.json            # Persistent settings
+│   ├── server.js                # Multi-instance API server
+│   ├── settings.json            # Global settings
 │   ├── .env                     # Configuration (gitignored)
 │   ├── .env.example             # Config template
-│   ├── .gitignore               # Git ignore rules
 │   │
 │   ├── src/
 │   │   └── utils/
-│   │       ├── anti-ban.js      # Anti-ban module (372 lines)
-│   │       └── settings.js      # Settings persistence (175 lines)
+│   │       ├── instance-manager.js  # Multi-instance WhatsApp manager
+│   │       ├── anti-ban.js          # Anti-ban module
+│   │       └── settings.js          # Settings persistence
 │   │
 │   ├── public/
-│   │   └── index.html           # Admin panel UI (1,192 lines)
+│   │   └── index.html           # Multi-instance admin dashboard
 │   │
-│   ├── auth_info/               # WhatsApp credentials (gitignored)
+│   ├── instances/               # Per-instance data (gitignored)
+│   │   ├── instances.json       # Instance registry
+│   │   └── <instance-id>/
+│   │       ├── auth/            # WhatsApp credentials
+│   │       └── logs/            # Instance logs
 │   │
-│   └── logs/
-│       ├── activity.json        # Current activity log
-│       └── backups/             # Log backups
+│   └── logs/                    # Legacy logs folder
 │
 ├── docs/                        # Documentation
-│   ├── README.md                # Documentation index
 │   ├── FEATURE_INVENTORY.md     # Complete feature list
 │   ├── ANTI_BAN_PROTOCOL.md     # Ban prevention guide
-│   ├── BUSINESS_MONETIZATION_RESEARCH.md  # Pricing & market
-│   ├── CLIENT_WHATSAPP_OPTIONS.md  # Client connection options
-│   ├── META_API_SETUP_GUIDE.md  # Meta Business API setup
-│   └── CLAUDE_SESSION_NOTES.md  # Development history
-│
-├── knowledge-base/              # Sample knowledge bases
-│   └── urbania-knowledge-base.md
+│   └── META_API_SETUP_GUIDE.md  # Meta Business API setup
 │
 ├── n8n-workflows/               # Exported n8n workflows
 │
-├── cloudflare/                  # DEPRECATED (Evolution API era)
-└── evolution/                   # DEPRECATED
+├── cloudflare/                  # Cloudflare Worker (optional)
+└── evolution/                   # Docker compose for Evolution API
 ```
 
 ---
 
 ## Key Files
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `app/server.js` | 993 | Main server (Baileys + Express + WebSocket) |
-| `app/public/index.html` | 1,192 | Admin panel UI |
-| `app/src/utils/anti-ban.js` | 372 | Anti-ban protection module |
-| `app/src/utils/settings.js` | 175 | Settings persistence |
+| File | Purpose |
+|------|---------|
+| `app/server.js` | Multi-instance API server (Express + WebSocket) |
+| `app/src/utils/instance-manager.js` | WhatsApp instance management class |
+| `app/public/index.html` | Multi-instance admin dashboard |
+| `app/src/utils/anti-ban.js` | Anti-ban protection module |
+| `app/src/utils/settings.js` | Settings persistence |
 
 ---
 
-## API Endpoints (17 Total)
+## API Endpoints (Multi-Instance)
 
-### Connection
+### Instance Management
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/status` | GET | Connection status + QR |
-| `/api/connect` | POST | Start WhatsApp |
-| `/api/disconnect` | POST | Disconnect |
-| `/api/clear-auth` | POST | Delete credentials |
+| `/api/instances` | GET | List all instances |
+| `/api/instances` | POST | Create new instance |
+| `/api/instances/:id` | GET | Get instance details |
+| `/api/instances/:id` | PUT | Update instance settings |
+| `/api/instances/:id` | DELETE | Delete instance |
 
-### Logs
+### Instance Connection
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/logs` | GET | Get activity logs |
-| `/api/logs/export` | GET | Export JSON/CSV |
-| `/api/logs/backup` | POST | Backup + clear |
-| `/api/logs/backups` | GET | List backups |
-| `/api/logs/backups/:file` | GET | Download backup |
+| `/api/instances/:id/connect` | POST | Start WhatsApp connection |
+| `/api/instances/:id/disconnect` | POST | Disconnect instance |
+| `/api/instances/:id/clear-auth` | POST | Clear credentials |
+| `/api/instances/:id/qr` | GET | Get QR code |
 
-### Anti-Ban
+### Messaging
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/anti-ban/stats` | GET | Message counts |
-| `/api/anti-ban/health` | GET | Usage percentages |
-| `/api/anti-ban/settings` | GET/POST | Configure limits |
+| `/api/instances/:id/send` | POST | Send message via instance |
+| `/api/send` | POST | Send (auto-select instance) |
 
-### Settings
+### Instance Logs & Anti-Ban
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/settings` | GET | Get settings |
+| `/api/instances/:id/logs` | GET | Get activity logs |
+| `/api/instances/:id/anti-ban` | GET | Get anti-ban status |
+| `/api/instances/:id/anti-ban` | PUT | Update anti-ban settings |
+
+### System
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/status` | GET | System status |
 | `/api/health` | GET | Health check |
+| `/api/generate-api-key` | POST | Generate new API key |
+
+### Authentication
+All API endpoints require authentication when `API_KEY` is set in `.env`:
+- Header: `X-API-Key: your-api-key`
+- Or: `Authorization: Bearer your-api-key`
 
 ---
 
@@ -236,15 +247,18 @@ pm2 logs whatsapp-bot
 # Server
 PORT=3000
 
-# n8n Integration (REQUIRED)
-N8N_WEBHOOK_URL=https://n8n.example.com/webhook/whatsapp
+# API Authentication (for external platform integration)
+# Generate: openssl rand -hex 32
+API_KEY=your-secure-api-key
 
-# Security (OPTIONAL)
-ADMIN_PASSWORD=your-password
+# Admin Panel Password (optional)
+ADMIN_PASSWORD=
 
 # Google Drive Backup (OPTIONAL)
 GOOGLE_CREDENTIALS_FILE=./google-credentials.json
 GOOGLE_DRIVE_FOLDER_ID=folder-id
+
+# Note: Webhook URLs are now configured per-instance via API
 ```
 
 ---
@@ -263,11 +277,12 @@ GOOGLE_DRIVE_FOLDER_ID=folder-id
 
 ## Important Notes
 
-1. **Architecture Changed**: Evolution API is deprecated. Using Baileys directly.
-2. **QR in Browser**: Display QR in web UI, not terminal
-3. **n8n Webhook**: Node.js forwards to n8n, returns replies
-4. **Human Handoff**: Handled in n8n, Node.js checks `response.skip`
-5. **Anti-Ban**: Comprehensive protection built into server
+1. **Multi-Instance Architecture**: Each WhatsApp number runs as its own instance with separate auth, settings, and logs
+2. **API-First Design**: All operations available via REST API for external platform integration
+3. **Per-Instance Webhooks**: Each instance can have its own webhook URL for AI processing
+4. **Anti-Ban Per Instance**: Each instance has independent rate limiting
+5. **API Authentication**: Set `API_KEY` in `.env` to secure API access
+6. **WebSocket Events**: Real-time updates for QR codes, connection status, and messages
 
 ---
 

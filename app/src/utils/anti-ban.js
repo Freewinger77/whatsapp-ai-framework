@@ -326,8 +326,16 @@ async function simulateTyping(socket, jid, messageLength) {
  * @param {Object|string} message - Message to send
  * @param {string} incomingText - Original incoming message text
  * @param {AntiBanManager} antiBanManager - Anti-ban manager instance
+ * @param {Object} options - Additional options
+ * @param {boolean} options.typingSimulation - Enable typing simulation (default: true)
+ * @param {boolean} options.delayEnabled - Enable human-like delays (default: true)
  */
-async function safeSendMessage(socket, jid, message, incomingText, antiBanManager) {
+async function safeSendMessage(socket, jid, message, incomingText, antiBanManager, options = {}) {
+    const { 
+        typingSimulation = true, 
+        delayEnabled = true 
+    } = options;
+    
     // Check rate limits
     const canSend = antiBanManager.canSendMessage(jid);
     if (!canSend.allowed) {
@@ -338,17 +346,28 @@ async function safeSendMessage(socket, jid, message, incomingText, antiBanManage
     // Get message text for delay calculation
     const messageText = typeof message === 'string' ? message : (message.text || '');
 
-    // Calculate human-like delay
-    const delayMs = antiBanManager.calculateDelay(incomingText, messageText);
-    console.log(`[Anti-Ban] Waiting ${delayMs}ms before reply...`);
+    let delayMs = 0;
+    
+    if (delayEnabled) {
+        // Calculate human-like delay
+        delayMs = antiBanManager.calculateDelay(incomingText, messageText);
+        console.log(`[Anti-Ban] Waiting ${delayMs}ms before reply...`);
+    }
 
-    // Simulate typing for the duration
-    await simulateTyping(socket, jid, messageText.length);
-
-    // Additional delay if needed (typing simulation might be shorter)
-    const remainingDelay = delayMs - (messageText.length * 50);
-    if (remainingDelay > 0) {
-        await delay(remainingDelay);
+    // Simulate typing for the duration (if enabled)
+    if (typingSimulation) {
+        await simulateTyping(socket, jid, messageText.length);
+        
+        // Additional delay if needed (typing simulation might be shorter)
+        if (delayEnabled) {
+            const remainingDelay = delayMs - (messageText.length * 50);
+            if (remainingDelay > 0) {
+                await delay(remainingDelay);
+            }
+        }
+    } else if (delayEnabled && delayMs > 0) {
+        // If no typing simulation but delay enabled, just wait
+        await delay(delayMs);
     }
 
     // Send the message
@@ -358,7 +377,7 @@ async function safeSendMessage(socket, jid, message, incomingText, antiBanManage
     // Record the message for rate limiting
     antiBanManager.recordMessage(jid);
 
-    return { sent: true, delay: delayMs };
+    return { sent: true, delay: delayMs, typingSimulation, delayEnabled };
 }
 
 module.exports = {

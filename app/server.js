@@ -1,11 +1,12 @@
 /**
- * WhatsApp AI Bot - Main Server
+ * WhatsApp AI Bot - Multi-Instance API Server
  *
- * Combines:
- * - Baileys WhatsApp connection
- * - Express web server (admin panel)
- * - WebSocket (real-time QR updates)
- * - n8n webhook client
+ * Features:
+ * - Multiple WhatsApp instances (multiple phone numbers)
+ * - RESTful API for instance management
+ * - WebSocket for real-time updates
+ * - Per-instance settings and anti-ban protection
+ * - API key authentication for external platform integration
  */
 
 require('dotenv').config();
@@ -14,749 +15,25 @@ const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const path = require('path');
-const axios = require('axios');
-const QRCode = require('qrcode');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const crypto = require('crypto');
 
-// Anti-Ban & Settings Modules
-const { AntiBanManager, safeSendMessage, simulateTyping, delay } = require('./src/utils/anti-ban');
-const { loadSettings, getAntiBanSettings, updateAntiBanSettings } = require('./src/utils/settings');
+// Instance Manager
+const { InstanceManager } = require('./src/utils/instance-manager');
 
 // ========================================
 // CONFIGURATION
 // ========================================
 
-const fs = require('fs').promises;
-const fsSync = require('fs');
-const { google } = require('googleapis');
-
 const PORT = process.env.PORT || 3000;
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'YOUR_N8N_WEBHOOK_URL_HERE';
+const API_KEY = process.env.API_KEY || ''; // Optional API key for external access
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
-const AUTH_FOLDER = path.join(__dirname, 'auth_info');
-const LOGS_FOLDER = path.join(__dirname, 'logs');
-const LOGS_FILE = path.join(LOGS_FOLDER, 'activity.json');
-const BACKUP_FOLDER = path.join(LOGS_FOLDER, 'backups');
-const LOG_BACKUP_DAYS = 30; // Auto backup after 30 days
-
-// Google Drive Configuration
-const GOOGLE_CREDENTIALS_FILE = process.env.GOOGLE_CREDENTIALS_FILE || path.join(__dirname, 'google-credentials.json');
-const GOOGLE_DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID || ''; // Folder ID from Google Drive URL
-
-// Default reply when n8n is not configured
-const DEFAULT_REPLY = `Thank you for your message! Our AI assistant is being set up.
-
-感谢您的消息！我们的AI助手正在设置中。
-
-Terima kasih atas mesej anda! Pembantu AI kami sedang disediakan.`;
 
 // ========================================
 // STATE MANAGEMENT
 // ========================================
 
-let whatsappSocket = null;
-let connectionStatus = 'disconnected'; // 'disconnected' | 'connecting' | 'connected'
-let currentQR = null;
-let connectedPhone = null;
-let connectedAt = null;
-let activityLog = []; // In-memory log
-let logStartDate = null; // When current log period started
-const wsClients = new Set();
-
-// Track contact activity for "Processing..." cooldown
-const contactLastActivity = new Map(); // phone -> timestamp
-const PROCESSING_MSG_COOLDOWN = 30 * 60 * 1000; // 30 minutes in milliseconds
-
-// Anti-Ban Manager instance
-let antiBanManager = null;
-
-// ========================================
-// MESSAGE EXTRACTION HELPER
-// ========================================
-
-/**
- * Extract text content from any WhatsApp message type
- * Handles: conversation, extendedText, replies, images, videos, documents, buttons, lists
- * @param {object} message - The message object from Baileys
- * @returns {object} { text: string, quotedText: string|null, isReply: boolean, messageType: string }
- */
-function extractMessageContent(message) {
-    if (!message) {
-        return { text: '', quotedText: null, isReply: false, messageType: 'unknown' };
-    }
-
-    let text = '';
-    let quotedText = null;
-    let messageType = 'unknown';
-
-    // 1. Simple conversation (plain text)
-    if (message.conversation) {
-        text = message.conversation;
-        messageType = 'conversation';
-    }
-    // 2. Extended text message (replies, links, formatted text)
-    else if (message.extendedTextMessage) {
-        text = message.extendedTextMessage.text || '';
-        messageType = 'extendedText';
-
-        // Extract quoted message if this is a reply
-        const contextInfo = message.extendedTextMessage.contextInfo;
-        if (contextInfo?.quotedMessage) {
-            quotedText = contextInfo.quotedMessage.conversation ||
-                contextInfo.quotedMessage.extendedTextMessage?.text ||
-                contextInfo.quotedMessage.imageMessage?.caption ||
-                contextInfo.quotedMessage.videoMessage?.caption ||
-                '[media]';
-        }
-    }
-    // 3. Image message (with optional caption)
-    else if (message.imageMessage) {
-        text = message.imageMessage.caption || '[Image]';
-        messageType = 'image';
-
-        // Check for quoted message in image reply
-        const contextInfo = message.imageMessage.contextInfo;
-        if (contextInfo?.quotedMessage) {
-            quotedText = contextInfo.quotedMessage.conversation ||
-                contextInfo.quotedMessage.extendedTextMessage?.text ||
-                '[media]';
-        }
-    }
-    // 4. Video message (with optional caption)
-    else if (message.videoMessage) {
-        text = message.videoMessage.caption || '[Video]';
-        messageType = 'video';
-
-        const contextInfo = message.videoMessage.contextInfo;
-        if (contextInfo?.quotedMessage) {
-            quotedText = contextInfo.quotedMessage.conversation ||
-                contextInfo.quotedMessage.extendedTextMessage?.text ||
-                '[media]';
-        }
-    }
-    // 5. Document message (with optional caption)
-    else if (message.documentMessage) {
-        text = message.documentMessage.caption || message.documentMessage.fileName || '[Document]';
-        messageType = 'document';
-    }
-    // 6. Audio message (voice note)
-    else if (message.audioMessage) {
-        text = '[Voice Note]';
-        messageType = 'audio';
-    }
-    // 7. Sticker message
-    else if (message.stickerMessage) {
-        text = '[Sticker]';
-        messageType = 'sticker';
-    }
-    // 8. Button response
-    else if (message.buttonsResponseMessage) {
-        text = message.buttonsResponseMessage.selectedDisplayText ||
-            message.buttonsResponseMessage.selectedButtonId || '';
-        messageType = 'buttonResponse';
-    }
-    // 9. List response
-    else if (message.listResponseMessage) {
-        text = message.listResponseMessage.title ||
-            message.listResponseMessage.singleSelectReply?.selectedRowId || '';
-        messageType = 'listResponse';
-    }
-    // 10. Template button reply
-    else if (message.templateButtonReplyMessage) {
-        text = message.templateButtonReplyMessage.selectedDisplayText ||
-            message.templateButtonReplyMessage.selectedId || '';
-        messageType = 'templateButtonReply';
-    }
-    // 11. Contact message
-    else if (message.contactMessage) {
-        text = `[Contact: ${message.contactMessage.displayName || 'Unknown'}]`;
-        messageType = 'contact';
-    }
-    // 12. Location message
-    else if (message.locationMessage) {
-        text = `[Location: ${message.locationMessage.degreesLatitude}, ${message.locationMessage.degreesLongitude}]`;
-        messageType = 'location';
-    }
-
-    return {
-        text: text.trim(),
-        quotedText,
-        isReply: !!quotedText,
-        messageType
-    };
-}
-
-// ========================================
-// LOG PERSISTENCE
-// ========================================
-
-async function initLogSystem() {
-    // Ensure directories exist
-    if (!fsSync.existsSync(LOGS_FOLDER)) {
-        await fs.mkdir(LOGS_FOLDER, { recursive: true });
-    }
-    if (!fsSync.existsSync(BACKUP_FOLDER)) {
-        await fs.mkdir(BACKUP_FOLDER, { recursive: true });
-    }
-
-    // Load existing logs
-    try {
-        if (fsSync.existsSync(LOGS_FILE)) {
-            const data = await fs.readFile(LOGS_FILE, 'utf8');
-            const parsed = JSON.parse(data);
-            activityLog = parsed.logs || [];
-            logStartDate = parsed.startDate || new Date().toISOString();
-            console.log(`[Logs] Loaded ${activityLog.length} existing log entries`);
-        } else {
-            logStartDate = new Date().toISOString();
-            await saveLogsToFile();
-        }
-    } catch (error) {
-        console.error('[Logs] Error loading logs:', error);
-        activityLog = [];
-        logStartDate = new Date().toISOString();
-    }
-
-    // Check if backup is needed
-    await checkAndBackupLogs();
-
-    // Schedule daily backup check
-    setInterval(checkAndBackupLogs, 24 * 60 * 60 * 1000); // Check every 24 hours
-}
-
-async function saveLogsToFile() {
-    try {
-        const data = {
-            startDate: logStartDate,
-            lastUpdated: new Date().toISOString(),
-            logs: activityLog
-        };
-        await fs.writeFile(LOGS_FILE, JSON.stringify(data, null, 2));
-    } catch (error) {
-        console.error('[Logs] Error saving logs:', error);
-    }
-}
-
-async function checkAndBackupLogs() {
-    if (!logStartDate) return;
-
-    const startDate = new Date(logStartDate);
-    const now = new Date();
-    const daysDiff = Math.floor((now - startDate) / (1000 * 60 * 60 * 24));
-
-    if (daysDiff >= LOG_BACKUP_DAYS && activityLog.length > 0) {
-        console.log(`[Logs] ${daysDiff} days since log start, initiating backup...`);
-        await backupAndClearLogs();
-    }
-}
-
-async function backupAndClearLogs() {
-    try {
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const backupFilename = `backup-${timestamp}.json`;
-        const backupFile = path.join(BACKUP_FOLDER, backupFilename);
-
-        // Prepare backup data
-        const backupData = {
-            backupDate: new Date().toISOString(),
-            periodStart: logStartDate,
-            periodEnd: new Date().toISOString(),
-            totalEntries: activityLog.length,
-            logs: activityLog
-        };
-        const backupContent = JSON.stringify(backupData, null, 2);
-
-        // Save local backup
-        await fs.writeFile(backupFile, backupContent);
-        console.log(`[Logs] Local backup saved to ${backupFile}`);
-
-        // Upload to Google Drive if configured
-        let googleDriveResult = null;
-        if (googleDriveClient) {
-            googleDriveResult = await uploadToGoogleDrive(backupFilename, backupContent);
-            if (googleDriveResult.success) {
-                console.log(`[Logs] ☁️ Cloud backup: ${googleDriveResult.webLink}`);
-            }
-        }
-
-        // Clear current logs
-        activityLog = [];
-        logStartDate = new Date().toISOString();
-        await saveLogsToFile();
-
-        const message = googleDriveResult?.success
-            ? 'Logs backed up to local + Google Drive (30-day cycle)'
-            : 'Logs backed up locally (30-day cycle)';
-        logActivity(message, 'info');
-
-        return {
-            success: true,
-            backupFile,
-            googleDrive: googleDriveResult
-        };
-    } catch (error) {
-        console.error('[Logs] Backup error:', error);
-        return { success: false, error: error.message };
-    }
-}
-
-function convertLogsToCSV(logs) {
-    const headers = ['ID', 'Timestamp', 'Level', 'Message'];
-    const rows = logs.map(log => [
-        log.id,
-        log.timestamp,
-        log.level,
-        `"${(log.message || '').replace(/"/g, '""')}"`
-    ]);
-    return [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-}
-
-// ========================================
-// GOOGLE DRIVE INTEGRATION
-// ========================================
-
-let googleDriveClient = null;
-
-async function initGoogleDrive() {
-    // Check if credentials file exists
-    if (!fsSync.existsSync(GOOGLE_CREDENTIALS_FILE)) {
-        console.log('[Google Drive] No credentials file found - cloud backup disabled');
-        console.log('[Google Drive] To enable: place google-credentials.json in app folder');
-        return false;
-    }
-
-    if (!GOOGLE_DRIVE_FOLDER_ID) {
-        console.log('[Google Drive] No folder ID configured - cloud backup disabled');
-        console.log('[Google Drive] To enable: set GOOGLE_DRIVE_FOLDER_ID in .env');
-        return false;
-    }
-
-    try {
-        const credentials = JSON.parse(await fs.readFile(GOOGLE_CREDENTIALS_FILE, 'utf8'));
-        const auth = new google.auth.GoogleAuth({
-            credentials,
-            scopes: ['https://www.googleapis.com/auth/drive.file']
-        });
-        googleDriveClient = google.drive({ version: 'v3', auth });
-        console.log('[Google Drive] ✅ Connected - backups will sync to cloud');
-        return true;
-    } catch (error) {
-        console.error('[Google Drive] Failed to initialize:', error.message);
-        return false;
-    }
-}
-
-async function uploadToGoogleDrive(filename, content) {
-    if (!googleDriveClient) {
-        return { success: false, error: 'Google Drive not configured' };
-    }
-
-    try {
-        const { Readable } = require('stream');
-        const contentStream = Readable.from([content]);
-
-        const response = await googleDriveClient.files.create({
-            requestBody: {
-                name: filename,
-                parents: [GOOGLE_DRIVE_FOLDER_ID],
-                mimeType: 'application/json'
-            },
-            media: {
-                mimeType: 'application/json',
-                body: contentStream
-            },
-            fields: 'id, name, webViewLink'
-        });
-
-        console.log(`[Google Drive] ✅ Uploaded: ${filename}`);
-        return {
-            success: true,
-            fileId: response.data.id,
-            fileName: response.data.name,
-            webLink: response.data.webViewLink
-        };
-    } catch (error) {
-        console.error('[Google Drive] Upload failed:', error.message);
-        return { success: false, error: error.message };
-    }
-}
-
-async function listGoogleDriveBackups() {
-    if (!googleDriveClient) {
-        return { success: false, error: 'Google Drive not configured', files: [] };
-    }
-
-    try {
-        const response = await googleDriveClient.files.list({
-            q: `'${GOOGLE_DRIVE_FOLDER_ID}' in parents and mimeType='application/json' and trashed=false`,
-            fields: 'files(id, name, size, createdTime, webViewLink)',
-            orderBy: 'createdTime desc',
-            pageSize: 50
-        });
-
-        return {
-            success: true,
-            files: response.data.files || []
-        };
-    } catch (error) {
-        console.error('[Google Drive] List failed:', error.message);
-        return { success: false, error: error.message, files: [] };
-    }
-}
-
-// ========================================
-// WHATSAPP CONNECTION (Baileys)
-// ========================================
-
-async function startWhatsApp() {
-    console.log('[WhatsApp] Starting connection...');
-    connectionStatus = 'connecting';
-    broadcastStatus();
-
-    try {
-        const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
-
-        whatsappSocket = makeWASocket({
-            auth: state,
-            printQRInTerminal: false // We display QR in web UI instead
-        });
-
-        // Save credentials when updated
-        whatsappSocket.ev.on('creds.update', saveCreds);
-
-        // Handle connection updates
-        whatsappSocket.ev.on('connection.update', async (update) => {
-            const { connection, qr, lastDisconnect } = update;
-
-            // QR Code received - display in web UI
-            if (qr) {
-                console.log('[WhatsApp] QR code received');
-                try {
-                    currentQR = await QRCode.toDataURL(qr);
-                    connectionStatus = 'connecting';
-                    broadcastStatus();
-                    logActivity('QR code generated - scan with WhatsApp', 'info');
-                } catch (err) {
-                    console.error('[WhatsApp] QR generation error:', err);
-                }
-            }
-
-            // Connection closed
-            if (connection === 'close') {
-                const statusCode = lastDisconnect?.error?.output?.statusCode;
-                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-
-                console.log('[WhatsApp] Connection closed. Status:', statusCode);
-                connectionStatus = 'disconnected';
-                currentQR = null;
-                connectedPhone = null;
-                connectedAt = null;
-                broadcastStatus();
-
-                if (shouldReconnect) {
-                    logActivity('Connection lost - reconnecting in 5 seconds...', 'warning');
-                    setTimeout(() => startWhatsApp(), 5000);
-                } else {
-                    logActivity('Logged out - scan QR code to reconnect', 'error');
-                }
-            }
-
-            // Connected successfully
-            if (connection === 'open') {
-                console.log('[WhatsApp] Connected!');
-                connectionStatus = 'connected';
-                currentQR = null;
-                connectedPhone = whatsappSocket.user?.id?.split(':')[0] || 'Unknown';
-                connectedAt = new Date().toISOString();
-                broadcastStatus();
-                logActivity(`Connected as ${connectedPhone}`, 'success');
-            }
-        });
-
-        // Handle incoming messages
-        whatsappSocket.ev.on('messages.upsert', async ({ messages, type }) => {
-            if (type !== 'notify') return;
-
-            for (const msg of messages) {
-                await handleIncomingMessage(msg);
-            }
-        });
-
-    } catch (error) {
-        console.error('[WhatsApp] Connection error:', error);
-        connectionStatus = 'disconnected';
-        broadcastStatus();
-        logActivity(`Connection error: ${error.message}`, 'error');
-
-        // Retry after 10 seconds
-        setTimeout(() => startWhatsApp(), 10000);
-    }
-}
-
-/**
- * Handle incoming WhatsApp message
- * Implements anti-ban protections: rate limiting, typing indicators, human-like delays
- */
-async function handleIncomingMessage(msg) {
-    try {
-        // Skip own messages
-        if (msg.key.fromMe) return;
-
-        // Extract message info using comprehensive helper
-        const from = msg.key.remoteJid;
-        const { text: messageText, quotedText, isReply, messageType } = extractMessageContent(msg.message);
-
-        // Skip empty messages or status broadcasts
-        if (!messageText || from === 'status@broadcast') return;
-
-        // Skip media-only messages without text (optional - remove if you want to handle these)
-        if (messageText.startsWith('[') && messageText.endsWith(']') && !messageText.includes(':')) {
-            // This is a media placeholder like [Image], [Video], [Voice Note], [Sticker]
-            console.log(`[Message] Skipping media-only message: ${messageText}`);
-            return;
-        }
-
-        // Format phone number
-        const phoneNumber = from.replace('@s.whatsapp.net', '');
-        const timestamp = new Date().toISOString();
-
-        // Log with reply context if present
-        const replyContext = isReply ? ` (replying to: "${quotedText?.substring(0, 30)}...")` : '';
-        console.log(`[Message] From ${phoneNumber} [${messageType}]: ${messageText}${replyContext}`);
-        logActivity(`Received from ${phoneNumber}: ${messageText.substring(0, 50)}${messageText.length > 50 ? '...' : ''}`, 'info');
-
-        // ========================================
-        // ANTI-BAN: Check rate limits FIRST
-        // ========================================
-        if (antiBanManager) {
-            const canSend = antiBanManager.canSendMessage(from);
-            if (!canSend.allowed) {
-                console.log(`[Anti-Ban] BLOCKED: ${canSend.reason}`);
-                logActivity(`Rate limited: ${canSend.reason} - message from ${phoneNumber} skipped`, 'warning');
-                // Broadcast updated stats to admin panel
-                broadcastAntiBanStats();
-                return; // Don't respond - we've hit rate limits
-            }
-        }
-
-        // Check if n8n webhook is configured
-        const { getSetting } = require('./src/utils/settings');
-        const activeWebhookUrl = getSetting('n8nWebhookUrl') || N8N_WEBHOOK_URL;
-
-        if (activeWebhookUrl === 'YOUR_N8N_WEBHOOK_URL_HERE' || !activeWebhookUrl) {
-            console.log('[Message] n8n not configured, sending default reply');
-            if (antiBanManager) {
-                // Use safe send with anti-ban protections even for default reply
-                const result = await safeSendMessage(whatsappSocket, from, DEFAULT_REPLY, messageText, antiBanManager);
-                if (result.sent) {
-                    logActivity(`Sent default reply to ${phoneNumber} (delayed ${result.delay}ms)`, 'warning');
-                }
-            } else {
-                await whatsappSocket.sendMessage(from, { text: DEFAULT_REPLY });
-                logActivity(`Sent default reply to ${phoneNumber}`, 'warning');
-            }
-            broadcastAntiBanStats();
-            return;
-        }
-
-        // ========================================
-        // ANTI-BAN: Show typing indicator (no "Processing..." text)
-        // ========================================
-        try {
-            await whatsappSocket.sendPresenceUpdate('composing', from);
-        } catch (presenceError) {
-            console.log('[Anti-Ban] Typing indicator failed:', presenceError.message);
-        }
-
-        // Update last activity timestamp
-        contactLastActivity.set(phoneNumber, Date.now());
-
-        // Send to n8n webhook (includes reply context if present)
-        console.log('[Message] Sending to n8n...');
-        const webhookPayload = {
-            from: phoneNumber,
-            fromJid: from,
-            message: messageText,
-            timestamp: timestamp,
-            messageId: msg.key.id,
-            // Reply context - helps AI understand conversation flow
-            isReply: isReply,
-            quotedMessage: quotedText || null,
-            messageType: messageType
-        };
-
-        const response = await axios.post(activeWebhookUrl, webhookPayload, {
-            timeout: 30000 // 30 second timeout
-        });
-
-        console.log('[Message] n8n response received');
-
-        // Extract reply from n8n response
-        const reply = response.data?.reply ||
-            response.data?.message ||
-            response.data?.text;
-
-        // Check if should skip (human handoff active)
-        if (response.data?.skip) {
-            console.log('[Message] Skipping reply (human handoff active)');
-            logActivity(`Human handoff active for ${phoneNumber}`, 'info');
-            // Stop typing indicator
-            try {
-                await whatsappSocket.sendPresenceUpdate('paused', from);
-            } catch (e) {}
-            return;
-        }
-
-        // ========================================
-        // ANTI-BAN: Send reply with human-like delay
-        // ========================================
-        if (reply) {
-            if (antiBanManager) {
-                // Use safeSendMessage with all anti-ban protections
-                const result = await safeSendMessage(whatsappSocket, from, reply, messageText, antiBanManager);
-                if (result.sent) {
-                    const replyPreview = reply.length > 50 ? reply.substring(0, 50) + '...' : reply;
-                    logActivity(`Replied to ${phoneNumber}: ${replyPreview} (delayed ${result.delay}ms)`, 'success');
-                    console.log(`[Message] Reply sent with ${result.delay}ms delay`);
-                } else {
-                    logActivity(`Reply blocked for ${phoneNumber}: ${result.reason}`, 'warning');
-                }
-                // Broadcast updated stats to admin panel
-                broadcastAntiBanStats();
-            } else {
-                // Fallback: send without anti-ban (shouldn't happen)
-                await whatsappSocket.sendMessage(from, { text: reply });
-                const replyPreview = reply.length > 50 ? reply.substring(0, 50) + '...' : reply;
-                logActivity(`Replied to ${phoneNumber}: ${replyPreview}`, 'success');
-                console.log('[Message] Reply sent');
-            }
-        } else {
-            console.log('[Message] No reply from n8n');
-            logActivity(`No reply received from n8n for ${phoneNumber}`, 'warning');
-            // Stop typing indicator
-            try {
-                await whatsappSocket.sendPresenceUpdate('paused', from);
-            } catch (e) {}
-        }
-
-    } catch (error) {
-        console.error('[Message] Error processing:', error.message);
-        logActivity(`Error: ${error.message}`, 'error');
-
-        // Stop typing indicator on error
-        try {
-            await whatsappSocket.sendPresenceUpdate('paused', msg.key.remoteJid);
-        } catch (e) {}
-
-        // Send error message to user (with anti-ban if available)
-        const errorReply = `Sorry, something went wrong. Please try again later.
-
-抱歉，出现了问题。请稍后再试。
-
-Maaf, sesuatu telah berlaku. Sila cuba lagi nanti.`;
-
-        try {
-            if (antiBanManager) {
-                await safeSendMessage(whatsappSocket, msg.key.remoteJid, errorReply, '', antiBanManager);
-            } else {
-                await whatsappSocket.sendMessage(msg.key.remoteJid, { text: errorReply });
-            }
-        } catch (sendError) {
-            console.error('[Message] Failed to send error reply:', sendError.message);
-        }
-    }
-}
-
-/**
- * Disconnect WhatsApp
- */
-async function disconnectWhatsApp() {
-    if (whatsappSocket) {
-        try {
-            await whatsappSocket.logout();
-            logActivity('Disconnected from WhatsApp', 'info');
-        } catch (error) {
-            console.error('[WhatsApp] Logout error:', error);
-        }
-        whatsappSocket = null;
-    }
-    connectionStatus = 'disconnected';
-    currentQR = null;
-    connectedPhone = null;
-    connectedAt = null;
-    broadcastStatus();
-}
-
-// ========================================
-// ACTIVITY LOG
-// ========================================
-
-function logActivity(message, level = 'info') {
-    const entry = {
-        id: Date.now().toString(),
-        timestamp: new Date().toISOString(),
-        message,
-        level
-    };
-
-    activityLog.unshift(entry);
-
-    // No limit on entries - they get backed up after 30 days
-    // But keep in-memory display to last 1000 for performance
-    if (activityLog.length > 1000) {
-        activityLog = activityLog.slice(0, 1000);
-    }
-
-    // Broadcast to connected clients
-    broadcastLog(entry);
-
-    // Save to file (debounced - every 10 entries or on important events)
-    if (activityLog.length % 10 === 0 || level === 'error' || level === 'success') {
-        saveLogsToFile().catch(err => console.error('[Logs] Save error:', err));
-    }
-
-    // Console output
-    const emoji = { info: 'ℹ️', success: '✅', warning: '⚠️', error: '❌' };
-    console.log(`${emoji[level] || ''} [Log] ${message}`);
-}
-
-// ========================================
-// WEBSOCKET (Real-time updates)
-// ========================================
-
-function broadcastStatus() {
-    const statusData = {
-        type: 'status',
-        data: {
-            status: connectionStatus,
-            qr: currentQR,
-            phone: connectedPhone,
-            connectedAt: connectedAt
-        }
-    };
-    broadcast(statusData);
-}
-
-function broadcastLog(entry) {
-    broadcast({ type: 'log', data: entry });
-}
-
-function broadcastAntiBanStats() {
-    if (!antiBanManager) return;
-    broadcast({
-        type: 'antiBanStats',
-        data: antiBanManager.getHealth()
-    });
-}
-
-function broadcast(data) {
-    const message = JSON.stringify(data);
-    wsClients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(message);
-        }
-    });
-}
+let instanceManager = null;
+const wsClients = new Map(); // Map of WebSocket -> { subscribedInstances: Set }
 
 // ========================================
 // EXPRESS WEB SERVER
@@ -768,335 +45,653 @@ const server = http.createServer(app);
 // WebSocket server
 const wss = new WebSocket.Server({ server, path: '/ws' });
 
-wss.on('connection', (ws) => {
-    console.log('[WS] Client connected');
-    wsClients.add(ws);
+// Middleware
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
-    // Send current state
-    const { getSettings } = require('./src/utils/settings');
-    const settings = getSettings();
+// CORS for API access
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
+// ========================================
+// API AUTHENTICATION MIDDLEWARE
+// ========================================
+
+/**
+ * Authenticate API requests
+ * Supports: API Key (X-API-Key header) or Bearer token (Authorization header)
+ */
+function authenticateAPI(req, res, next) {
+    // If no API key is configured, skip auth (for local development)
+    if (!API_KEY) {
+        return next();
+    }
     
+    const apiKey = req.headers['x-api-key'];
+    const authHeader = req.headers.authorization;
+    
+    if (apiKey === API_KEY) {
+        return next();
+    }
+    
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        if (token === API_KEY) {
+            return next();
+        }
+    }
+    
+    // Check admin password as fallback
+    if (ADMIN_PASSWORD && authHeader === `Bearer ${ADMIN_PASSWORD}`) {
+        return next();
+    }
+    
+    res.status(401).json({ 
+        error: 'Unauthorized', 
+        message: 'Valid API key required. Use X-API-Key header or Authorization: Bearer <key>' 
+    });
+}
+
+// Apply authentication to all API routes
+app.use('/api', authenticateAPI);
+
+// ========================================
+// INSTANCE MANAGEMENT API
+// ========================================
+
+/**
+ * GET /api/instances
+ * List all WhatsApp instances
+ */
+app.get('/api/instances', (req, res) => {
+    try {
+        const instances = instanceManager.getAllInstances();
+        res.json({ 
+            success: true, 
+            count: instances.length,
+            instances 
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/instances
+ * Create a new WhatsApp instance
+ * Body: { name?, webhookUrl?, antiBanSettings? }
+ */
+app.post('/api/instances', async (req, res) => {
+    try {
+        const { id, name, webhookUrl, antiBanSettings } = req.body;
+        
+        const instance = await instanceManager.createInstance({
+            id,
+            name,
+            webhookUrl,
+            antiBanSettings
+        });
+        
+        broadcastToAll({
+            type: 'instance_created',
+            data: instance
+        });
+        
+        res.status(201).json({ 
+            success: true, 
+            instance 
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/instances/:id
+ * Get instance details
+ */
+app.get('/api/instances/:id', (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        res.json({ 
+            success: true, 
+            instance: instance.getStatus() 
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * PUT /api/instances/:id
+ * Update instance settings
+ * Body: { name?, webhookUrl?, antiBanSettings? }
+ */
+app.put('/api/instances/:id', async (req, res) => {
+    try {
+        const { name, webhookUrl, antiBanSettings } = req.body;
+        
+        const instance = await instanceManager.updateInstance(req.params.id, {
+            name,
+            webhookUrl,
+            antiBanSettings
+        });
+        
+        broadcastToAll({
+            type: 'instance_updated',
+            data: instance
+        });
+        
+        res.json({ 
+            success: true, 
+            instance 
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * DELETE /api/instances/:id
+ * Delete an instance
+ */
+app.delete('/api/instances/:id', async (req, res) => {
+    try {
+        await instanceManager.deleteInstance(req.params.id);
+        
+        broadcastToAll({
+            type: 'instance_deleted',
+            data: { id: req.params.id }
+        });
+        
+        res.json({ 
+            success: true, 
+            message: `Instance ${req.params.id} deleted` 
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// ========================================
+// INSTANCE CONNECTION API
+// ========================================
+
+/**
+ * POST /api/instances/:id/connect
+ * Start WhatsApp connection for instance
+ */
+app.post('/api/instances/:id/connect', async (req, res) => {
+    try {
+        const instance = await instanceManager.connectInstance(req.params.id);
+        res.json({ 
+            success: true, 
+            message: 'Connection started',
+            instance 
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/instances/:id/disconnect
+ * Disconnect instance
+ */
+app.post('/api/instances/:id/disconnect', async (req, res) => {
+    try {
+        const instance = await instanceManager.disconnectInstance(req.params.id);
+        res.json({ 
+            success: true, 
+            message: 'Disconnected',
+            instance 
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/instances/:id/clear-auth
+ * Clear instance auth (logout + delete credentials)
+ */
+app.post('/api/instances/:id/clear-auth', async (req, res) => {
+    try {
+        const instance = await instanceManager.clearInstanceAuth(req.params.id);
+        res.json({ 
+            success: true, 
+            message: 'Auth cleared',
+            instance 
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/instances/:id/qr
+ * Get QR code for instance (if connecting)
+ */
+app.get('/api/instances/:id/qr', (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        
+        const status = instance.getStatus();
+        
+        if (status.status === 'connected') {
+            return res.json({ 
+                success: true, 
+                status: 'connected',
+                phone: status.connectedPhone,
+                message: 'Already connected'
+            });
+        }
+        
+        if (!status.qrCode) {
+            return res.json({ 
+                success: true, 
+                status: status.status,
+                qrCode: null,
+                message: 'QR code not yet generated. Call /connect first.'
+            });
+        }
+        
+        res.json({ 
+            success: true, 
+            status: status.status,
+            qrCode: status.qrCode
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ========================================
+// MESSAGING API
+// ========================================
+
+/**
+ * POST /api/instances/:id/send
+ * Send a message via instance
+ * Body: { to: "phone_number", message: "text", typingSimulation?: boolean, delayEnabled?: boolean }
+ */
+app.post('/api/instances/:id/send', async (req, res) => {
+    try {
+        const { to, message, typingSimulation, delayEnabled } = req.body;
+        
+        if (!to || !message) {
+            return res.status(400).json({ error: 'Missing required fields: to, message' });
+        }
+        
+        // Build options for per-message behavior override
+        const options = {};
+        if (typingSimulation !== undefined) options.typingSimulation = typingSimulation;
+        if (delayEnabled !== undefined) options.delayEnabled = delayEnabled;
+        
+        const result = await instanceManager.sendMessage(req.params.id, to, message, options);
+        
+        res.json({ 
+            success: true, 
+            result 
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/send
+ * Send a message (auto-select instance by phone or specify instanceId)
+ * Body: { instanceId?, to: "phone_number", message: "text", typingSimulation?: boolean, delayEnabled?: boolean }
+ */
+app.post('/api/send', async (req, res) => {
+    try {
+        const { instanceId, to, message, typingSimulation, delayEnabled } = req.body;
+        
+        if (!to || !message) {
+            return res.status(400).json({ error: 'Missing required fields: to, message' });
+        }
+        
+        // Build options for per-message behavior override
+        const options = {};
+        if (typingSimulation !== undefined) options.typingSimulation = typingSimulation;
+        if (delayEnabled !== undefined) options.delayEnabled = delayEnabled;
+        
+        // If instanceId provided, use that instance
+        if (instanceId) {
+            const result = await instanceManager.sendMessage(instanceId, to, message, options);
+            return res.json({ success: true, result });
+        }
+        
+        // Otherwise, use first connected instance
+        const instances = instanceManager.getAllInstances();
+        const connectedInstance = instances.find(i => i.status === 'connected');
+        
+        if (!connectedInstance) {
+            return res.status(400).json({ error: 'No connected instances available' });
+        }
+        
+        const result = await instanceManager.sendMessage(connectedInstance.id, to, message, options);
+        res.json({ 
+            success: true, 
+            instanceId: connectedInstance.id,
+            result 
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// ========================================
+// INSTANCE LOGS API
+// ========================================
+
+/**
+ * GET /api/instances/:id/logs
+ * Get activity logs for instance
+ */
+app.get('/api/instances/:id/logs', (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        
+        const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+        res.json({ 
+            success: true, 
+            logs: instance.activityLog.slice(0, limit) 
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ========================================
+// BEHAVIOR SETTINGS API (Typing Simulation, Delays)
+// ========================================
+
+/**
+ * GET /api/instances/:id/behavior
+ * Get behavior settings for instance (typing simulation, delays)
+ */
+app.get('/api/instances/:id/behavior', (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        
+        res.json({ 
+            success: true, 
+            behaviorSettings: instance.behaviorSettings
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * PUT /api/instances/:id/behavior
+ * Update behavior settings for instance
+ * Body: { typingSimulation?: boolean, delayEnabled?: boolean }
+ */
+app.put('/api/instances/:id/behavior', async (req, res) => {
+    try {
+        const { typingSimulation, delayEnabled } = req.body;
+        
+        const instance = await instanceManager.updateInstance(req.params.id, { 
+            behaviorSettings: { typingSimulation, delayEnabled } 
+        });
+        
+        broadcastToAll({
+            type: 'instance_updated',
+            data: instance
+        });
+        
+        res.json({ 
+            success: true, 
+            behaviorSettings: instance.behaviorSettings,
+            message: 'Behavior settings updated'
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// ========================================
+// ANTI-BAN API
+// ========================================
+
+/**
+ * GET /api/instances/:id/anti-ban
+ * Get anti-ban health for instance
+ */
+app.get('/api/instances/:id/anti-ban', (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        
+        res.json({ 
+            success: true, 
+            settings: instance.antiBanSettings,
+            health: instance.antiBanManager.getHealth() 
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * PUT /api/instances/:id/anti-ban
+ * Update anti-ban settings for instance
+ * Body: { preset?, messagesPerHour?, messagesPerDay?, uniqueChatsPerHour?, uniqueChatsPerDay? }
+ */
+app.put('/api/instances/:id/anti-ban', async (req, res) => {
+    try {
+        const { preset, messagesPerHour, messagesPerDay, uniqueChatsPerHour, uniqueChatsPerDay } = req.body;
+        
+        // Build antiBanSettings object
+        const { PRESETS } = require('./src/utils/anti-ban');
+        let antiBanSettings;
+        
+        if (preset && PRESETS[preset]) {
+            antiBanSettings = { preset, ...PRESETS[preset] };
+        } else if (preset === 'custom') {
+            antiBanSettings = {
+                preset: 'custom',
+                messagesPerHour: messagesPerHour || 50,
+                messagesPerDay: messagesPerDay || 300,
+                uniqueChatsPerHour: uniqueChatsPerHour || 25,
+                uniqueChatsPerDay: uniqueChatsPerDay || 100
+            };
+        } else {
+            antiBanSettings = {};
+            if (messagesPerHour) antiBanSettings.messagesPerHour = messagesPerHour;
+            if (messagesPerDay) antiBanSettings.messagesPerDay = messagesPerDay;
+            if (uniqueChatsPerHour) antiBanSettings.uniqueChatsPerHour = uniqueChatsPerHour;
+            if (uniqueChatsPerDay) antiBanSettings.uniqueChatsPerDay = uniqueChatsPerDay;
+        }
+        
+        const instance = await instanceManager.updateInstance(req.params.id, { antiBanSettings });
+        
+        res.json({ 
+            success: true, 
+            settings: instance.antiBanSettings,
+            health: instanceManager.getInstance(req.params.id).antiBanManager.getHealth()
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// ========================================
+// GENERAL API ENDPOINTS
+// ========================================
+
+/**
+ * GET /api/health
+ * Health check
+ */
+app.get('/api/health', (req, res) => {
+    const instances = instanceManager.getAllInstances();
+    const connectedCount = instances.filter(i => i.status === 'connected').length;
+    
+    res.json({ 
+        status: 'ok', 
+        uptime: process.uptime(),
+        instances: {
+            total: instances.length,
+            connected: connectedCount
+        }
+    });
+});
+
+/**
+ * GET /api/status
+ * Get overall system status (backward compatible)
+ */
+app.get('/api/status', (req, res) => {
+    const instances = instanceManager.getAllInstances();
+    res.json({
+        success: true,
+        instanceCount: instances.length,
+        instances: instances.map(i => ({
+            id: i.id,
+            name: i.name,
+            status: i.status,
+            phone: i.connectedPhone
+        }))
+    });
+});
+
+/**
+ * POST /api/generate-api-key
+ * Generate a new API key (admin only)
+ */
+app.post('/api/generate-api-key', (req, res) => {
+    const newKey = crypto.randomBytes(32).toString('hex');
+    res.json({
+        success: true,
+        apiKey: newKey,
+        message: 'Add this to your .env file as API_KEY=<key>'
+    });
+});
+
+// ========================================
+// WEBSOCKET HANDLING
+// ========================================
+
+wss.on('connection', (ws, req) => {
+    console.log('[WS] Client connected');
+    
+    // Initialize client state
+    wsClients.set(ws, {
+        subscribedInstances: new Set(),
+        authenticated: !API_KEY // Auto-auth if no API key configured
+    });
+    
+    // Send initial data
+    const instances = instanceManager.getAllInstances();
     ws.send(JSON.stringify({
         type: 'init',
         data: {
-            status: connectionStatus,
-            qr: currentQR,
-            phone: connectedPhone,
-            connectedAt: connectedAt,
-            logs: activityLog.slice(0, 50),
-            antiBan: antiBanManager ? antiBanManager.getHealth() : null,
-            antiBanSettings: antiBanManager ? getAntiBanSettings() : null,
-            webhookUrl: settings.n8nWebhookUrl || N8N_WEBHOOK_URL
+            instances,
+            requiresAuth: !!API_KEY
         }
     }));
-
+    
+    ws.on('message', (message) => {
+        try {
+            const data = JSON.parse(message);
+            handleWebSocketMessage(ws, data);
+        } catch (error) {
+            console.error('[WS] Invalid message:', error);
+        }
+    });
+    
     ws.on('close', () => {
         console.log('[WS] Client disconnected');
         wsClients.delete(ws);
     });
 });
 
-// Middleware
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+function handleWebSocketMessage(ws, data) {
+    const clientState = wsClients.get(ws);
+    
+    switch (data.type) {
+        case 'auth':
+            // Authenticate WebSocket client
+            if (data.apiKey === API_KEY || data.apiKey === ADMIN_PASSWORD) {
+                clientState.authenticated = true;
+                ws.send(JSON.stringify({ type: 'auth_success' }));
+            } else {
+                ws.send(JSON.stringify({ type: 'auth_failed' }));
+            }
+            break;
+            
+        case 'subscribe':
+            // Subscribe to specific instance updates
+            if (data.instanceId) {
+                clientState.subscribedInstances.add(data.instanceId);
+            }
+            break;
+            
+        case 'unsubscribe':
+            // Unsubscribe from instance updates
+            if (data.instanceId) {
+                clientState.subscribedInstances.delete(data.instanceId);
+            }
+            break;
+            
+        case 'subscribe_all':
+            // Subscribe to all instances
+            const instances = instanceManager.getAllInstances();
+            instances.forEach(i => clientState.subscribedInstances.add(i.id));
+            break;
+    }
+}
 
-// Optional password protection
-if (ADMIN_PASSWORD) {
-    app.use('/api', (req, res, next) => {
-        const authHeader = req.headers.authorization;
-        if (authHeader === `Bearer ${ADMIN_PASSWORD}`) {
-            next();
-        } else {
-            res.status(401).json({ error: 'Unauthorized' });
+/**
+ * Broadcast to all connected WebSocket clients
+ */
+function broadcastToAll(data) {
+    const message = JSON.stringify(data);
+    wsClients.forEach((clientState, ws) => {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(message);
         }
     });
 }
 
-// ========================================
-// API ENDPOINTS
-// ========================================
-
-// Get connection status
-app.get('/api/status', (req, res) => {
-    res.json({
-        status: connectionStatus,
-        qr: currentQR,
-        phone: connectedPhone,
-        connectedAt: connectedAt
-    });
-});
-
-// Get activity logs
-app.get('/api/logs', (req, res) => {
-    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
-    res.json({ logs: activityLog.slice(0, limit) });
-});
-
-// Connect WhatsApp
-app.post('/api/connect', async (req, res) => {
-    if (connectionStatus === 'connected') {
-        return res.status(400).json({ error: 'Already connected' });
-    }
-    if (connectionStatus === 'connecting') {
-        return res.status(400).json({ error: 'Already connecting' });
-    }
-
-    startWhatsApp();
-    res.json({ success: true, message: 'Connection started' });
-});
-
-// Disconnect WhatsApp
-app.post('/api/disconnect', async (req, res) => {
-    if (connectionStatus === 'disconnected') {
-        return res.status(400).json({ error: 'Not connected' });
-    }
-
-    await disconnectWhatsApp();
-    res.json({ success: true, message: 'Disconnected' });
-});
-
-// Get settings
-app.get('/api/settings', (req, res) => {
-    const { getSettings } = require('./src/utils/settings');
-    const settings = getSettings();
-    res.json({
-        webhookUrl: settings.n8nWebhookUrl || N8N_WEBHOOK_URL,
-        hasPassword: !!ADMIN_PASSWORD
-    });
-});
-
-// Update n8n webhook URL
-app.post('/api/settings/webhook', async (req, res) => {
-    try {
-        const { webhookUrl } = req.body;
-        if (!webhookUrl) {
-            return res.status(400).json({ error: 'Webhook URL is required' });
-        }
-
-        const { updateSettings } = require('./src/utils/settings');
-        await updateSettings(null, { n8nWebhookUrl: webhookUrl });
-
-        logActivity('n8n Webhook URL updated', 'info');
-        res.json({ success: true, webhookUrl });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Health check
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', uptime: process.uptime() });
-});
-
-// ========================================
-// ANTI-BAN API ENDPOINTS
-// ========================================
-
-// Get anti-ban stats (current message counts)
-app.get('/api/anti-ban/stats', (req, res) => {
-    if (!antiBanManager) {
-        return res.status(503).json({ error: 'Anti-ban system not initialized' });
-    }
-    res.json(antiBanManager.getStats());
-});
-
-// Get anti-ban health (usage percentages + warnings)
-app.get('/api/anti-ban/health', (req, res) => {
-    if (!antiBanManager) {
-        return res.status(503).json({ error: 'Anti-ban system not initialized' });
-    }
-    res.json(antiBanManager.getHealth());
-});
-
-// Get anti-ban settings
-app.get('/api/anti-ban/settings', (req, res) => {
-    const { PRESETS } = require('./src/utils/anti-ban');
-    const settings = getAntiBanSettings();
-    res.json({
-        current: settings,
-        presets: PRESETS
-    });
-});
-
-// Update anti-ban settings
-app.post('/api/anti-ban/settings', async (req, res) => {
-    try {
-        const { preset, messagesPerHour, messagesPerDay, uniqueChatsPerHour, uniqueChatsPerDay } = req.body;
-
-        // Validate input
-        if (!preset && !messagesPerHour && !messagesPerDay && !uniqueChatsPerHour && !uniqueChatsPerDay) {
-            return res.status(400).json({ error: 'No settings provided' });
-        }
-
-        const { PRESETS } = require('./src/utils/anti-ban');
-
-        // If preset is provided, validate it
-        if (preset && preset !== 'custom' && !PRESETS[preset]) {
-            return res.status(400).json({ error: `Invalid preset: ${preset}. Valid presets: ${Object.keys(PRESETS).join(', ')}` });
-        }
-
-        // Update settings
-        const updates = {};
-        if (preset) updates.preset = preset;
-        if (messagesPerHour) updates.messagesPerHour = parseInt(messagesPerHour);
-        if (messagesPerDay) updates.messagesPerDay = parseInt(messagesPerDay);
-        if (uniqueChatsPerHour) updates.uniqueChatsPerHour = parseInt(uniqueChatsPerHour);
-        if (uniqueChatsPerDay) updates.uniqueChatsPerDay = parseInt(uniqueChatsPerDay);
-
-        const newSettings = await updateAntiBanSettings(updates);
-
-        // Update the manager with new limits
-        if (antiBanManager) {
-            antiBanManager.updateLimits(newSettings);
-        }
-
-        // Broadcast update to all connected clients
-        broadcastAntiBanStats();
-        broadcast({
-            type: 'antiBanSettings',
-            data: newSettings
-        });
-
-        logActivity(`Anti-ban settings updated: ${preset || 'custom'}`, 'info');
-        res.json({ success: true, settings: newSettings });
-    } catch (error) {
-        console.error('[API] Anti-ban settings error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Export logs (JSON or CSV)
-app.get('/api/logs/export', async (req, res) => {
-    const format = req.query.format || 'json';
-    const filename = `activity-logs-${new Date().toISOString().split('T')[0]}`;
-
-    try {
-        if (format === 'csv') {
-            const csv = convertLogsToCSV(activityLog);
-            res.setHeader('Content-Type', 'text/csv');
-            res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
-            res.send(csv);
-        } else {
-            const data = {
-                exportDate: new Date().toISOString(),
-                periodStart: logStartDate,
-                totalEntries: activityLog.length,
-                logs: activityLog
-            };
-            res.setHeader('Content-Type', 'application/json');
-            res.setHeader('Content-Disposition', `attachment; filename="${filename}.json"`);
-            res.send(JSON.stringify(data, null, 2));
-        }
-        logActivity(`Logs exported as ${format.toUpperCase()}`, 'info');
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Manual backup and clear logs
-app.post('/api/logs/backup', async (req, res) => {
-    try {
-        if (activityLog.length === 0) {
-            return res.status(400).json({ error: 'No logs to backup' });
-        }
-        const result = await backupAndClearLogs();
-        if (result.success) {
-            res.json({ success: true, message: 'Logs backed up and cleared', backupFile: result.backupFile });
-        } else {
-            res.status(500).json({ error: result.error });
-        }
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// List backup files (local + Google Drive)
-app.get('/api/logs/backups', async (req, res) => {
-    try {
-        // Get local backups
-        const files = await fs.readdir(BACKUP_FOLDER);
-        const localBackups = [];
-        for (const file of files.filter(f => f.endsWith('.json'))) {
-            const stats = await fs.stat(path.join(BACKUP_FOLDER, file));
-            localBackups.push({
-                filename: file,
-                size: stats.size,
-                created: stats.birthtime,
-                location: 'local'
-            });
-        }
-        localBackups.sort((a, b) => new Date(b.created) - new Date(a.created));
-
-        // Get Google Drive backups
-        const googleDriveResult = await listGoogleDriveBackups();
-        const cloudBackups = googleDriveResult.files.map(f => ({
-            filename: f.name,
-            size: parseInt(f.size) || 0,
-            created: f.createdTime,
-            location: 'google_drive',
-            webLink: f.webViewLink,
-            fileId: f.id
-        }));
-
-        res.json({
-            local: localBackups,
-            googleDrive: cloudBackups,
-            googleDriveConnected: !!googleDriveClient,
-            logStartDate,
-            currentLogCount: activityLog.length
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Download specific backup file
-app.get('/api/logs/backups/:filename', async (req, res) => {
-    try {
-        const filename = req.params.filename;
-        if (!filename.endsWith('.json') || filename.includes('..')) {
-            return res.status(400).json({ error: 'Invalid filename' });
-        }
-        const filepath = path.join(BACKUP_FOLDER, filename);
-        if (!fsSync.existsSync(filepath)) {
-            return res.status(404).json({ error: 'Backup not found' });
-        }
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        res.sendFile(filepath);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Clear auth (logout and delete credentials)
-app.post('/api/clear-auth', async (req, res) => {
-    try {
-        // Disconnect first
-        if (whatsappSocket) {
-            try {
-                await whatsappSocket.logout();
-            } catch (e) {
-                // Ignore logout errors
+/**
+ * Broadcast to clients subscribed to a specific instance
+ */
+function broadcastToInstance(instanceId, data) {
+    const message = JSON.stringify(data);
+    wsClients.forEach((clientState, ws) => {
+        if (ws.readyState === WebSocket.OPEN) {
+            if (clientState.subscribedInstances.has(instanceId) || clientState.subscribedInstances.size === 0) {
+                ws.send(message);
             }
-            whatsappSocket = null;
         }
-
-        // Delete auth folder
-        await fs.rm(AUTH_FOLDER, { recursive: true, force: true });
-
-        connectionStatus = 'disconnected';
-        currentQR = null;
-        connectedPhone = null;
-        connectedAt = null;
-        broadcastStatus();
-
-        logActivity('Auth cleared - ready to scan new QR code', 'info');
-        res.json({ success: true, message: 'Auth cleared successfully' });
-    } catch (error) {
-        console.error('[API] Clear auth error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
+    });
+}
 
 // ========================================
 // START SERVER
@@ -1104,46 +699,82 @@ app.post('/api/clear-auth', async (req, res) => {
 
 server.listen(PORT, async () => {
     console.log(`
-╔════════════════════════════════════════════════════╗
-║       WhatsApp AI Bot - Admin Panel                ║
-╚════════════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════════════╗
+║       WhatsApp AI Bot - Multi-Instance API Server          ║
+╚════════════════════════════════════════════════════════════╝
 
 🌐 Web UI:      http://localhost:${PORT}
-🔗 n8n Webhook: ${N8N_WEBHOOK_URL === 'YOUR_N8N_WEBHOOK_URL_HERE' ? '⚠️  NOT CONFIGURED' : N8N_WEBHOOK_URL}
-🔐 Password:    ${ADMIN_PASSWORD ? 'ENABLED' : 'DISABLED'}
-📁 Logs:        ${LOGS_FOLDER}
+🔌 API Base:    http://localhost:${PORT}/api
+🔐 Auth:        ${API_KEY ? 'API Key Required' : 'Open (set API_KEY in .env for production)'}
+
+API Endpoints:
+  POST   /api/instances              Create new instance
+  GET    /api/instances              List all instances
+  GET    /api/instances/:id          Get instance details
+  PUT    /api/instances/:id          Update instance
+  DELETE /api/instances/:id          Delete instance
+  
+  POST   /api/instances/:id/connect     Start connection
+  POST   /api/instances/:id/disconnect  Disconnect
+  POST   /api/instances/:id/clear-auth  Clear credentials
+  GET    /api/instances/:id/qr          Get QR code
+  
+  POST   /api/instances/:id/send        Send message
+  POST   /api/send                      Send (auto-select instance)
+  
+  GET    /api/instances/:id/logs        Get activity logs
+  GET    /api/instances/:id/anti-ban    Get anti-ban status
+  PUT    /api/instances/:id/anti-ban    Update anti-ban settings
+  
+  GET    /api/health                    Health check
+  GET    /api/status                    System status
 
 Initializing...
     `);
-
-    // Initialize log system
-    await initLogSystem();
-
-    // Initialize settings and anti-ban manager
-    const settings = await loadSettings();
-    antiBanManager = new AntiBanManager(settings.antiBan);
-    console.log('[Anti-Ban] ✅ Initialized with', settings.antiBan.preset || 'custom', 'preset');
-
-    // Initialize Google Drive (optional)
-    await initGoogleDrive();
-
-    // Auto-start WhatsApp connection
-    startWhatsApp();
+    
+    // Initialize instance manager
+    instanceManager = new InstanceManager();
+    await instanceManager.init();
+    
+    // Set up event handlers
+    instanceManager.onStatusChange = (instanceId, status) => {
+        broadcastToInstance(instanceId, {
+            type: 'instance_status',
+            data: status
+        });
+    };
+    
+    instanceManager.onMessage = (data) => {
+        broadcastToInstance(data.instanceId, {
+            type: 'message',
+            data
+        });
+    };
+    
+    instanceManager.onLog = (instanceId, entry) => {
+        broadcastToInstance(instanceId, {
+            type: 'log',
+            instanceId,
+            data: entry
+        });
+    };
+    
+    console.log(`[Server] Ready! ${instanceManager.getAllInstances().length} instances loaded.`);
 });
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
     console.log('\n\n🛑 Shutting down...');
-    await disconnectWhatsApp();
+    if (instanceManager) {
+        await instanceManager.shutdown();
+    }
     process.exit(0);
 });
 
 process.on('uncaughtException', (error) => {
     console.error('Uncaught Exception:', error);
-    logActivity(`Uncaught error: ${error.message}`, 'error');
 });
 
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection:', reason);
-    logActivity(`Unhandled rejection: ${reason}`, 'error');
 });

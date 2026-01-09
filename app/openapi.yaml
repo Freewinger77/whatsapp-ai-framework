@@ -1,0 +1,902 @@
+openapi: 3.0.3
+info:
+  title: WhatsApp Multi-Instance API
+  description: |
+    RESTful API for managing multiple WhatsApp instances.
+    
+    ## Authentication
+    All endpoints require authentication when `API_KEY` is configured.
+    
+    Use one of:
+    - Header: `X-API-Key: your-api-key`
+    - Header: `Authorization: Bearer your-api-key`
+    
+    ## WebSocket
+    Real-time updates available at `ws://host/ws`
+    
+    Events: `init`, `instance_created`, `instance_status`, `instance_updated`, `instance_deleted`, `message`, `log`
+  version: 1.0.0
+  contact:
+    name: API Support
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+
+tags:
+  - name: Instances
+    description: Instance management (CRUD)
+  - name: Connection
+    description: WhatsApp connection control
+  - name: Messaging
+    description: Send messages
+  - name: Behavior
+    description: Typing simulation and delay settings
+  - name: Anti-Ban
+    description: Rate limiting and anti-ban settings
+  - name: Logs
+    description: Activity logs
+  - name: System
+    description: Health and status
+
+security:
+  - ApiKeyAuth: []
+  - BearerAuth: []
+
+paths:
+  # ==========================================
+  # INSTANCE MANAGEMENT
+  # ==========================================
+  /api/instances:
+    get:
+      tags: [Instances]
+      summary: List all instances
+      description: Get a list of all WhatsApp instances with their current status
+      responses:
+        '200':
+          description: List of instances
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  count:
+                    type: integer
+                    example: 2
+                  instances:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Instance'
+    
+    post:
+      tags: [Instances]
+      summary: Create new instance
+      description: Create a new WhatsApp instance
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  description: Custom instance ID (auto-generated if not provided)
+                  example: my_custom_id
+                name:
+                  type: string
+                  description: Display name for the instance
+                  example: Customer Support
+                webhookUrl:
+                  type: string
+                  format: uri
+                  description: URL to forward incoming messages to
+                  example: https://your-api.com/webhook
+                behaviorSettings:
+                  $ref: '#/components/schemas/BehaviorSettings'
+                antiBanSettings:
+                  $ref: '#/components/schemas/AntiBanSettings'
+      responses:
+        '201':
+          description: Instance created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  instance:
+                    $ref: '#/components/schemas/Instance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/instances/{instanceId}:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    
+    get:
+      tags: [Instances]
+      summary: Get instance details
+      description: Get detailed information about a specific instance
+      responses:
+        '200':
+          description: Instance details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  instance:
+                    $ref: '#/components/schemas/Instance'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    
+    put:
+      tags: [Instances]
+      summary: Update instance
+      description: Update instance settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: Updated Name
+                webhookUrl:
+                  type: string
+                  format: uri
+                  example: https://new-webhook.com/endpoint
+                behaviorSettings:
+                  $ref: '#/components/schemas/BehaviorSettings'
+                antiBanSettings:
+                  $ref: '#/components/schemas/AntiBanSettings'
+      responses:
+        '200':
+          description: Instance updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  instance:
+                    $ref: '#/components/schemas/Instance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    
+    delete:
+      tags: [Instances]
+      summary: Delete instance
+      description: Delete an instance and all its data
+      responses:
+        '200':
+          description: Instance deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Instance wa_xxx deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ==========================================
+  # CONNECTION
+  # ==========================================
+  /api/instances/{instanceId}/connect:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    post:
+      tags: [Connection]
+      summary: Connect instance
+      description: Start WhatsApp connection. Poll `/qr` for QR code to scan.
+      responses:
+        '200':
+          description: Connection started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Connection started
+                  instance:
+                    $ref: '#/components/schemas/Instance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/instances/{instanceId}/disconnect:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    post:
+      tags: [Connection]
+      summary: Disconnect instance
+      description: Disconnect WhatsApp (keeps credentials)
+      responses:
+        '200':
+          description: Disconnected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Disconnected
+                  instance:
+                    $ref: '#/components/schemas/Instance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/instances/{instanceId}/clear-auth:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    post:
+      tags: [Connection]
+      summary: Clear auth
+      description: Logout and delete saved credentials. Requires new QR scan.
+      responses:
+        '200':
+          description: Auth cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Auth cleared
+                  instance:
+                    $ref: '#/components/schemas/Instance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/instances/{instanceId}/qr:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    get:
+      tags: [Connection]
+      summary: Get QR code
+      description: Get QR code for scanning (only available when status is 'connecting')
+      responses:
+        '200':
+          description: QR code response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  status:
+                    type: string
+                    enum: [disconnected, connecting, connected]
+                    example: connecting
+                  qrCode:
+                    type: string
+                    nullable: true
+                    description: Base64 data URL of QR code image
+                    example: data:image/png;base64,iVBORw0KGgo...
+                  phone:
+                    type: string
+                    nullable: true
+                    description: Connected phone number (when status is 'connected')
+                  message:
+                    type: string
+                    example: QR code not yet generated. Call /connect first.
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==========================================
+  # MESSAGING
+  # ==========================================
+  /api/instances/{instanceId}/send:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    post:
+      tags: [Messaging]
+      summary: Send message via instance
+      description: Send a WhatsApp message through a specific instance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, message]
+              properties:
+                to:
+                  type: string
+                  description: Phone number (with country code, no + or spaces)
+                  example: '60123456789'
+                message:
+                  type: string
+                  description: Message text to send
+                  example: Hello! How can I help you today?
+                typingSimulation:
+                  type: boolean
+                  description: Override instance setting for this message
+                  example: true
+                delayEnabled:
+                  type: boolean
+                  description: Override instance setting for this message
+                  example: true
+      responses:
+        '200':
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  result:
+                    $ref: '#/components/schemas/SendResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/send:
+    post:
+      tags: [Messaging]
+      summary: Send message (auto-select instance)
+      description: Send a message using a specific instance or auto-select first connected one
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, message]
+              properties:
+                instanceId:
+                  type: string
+                  description: Instance ID (optional, auto-selects if not provided)
+                  example: wa_xxx
+                to:
+                  type: string
+                  description: Phone number (with country code)
+                  example: '60123456789'
+                message:
+                  type: string
+                  example: Hello!
+                typingSimulation:
+                  type: boolean
+                  description: Override instance setting for this message
+                delayEnabled:
+                  type: boolean
+                  description: Override instance setting for this message
+      responses:
+        '200':
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  instanceId:
+                    type: string
+                    description: Instance that was used
+                    example: wa_xxx
+                  result:
+                    $ref: '#/components/schemas/SendResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ==========================================
+  # BEHAVIOR SETTINGS
+  # ==========================================
+  /api/instances/{instanceId}/behavior:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    
+    get:
+      tags: [Behavior]
+      summary: Get behavior settings
+      description: Get typing simulation and delay settings for instance
+      responses:
+        '200':
+          description: Behavior settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  behaviorSettings:
+                    $ref: '#/components/schemas/BehaviorSettings'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    
+    put:
+      tags: [Behavior]
+      summary: Update behavior settings
+      description: Update typing simulation and delay settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BehaviorSettings'
+      responses:
+        '200':
+          description: Settings updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  behaviorSettings:
+                    $ref: '#/components/schemas/BehaviorSettings'
+                  message:
+                    type: string
+                    example: Behavior settings updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ==========================================
+  # ANTI-BAN
+  # ==========================================
+  /api/instances/{instanceId}/anti-ban:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    
+    get:
+      tags: [Anti-Ban]
+      summary: Get anti-ban status
+      description: Get current anti-ban settings and usage statistics
+      responses:
+        '200':
+          description: Anti-ban status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  settings:
+                    $ref: '#/components/schemas/AntiBanSettings'
+                  health:
+                    $ref: '#/components/schemas/AntiBanHealth'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    
+    put:
+      tags: [Anti-Ban]
+      summary: Update anti-ban settings
+      description: Update rate limits using preset or custom values
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                preset:
+                  type: string
+                  enum: [new, balanced, higher, custom]
+                  description: Use a preset configuration
+                  example: balanced
+                messagesPerHour:
+                  type: integer
+                  description: Max messages per hour (for custom preset)
+                  example: 50
+                messagesPerDay:
+                  type: integer
+                  description: Max messages per day (for custom preset)
+                  example: 300
+                uniqueChatsPerHour:
+                  type: integer
+                  description: Max unique chats per hour (for custom preset)
+                  example: 25
+                uniqueChatsPerDay:
+                  type: integer
+                  description: Max unique chats per day (for custom preset)
+                  example: 100
+      responses:
+        '200':
+          description: Settings updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  settings:
+                    $ref: '#/components/schemas/AntiBanSettings'
+                  health:
+                    $ref: '#/components/schemas/AntiBanHealth'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ==========================================
+  # LOGS
+  # ==========================================
+  /api/instances/{instanceId}/logs:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    get:
+      tags: [Logs]
+      summary: Get activity logs
+      description: Get recent activity logs for instance
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Number of log entries to return
+      responses:
+        '200':
+          description: Activity logs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  logs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LogEntry'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==========================================
+  # SYSTEM
+  # ==========================================
+  /api/health:
+    get:
+      tags: [System]
+      summary: Health check
+      description: Check server health and instance counts
+      security: []
+      responses:
+        '200':
+          description: Server healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  uptime:
+                    type: number
+                    description: Server uptime in seconds
+                    example: 3600.5
+                  instances:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                        example: 3
+                      connected:
+                        type: integer
+                        example: 2
+
+  /api/status:
+    get:
+      tags: [System]
+      summary: System status
+      description: Get overall system status with all instances
+      responses:
+        '200':
+          description: System status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  instanceCount:
+                    type: integer
+                    example: 2
+                  instances:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          example: wa_xxx
+                        name:
+                          type: string
+                          example: Customer Support
+                        status:
+                          type: string
+                          enum: [disconnected, connecting, connected]
+                        phone:
+                          type: string
+                          nullable: true
+                          example: '60123456789'
+
+  /api/generate-api-key:
+    post:
+      tags: [System]
+      summary: Generate API key
+      description: Generate a new random API key (for reference only, add to .env manually)
+      responses:
+        '200':
+          description: API key generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  apiKey:
+                    type: string
+                    example: a1b2c3d4e5f6...
+                  message:
+                    type: string
+                    example: Add this to your .env file as API_KEY=<key>
+
+# ==========================================
+# COMPONENTS
+# ==========================================
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    BearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    instanceId:
+      name: instanceId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Instance ID
+      example: wa_lxyz123_abc45
+
+  schemas:
+    Instance:
+      type: object
+      properties:
+        id:
+          type: string
+          example: wa_lxyz123_abc45
+        name:
+          type: string
+          example: Customer Support
+        status:
+          type: string
+          enum: [disconnected, connecting, connected]
+          example: connected
+        qrCode:
+          type: string
+          nullable: true
+          description: Base64 QR code (only when connecting)
+        connectedPhone:
+          type: string
+          nullable: true
+          example: '60123456789'
+        connectedAt:
+          type: string
+          format: date-time
+          nullable: true
+        webhookUrl:
+          type: string
+          example: https://your-api.com/webhook
+        behaviorSettings:
+          $ref: '#/components/schemas/BehaviorSettings'
+        antiBanSettings:
+          $ref: '#/components/schemas/AntiBanSettings'
+        antiBanHealth:
+          $ref: '#/components/schemas/AntiBanHealth'
+        createdAt:
+          type: string
+          format: date-time
+
+    BehaviorSettings:
+      type: object
+      properties:
+        typingSimulation:
+          type: boolean
+          description: Show "typing..." indicator before sending
+          default: true
+          example: true
+        delayEnabled:
+          type: boolean
+          description: Add human-like delays before responding
+          default: true
+          example: true
+
+    AntiBanSettings:
+      type: object
+      properties:
+        preset:
+          type: string
+          enum: [new, balanced, higher, custom]
+          example: balanced
+        messagesPerHour:
+          type: integer
+          example: 50
+        messagesPerDay:
+          type: integer
+          example: 300
+        uniqueChatsPerHour:
+          type: integer
+          example: 25
+        uniqueChatsPerDay:
+          type: integer
+          example: 100
+
+    AntiBanHealth:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, warning, limited]
+          example: healthy
+        hourlyUsage:
+          type: integer
+          description: Percentage of hourly message limit used
+          example: 25
+        dailyUsage:
+          type: integer
+          description: Percentage of daily message limit used
+          example: 10
+        hourlyChatsUsage:
+          type: integer
+          example: 20
+        dailyChatsUsage:
+          type: integer
+          example: 8
+        warnings:
+          type: array
+          items:
+            type: string
+          example: []
+        stats:
+          type: object
+          properties:
+            messagesThisHour:
+              type: integer
+              example: 12
+            messagesThisDay:
+              type: integer
+              example: 30
+            uniqueChatsThisHour:
+              type: integer
+              example: 5
+            uniqueChatsThisDay:
+              type: integer
+              example: 8
+
+    SendResult:
+      type: object
+      properties:
+        sent:
+          type: boolean
+          example: true
+        delay:
+          type: integer
+          description: Delay applied in milliseconds
+          example: 3500
+        typingSimulation:
+          type: boolean
+          example: true
+        delayEnabled:
+          type: boolean
+          example: true
+        reason:
+          type: string
+          description: Reason if message was blocked
+        waitTime:
+          type: integer
+          description: Time to wait before retry (if rate limited)
+
+    LogEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          example: '1704825600000'
+        timestamp:
+          type: string
+          format: date-time
+        message:
+          type: string
+          example: Connected as 60123456789
+        level:
+          type: string
+          enum: [info, success, warning, error]
+          example: success
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: Instance not found
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: Unauthorized
+              message:
+                type: string
+                example: Valid API key required. Use X-API-Key header or Authorization Bearer
