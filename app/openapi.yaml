@@ -32,6 +32,8 @@ tags:
     description: WhatsApp connection control
   - name: Messaging
     description: Send messages
+  - name: Webhook
+    description: Inbound webhook configuration
   - name: Behavior
     description: Typing simulation and delay settings
   - name: Anti-Ban
@@ -556,6 +558,105 @@ paths:
           $ref: '#/components/responses/BadRequest'
 
   # ==========================================
+  # WEBHOOK CONFIGURATION
+  # ==========================================
+  /api/webhook:
+    get:
+      tags: [Webhook]
+      summary: Get global default webhook
+      description: Get the global default webhook URL (from environment)
+      responses:
+        '200':
+          description: Webhook configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  defaultWebhookUrl:
+                    type: string
+                    nullable: true
+                    example: https://n8n.example.com/webhook/whatsapp
+                  message:
+                    type: string
+
+  /api/instances/{instanceId}/webhook:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    
+    get:
+      tags: [Webhook]
+      summary: Get instance webhook
+      description: Get webhook configuration for a specific instance
+      responses:
+        '200':
+          description: Webhook configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  instanceWebhookUrl:
+                    type: string
+                    nullable: true
+                    description: Instance-specific webhook (null if using global)
+                  effectiveWebhookUrl:
+                    type: string
+                    nullable: true
+                    description: The actual webhook URL that will be used
+                  usingGlobalDefault:
+                    type: boolean
+                    description: Whether using the global default webhook
+        '404':
+          $ref: '#/components/responses/NotFound'
+    
+    put:
+      tags: [Webhook]
+      summary: Set instance webhook
+      description: Set a custom webhook URL for this instance, or clear to use global default
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                webhookUrl:
+                  type: string
+                  nullable: true
+                  description: Webhook URL or null/empty to use global default
+                  example: https://your-api.com/webhook/instance-1
+      responses:
+        '200':
+          description: Webhook updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  instanceWebhookUrl:
+                    type: string
+                    nullable: true
+                  effectiveWebhookUrl:
+                    type: string
+                    nullable: true
+                  usingGlobalDefault:
+                    type: boolean
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ==========================================
   # LOGS
   # ==========================================
   /api/instances/{instanceId}/logs:
@@ -768,20 +869,20 @@ components:
       properties:
         preset:
           type: string
-          enum: [new, balanced, higher, custom]
+          enum: [conservative, balanced, aggressive, custom]
           example: balanced
         messagesPerHour:
           type: integer
-          example: 50
+          example: 200
         messagesPerDay:
           type: integer
-          example: 300
+          example: 5000
         uniqueChatsPerHour:
           type: integer
-          example: 25
+          example: 50
         uniqueChatsPerDay:
           type: integer
-          example: 100
+          example: 500
 
     AntiBanHealth:
       type: object

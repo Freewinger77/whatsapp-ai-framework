@@ -27,6 +27,7 @@ const { InstanceManager } = require('./src/utils/instance-manager');
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.API_KEY || ''; // Optional API key for external access
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const DEFAULT_WEBHOOK_URL = process.env.DEFAULT_WEBHOOK_URL || process.env.N8N_WEBHOOK_URL || '';
 
 // ========================================
 // STATE MANAGEMENT
@@ -541,6 +542,79 @@ app.put('/api/instances/:id/anti-ban', async (req, res) => {
 });
 
 // ========================================
+// WEBHOOK CONFIGURATION API
+// ========================================
+
+/**
+ * GET /api/webhook
+ * Get global default webhook URL
+ */
+app.get('/api/webhook', (req, res) => {
+    res.json({
+        success: true,
+        defaultWebhookUrl: DEFAULT_WEBHOOK_URL || null,
+        message: DEFAULT_WEBHOOK_URL 
+            ? 'Global webhook configured' 
+            : 'No global webhook. Set DEFAULT_WEBHOOK_URL or N8N_WEBHOOK_URL in .env'
+    });
+});
+
+/**
+ * GET /api/instances/:id/webhook
+ * Get webhook configuration for instance
+ */
+app.get('/api/instances/:id/webhook', (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        
+        const status = instance.getStatus();
+        res.json({
+            success: true,
+            instanceWebhookUrl: status.webhookUrl || null,
+            effectiveWebhookUrl: status.effectiveWebhookUrl,
+            usingGlobalDefault: !status.webhookUrl && !!DEFAULT_WEBHOOK_URL
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * PUT /api/instances/:id/webhook
+ * Set webhook URL for instance
+ * Body: { webhookUrl: "https://..." } or { webhookUrl: null } to use global default
+ */
+app.put('/api/instances/:id/webhook', async (req, res) => {
+    try {
+        const { webhookUrl } = req.body;
+        
+        const instance = await instanceManager.updateInstance(req.params.id, { 
+            webhookUrl: webhookUrl || '' 
+        });
+        
+        broadcastToAll({
+            type: 'instance_updated',
+            data: instance
+        });
+        
+        res.json({
+            success: true,
+            instanceWebhookUrl: instance.webhookUrl || null,
+            effectiveWebhookUrl: instance.webhookUrl || DEFAULT_WEBHOOK_URL || null,
+            usingGlobalDefault: !instance.webhookUrl && !!DEFAULT_WEBHOOK_URL,
+            message: instance.webhookUrl 
+                ? 'Instance webhook URL set' 
+                : (DEFAULT_WEBHOOK_URL ? 'Using global default webhook' : 'No webhook configured')
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// ========================================
 // GENERAL API ENDPOINTS
 // ========================================
 
@@ -558,7 +632,8 @@ app.get('/api/health', (req, res) => {
         instances: {
             total: instances.length,
             connected: connectedCount
-        }
+        },
+        defaultWebhookConfigured: !!DEFAULT_WEBHOOK_URL
     });
 });
 

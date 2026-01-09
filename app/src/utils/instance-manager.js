@@ -5,6 +5,7 @@
  * - Independent auth storage per instance
  * - Separate QR codes and connection states
  * - Per-instance webhook URLs and anti-ban settings
+ * - Global default webhook URL fallback
  * - Full API control for external platform integration
  */
 
@@ -18,6 +19,9 @@ const { AntiBanManager, safeSendMessage } = require('./anti-ban');
 // Base paths
 const INSTANCES_FOLDER = path.join(__dirname, '../../instances');
 const INSTANCES_DB_FILE = path.join(INSTANCES_FOLDER, 'instances.json');
+
+// Global default webhook URL (from environment)
+const DEFAULT_WEBHOOK_URL = process.env.DEFAULT_WEBHOOK_URL || process.env.N8N_WEBHOOK_URL || '';
 
 /**
  * Single WhatsApp Instance
@@ -45,10 +49,10 @@ class WhatsAppInstance {
         // Anti-ban settings
         this.antiBanSettings = config.antiBanSettings || {
             preset: 'balanced',
-            messagesPerHour: 50,
-            messagesPerDay: 300,
-            uniqueChatsPerHour: 25,
-            uniqueChatsPerDay: 100
+            messagesPerHour: 200,
+            messagesPerDay: 5000,
+            uniqueChatsPerHour: 50,
+            uniqueChatsPerDay: 500
         };
         this.antiBanManager = new AntiBanManager(this.antiBanSettings);
         
@@ -280,9 +284,12 @@ class WhatsAppInstance {
                 });
             }
             
-            // If webhook URL is configured, forward to it
-            if (this.webhookUrl) {
-                await this._forwardToWebhook(msg, messageContent, from, phoneNumber);
+            // Get effective webhook URL (instance-specific or global default)
+            const effectiveWebhookUrl = this.webhookUrl || DEFAULT_WEBHOOK_URL;
+            
+            // If webhook URL is configured (either instance or global), forward to it
+            if (effectiveWebhookUrl && effectiveWebhookUrl !== 'YOUR_N8N_WEBHOOK_URL_HERE') {
+                await this._forwardToWebhook(msg, messageContent, from, phoneNumber, effectiveWebhookUrl);
             }
             
         } catch (error) {
@@ -293,8 +300,13 @@ class WhatsAppInstance {
     
     /**
      * Forward message to webhook
+     * @param {Object} msg - Original message object
+     * @param {Object} messageContent - Extracted message content
+     * @param {string} from - Sender JID
+     * @param {string} phoneNumber - Sender phone number
+     * @param {string} webhookUrl - Webhook URL to forward to
      */
-    async _forwardToWebhook(msg, messageContent, from, phoneNumber) {
+    async _forwardToWebhook(msg, messageContent, from, phoneNumber, webhookUrl) {
         const axios = require('axios');
         
         try {
@@ -303,7 +315,7 @@ class WhatsAppInstance {
                 await this.socket.sendPresenceUpdate('composing', from);
             } catch (e) {}
             
-            const response = await axios.post(this.webhookUrl, {
+            const response = await axios.post(webhookUrl, {
                 instanceId: this.id,
                 from: phoneNumber,
                 fromJid: from,
@@ -440,6 +452,7 @@ class WhatsAppInstance {
             connectedPhone: this.connectedPhone,
             connectedAt: this.connectedAt,
             webhookUrl: this.webhookUrl,
+            effectiveWebhookUrl: this.webhookUrl || DEFAULT_WEBHOOK_URL || null,
             behaviorSettings: this.behaviorSettings,
             antiBanSettings: this.antiBanSettings,
             antiBanHealth: this.antiBanManager.getHealth(),

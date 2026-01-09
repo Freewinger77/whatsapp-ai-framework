@@ -10,10 +10,10 @@
 
 // Default rate limits (can be updated dynamically)
 let RATE_LIMITS = {
-    messagesPerHour: 50,
-    messagesPerDay: 300,
-    uniqueChatsPerHour: 25,
-    uniqueChatsPerDay: 100
+    messagesPerHour: 200,
+    messagesPerDay: 5000,
+    uniqueChatsPerHour: 50,
+    uniqueChatsPerDay: 500
 };
 
 // Delay configuration
@@ -27,23 +27,23 @@ const DELAY_CONFIG = {
 
 // Preset configurations
 const PRESETS = {
-    new: {
-        messagesPerHour: 30,
-        messagesPerDay: 150,
-        uniqueChatsPerHour: 15,
-        uniqueChatsPerDay: 50
+    conservative: {
+        messagesPerHour: 100,
+        messagesPerDay: 2000,
+        uniqueChatsPerHour: 25,
+        uniqueChatsPerDay: 250
     },
     balanced: {
-        messagesPerHour: 50,
-        messagesPerDay: 300,
-        uniqueChatsPerHour: 25,
-        uniqueChatsPerDay: 100
+        messagesPerHour: 200,
+        messagesPerDay: 5000,
+        uniqueChatsPerHour: 50,
+        uniqueChatsPerDay: 500
     },
-    higher: {
-        messagesPerHour: 80,
-        messagesPerDay: 500,
-        uniqueChatsPerHour: 40,
-        uniqueChatsPerDay: 150
+    aggressive: {
+        messagesPerHour: 400,
+        messagesPerDay: 10000,
+        uniqueChatsPerHour: 100,
+        uniqueChatsPerDay: 1000
     }
 };
 

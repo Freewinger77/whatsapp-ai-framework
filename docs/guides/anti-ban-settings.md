@@ -34,9 +34,9 @@ Waits 2-45 seconds before responding, calculated based on:
 
 | Preset | Messages/Hour | Messages/Day | Chats/Hour | Chats/Day | Best For |
 |--------|---------------|--------------|------------|-----------|----------|
-| `new` | 30 | 150 | 15 | 50 | New numbers (< 1 month) |
-| `balanced` | 50 | 300 | 25 | 100 | Most use cases |
-| `higher` | 80 | 500 | 40 | 150 | Established numbers |
+| `conservative` | 100 | 2,000 | 25 | 250 | Lower volume, safer |
+| `balanced` | 200 | 5,000 | 50 | 500 | Most use cases (default) |
+| `aggressive` | 400 | 10,000 | 100 | 1,000 | High volume needs |
 | `custom` | Your values | Your values | Your values | Your values | Advanced users |
 
 ## Getting Current Status
@@ -91,7 +91,7 @@ curl -X PUT http://localhost:3000/api/instances/wa_abc123/anti-ban \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{
-    "preset": "new"
+    "preset": "conservative"
   }'
 ```
 
@@ -222,18 +222,23 @@ The web dashboard shows real-time usage bars:
 
 ## Best Practices
 
-### For New Numbers (< 30 days)
+### For Lower Volume Use Cases
 
-1. Use `new` preset
+1. Use `conservative` preset
 2. Keep both `typingSimulation` and `delayEnabled` on
-3. Start slowly - don't max out limits immediately
-4. Gradually increase limits over time
+3. Monitor health status regularly
 
-### For Established Numbers
+### For Standard Use Cases
 
-1. Use `balanced` or `higher` preset
-2. Monitor health status regularly
+1. Use `balanced` preset (default)
+2. 200 messages/hour, 5000/day is suitable for most bots
 3. Watch for warnings before hitting limits
+
+### For High Volume
+
+1. Use `aggressive` preset carefully
+2. Only for established, verified business accounts
+3. Monitor closely for any warnings
 
 ### General Tips
 

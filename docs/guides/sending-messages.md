@@ -243,9 +243,9 @@ Messages are subject to anti-ban rate limits:
 
 | Preset | Messages/Hour | Messages/Day | Unique Chats/Hour |
 |--------|---------------|--------------|-------------------|
-| `new` | 30 | 150 | 15 |
-| `balanced` | 50 | 300 | 25 |
-| `higher` | 80 | 500 | 40 |
+| `conservative` | 100 | 2,000 | 25 |
+| `balanced` | 200 | 5,000 | 50 |
+| `aggressive` | 400 | 10,000 | 100 |
 
 Check current usage:
 ```bash

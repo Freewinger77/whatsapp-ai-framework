@@ -16,9 +16,30 @@ When a message arrives, the API:
 3. Waits for your response
 4. Sends the reply back to the user
 
-## Setting Up Webhooks
+## Webhook Configuration
 
-### Option 1: When Creating Instance
+### Global Default Webhook
+
+Set a default webhook URL for all instances via environment variable:
+
+```env
+# In your .env file
+DEFAULT_WEBHOOK_URL=https://your-server.com/webhook/whatsapp
+# Or (legacy support)
+N8N_WEBHOOK_URL=https://n8n.example.com/webhook/whatsapp
+```
+
+Check the global webhook:
+```bash
+curl http://localhost:3000/api/webhook \
+  -H "X-API-Key: your-api-key"
+```
+
+### Per-Instance Webhooks
+
+Each instance can have its own webhook URL that overrides the global default.
+
+#### Option 1: Set When Creating Instance
 
 ```bash
 curl -X POST http://localhost:3000/api/instances \
@@ -26,20 +47,64 @@ curl -X POST http://localhost:3000/api/instances \
   -H "X-API-Key: your-api-key" \
   -d '{
     "name": "Support Bot",
-    "webhookUrl": "https://your-server.com/webhook/whatsapp"
+    "webhookUrl": "https://your-server.com/webhook/support"
   }'
 ```
 
-### Option 2: Update Existing Instance
+#### Option 2: Update Existing Instance
 
 ```bash
-curl -X PUT http://localhost:3000/api/instances/wa_abc123 \
+curl -X PUT http://localhost:3000/api/instances/wa_abc123/webhook \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{
-    "webhookUrl": "https://your-server.com/webhook/whatsapp"
+    "webhookUrl": "https://your-server.com/webhook/support"
   }'
 ```
+
+#### Option 3: Clear Instance Webhook (Use Global Default)
+
+```bash
+curl -X PUT http://localhost:3000/api/instances/wa_abc123/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "webhookUrl": null
+  }'
+```
+
+### Check Instance Webhook Configuration
+
+```bash
+curl http://localhost:3000/api/instances/wa_abc123/webhook \
+  -H "X-API-Key: your-api-key"
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "instanceWebhookUrl": "https://custom-webhook.com/support",
+  "effectiveWebhookUrl": "https://custom-webhook.com/support",
+  "usingGlobalDefault": false
+}
+```
+
+Or if using global default:
+```json
+{
+  "success": true,
+  "instanceWebhookUrl": null,
+  "effectiveWebhookUrl": "https://global-webhook.com/whatsapp",
+  "usingGlobalDefault": true
+}
+```
+
+### Webhook Priority
+
+1. **Instance-specific webhook** (if set) - Used first
+2. **Global default webhook** (from env) - Fallback
+3. **No webhook** - Messages only emitted via WebSocket
 
 ## Webhook Request Format
 

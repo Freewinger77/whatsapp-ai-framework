@@ -16,10 +16,10 @@ const SETTINGS_FILE = path.join(__dirname, '../../settings.json');
 const DEFAULT_SETTINGS = {
     antiBan: {
         preset: 'balanced',
-        messagesPerHour: 50,
-        messagesPerDay: 300,
-        uniqueChatsPerHour: 25,
-        uniqueChatsPerDay: 100
+        messagesPerHour: 200,
+        messagesPerDay: 5000,
+        uniqueChatsPerHour: 50,
+        uniqueChatsPerDay: 500
     },
     n8nWebhookUrl: ''
 };

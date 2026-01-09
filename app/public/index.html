@@ -519,6 +519,13 @@
             color: var(--text-dim);
         }
 
+        .form-hint {
+            display: block;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
         /* Anti-Ban Presets */
         .preset-grid {
             display: grid;
@@ -927,11 +934,16 @@
                     <!-- Webhook Settings -->
                     <div class="card">
                         <div class="card-header">
-                            <span class="card-title">Webhook Configuration</span>
+                            <span class="card-title">Inbound Webhook</span>
                         </div>
                         <div class="form-group">
-                            <label>Webhook URL</label>
+                            <label>Instance Webhook URL</label>
                             <input type="url" id="input-webhook" placeholder="https://your-api.com/webhook">
+                            <span class="form-hint" id="webhook-hint">Leave empty to use global default</span>
+                        </div>
+                        <div class="info-row" style="margin-bottom: 12px;">
+                            <span class="info-label">Effective URL</span>
+                            <span class="info-value" id="info-effective-webhook" style="font-size: 0.7rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis;">-</span>
                         </div>
                         <button class="btn btn-primary btn-small" id="btn-save-webhook">Save Webhook</button>
                     </div>
@@ -972,17 +984,17 @@
                             <span class="card-title">Anti-Ban Protection</span>
                         </div>
                         <div class="preset-grid">
-                            <button class="preset-btn" data-preset="new">
-                                <div class="preset-btn-name">New</div>
-                                <div class="preset-btn-value">30/hr</div>
+                            <button class="preset-btn" data-preset="conservative">
+                                <div class="preset-btn-name">Conservative</div>
+                                <div class="preset-btn-value">100/hr</div>
                             </button>
                             <button class="preset-btn active" data-preset="balanced">
                                 <div class="preset-btn-name">Balanced</div>
-                                <div class="preset-btn-value">50/hr</div>
+                                <div class="preset-btn-value">200/hr</div>
                             </button>
-                            <button class="preset-btn" data-preset="higher">
-                                <div class="preset-btn-name">Higher</div>
-                                <div class="preset-btn-value">80/hr</div>
+                            <button class="preset-btn" data-preset="aggressive">
+                                <div class="preset-btn-name">Aggressive</div>
+                                <div class="preset-btn-value">400/hr</div>
                             </button>
                             <button class="preset-btn" data-preset="custom">
                                 <div class="preset-btn-name">Custom</div>
@@ -993,7 +1005,7 @@
                             <div class="usage-item">
                                 <div class="usage-header">
                                     <span class="usage-label">Messages/Hour</span>
-                                    <span class="usage-value" id="usage-msgs-hour">0/50</span>
+                                    <span class="usage-value" id="usage-msgs-hour">0/200</span>
                                 </div>
                                 <div class="usage-bar">
                                     <div class="usage-fill low" id="bar-msgs-hour" style="width: 0%"></div>
@@ -1002,7 +1014,7 @@
                             <div class="usage-item">
                                 <div class="usage-header">
                                     <span class="usage-label">Messages/Day</span>
-                                    <span class="usage-value" id="usage-msgs-day">0/300</span>
+                                    <span class="usage-value" id="usage-msgs-day">0/5000</span>
                                 </div>
                                 <div class="usage-bar">
                                     <div class="usage-fill low" id="bar-msgs-day" style="width: 0%"></div>
@@ -1098,6 +1110,8 @@
             infoConnected: document.getElementById('info-connected'),
             infoMessages: document.getElementById('info-messages'),
             inputWebhook: document.getElementById('input-webhook'),
+            infoEffectiveWebhook: document.getElementById('info-effective-webhook'),
+            webhookHint: document.getElementById('webhook-hint'),
             logsContainer: document.getElementById('logs-container'),
             logEmpty: document.getElementById('log-empty'),
             logCount: document.getElementById('log-count'),
@@ -1265,6 +1279,24 @@
             el.detailName.textContent = instance.name;
             el.detailId.textContent = instance.id;
             el.inputWebhook.value = instance.webhookUrl || '';
+            
+            // Show effective webhook URL
+            const effectiveUrl = instance.effectiveWebhookUrl;
+            if (effectiveUrl) {
+                el.infoEffectiveWebhook.textContent = effectiveUrl;
+                el.infoEffectiveWebhook.title = effectiveUrl;
+            } else {
+                el.infoEffectiveWebhook.textContent = 'Not configured';
+            }
+            
+            // Update hint based on whether using global
+            if (!instance.webhookUrl && effectiveUrl) {
+                el.webhookHint.textContent = 'Using global default: ' + effectiveUrl.substring(0, 40) + '...';
+            } else if (!instance.webhookUrl) {
+                el.webhookHint.textContent = 'Leave empty to use global default';
+            } else {
+                el.webhookHint.textContent = 'Custom webhook for this instance';
+            }
 
             // Status
             el.statusBadge.className = `status-badge status-${instance.status}`;
