@@ -12,9 +12,25 @@
 const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
+const crypto = require('crypto');
 const QRCode = require('qrcode');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const { AntiBanManager, safeSendMessage } = require('./anti-ban');
+
+/**
+ * Generate a UUID v4
+ */
+function generateUUID() {
+    return crypto.randomUUID();
+}
+
+/**
+ * Normalize phone number - remove leading + and non-digit characters
+ */
+function normalizePhone(phone) {
+    if (!phone) return '';
+    return phone.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
+}
 
 // Base paths
 const INSTANCES_FOLDER = path.join(__dirname, '../../instances');
@@ -245,8 +261,11 @@ class WhatsAppInstance {
             throw new Error('Instance not connected');
         }
         
+        // Normalize phone number - remove +, spaces, dashes, etc.
+        const normalizedTo = to.includes('@') ? to : to.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
+        
         // Format JID if needed
-        const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+        const jid = normalizedTo.includes('@') ? normalizedTo : `${normalizedTo}@s.whatsapp.net`;
         
         // Check rate limits
         const canSend = this.antiBanManager.canSendMessage(jid);
@@ -355,16 +374,30 @@ class WhatsAppInstance {
                 await this.socket.sendPresenceUpdate('composing', from);
             } catch (e) {}
             
+            // Map messageType to media_type
+            const mediaTypeMap = {
+                'text': 'text',
+                'image': 'image',
+                'video': 'video',
+                'audio': 'audio',
+                'document': 'document',
+                'sticker': 'sticker',
+                'location': 'location',
+                'contact': 'contact',
+                'unknown': 'text'
+            };
+            
             const payload = {
-                instanceId: this.id,
-                from: phoneNumber,
-                fromJid: from,
+                message_id: generateUUID(),
+                created_at: new Date().toISOString(),
+                from_phone: normalizePhone(phoneNumber),
+                to_phone: normalizePhone(this.connectedPhone),
                 message: messageContent.text,
-                messageType: messageContent.messageType,
-                isReply: messageContent.isReply,
-                quotedMessage: messageContent.quotedText,
-                timestamp: new Date().toISOString(),
-                messageId: msg.key.id
+                media_type: mediaTypeMap[messageContent.messageType] || 'text',
+                status: 'received',
+                webhook_id: this.id,
+                event: 'message',
+                quoted_message: messageContent.quotedText || null
             };
             
             console.log(`[Instance ${this.id}] Webhook payload:`, JSON.stringify(payload, null, 2));

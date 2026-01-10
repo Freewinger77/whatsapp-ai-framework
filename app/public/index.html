@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Multi-Instance Manager</title>
+    <title>ViperClaw - Multi-Instance WhatsApp</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -15,44 +15,44 @@
         }
 
         :root {
-            --bg-dark: #0c0c0f;
-            --bg-card: #13131a;
-            --bg-elevated: #1a1a24;
-            --bg-input: #0f0f14;
-            --border: #2a2a3a;
-            --border-focus: #4f46e5;
-            --text: #f0f0f5;
-            --text-muted: #7a7a8c;
-            --text-dim: #4a4a5c;
-            --accent: #6366f1;
-            --accent-hover: #818cf8;
-            --success: #10b981;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --info: #3b82f6;
+            --zinc-950: #09090b;
+            --zinc-900: #18181b;
+            --zinc-800: #27272a;
+            --zinc-700: #3f3f46;
+            --zinc-600: #52525b;
+            --zinc-500: #71717a;
+            --zinc-400: #a1a1aa;
+            --zinc-300: #d4d4d8;
+            --emerald-400: #34d399;
+            --emerald-500: #10b981;
+            --emerald-600: #059669;
+            --red-400: #f87171;
+            --red-900: #7f1d1d;
+            --red-950: #450a0a;
+            --amber-400: #fbbf24;
+            --sky-400: #38bdf8;
+            --fuchsia-400: #e879f9;
+            --teal-600: #0d9488;
         }
 
         body {
-            font-family: 'Outfit', sans-serif;
-            background: var(--bg-dark);
-            color: var(--text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--zinc-950);
+            color: white;
             min-height: 100vh;
-            background-image: 
-                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.15), transparent),
-                radial-gradient(ellipse 60% 40% at 100% 100%, rgba(16, 185, 129, 0.08), transparent);
+            font-size: 14px;
         }
 
         .app {
-            display: grid;
-            grid-template-columns: 280px 1fr;
+            display: flex;
             min-height: 100vh;
         }
 
         /* Sidebar */
         .sidebar {
-            background: var(--bg-card);
-            border-right: 1px solid var(--border);
-            padding: 24px 16px;
+            width: 256px;
+            background: rgba(24, 24, 27, 0.3);
+            border-right: 1px solid rgba(39, 39, 42, 0.5);
             display: flex;
             flex-direction: column;
         }
@@ -61,75 +61,102 @@
             display: flex;
             align-items: center;
             gap: 12px;
-            padding: 0 8px 24px;
-            border-bottom: 1px solid var(--border);
-            margin-bottom: 24px;
+            padding: 16px;
+            border-bottom: 1px solid rgba(39, 39, 42, 0.5);
+        }
+
+        .logo-icon-wrapper {
+            position: relative;
         }
 
         .logo-icon {
             width: 40px;
             height: 40px;
-            background: linear-gradient(135deg, var(--accent), var(--success));
-            border-radius: 10px;
+            background: linear-gradient(135deg, var(--emerald-400), var(--teal-600));
+            border-radius: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.25rem;
+        }
+
+        .logo-icon svg {
+            width: 20px;
+            height: 20px;
+            color: white;
+        }
+
+        .logo-status {
+            position: absolute;
+            top: -4px;
+            right: -4px;
+            width: 10px;
+            height: 10px;
+            background: var(--emerald-400);
+            border-radius: 50%;
+            border: 2px solid var(--zinc-950);
         }
 
         .logo-text h1 {
-            font-size: 1rem;
-            font-weight: 600;
+            font-size: 18px;
+            font-weight: 700;
             letter-spacing: -0.5px;
         }
 
+        .logo-text h1 .viper {
+            color: var(--emerald-400);
+        }
+
+        .logo-text h1 .claw {
+            color: white;
+        }
+
         .logo-text span {
-            font-size: 0.7rem;
-            color: var(--text-muted);
+            font-size: 10px;
+            color: var(--zinc-500);
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 2px;
+        }
+
+        .instances-section {
+            padding: 12px;
         }
 
         .instances-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 0 8px;
             margin-bottom: 12px;
         }
 
         .instances-header h2 {
-            font-size: 0.7rem;
-            font-weight: 600;
+            font-size: 11px;
+            font-weight: 500;
             text-transform: uppercase;
             letter-spacing: 1px;
-            color: var(--text-muted);
+            color: var(--zinc-500);
         }
 
-        .btn-new {
-            width: 28px;
-            height: 28px;
-            border-radius: 6px;
-            border: 1px dashed var(--border);
+        .btn-add {
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            border: none;
             background: transparent;
-            color: var(--text-muted);
+            color: var(--zinc-400);
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.1rem;
-            transition: all 0.2s;
+            font-size: 16px;
+            transition: all 0.15s;
         }
 
-        .btn-new:hover {
-            border-color: var(--accent);
-            color: var(--accent);
-            background: rgba(99, 102, 241, 0.1);
+        .btn-add:hover {
+            color: white;
+            background: var(--zinc-800);
         }
 
         .instance-list {
-            flex: 1;
-            overflow-y: auto;
             display: flex;
             flex-direction: column;
             gap: 4px;
@@ -147,39 +174,35 @@
         }
 
         .instance-item:hover {
-            background: var(--bg-elevated);
+            background: rgba(39, 39, 42, 0.5);
         }
 
         .instance-item.active {
-            background: var(--bg-elevated);
-            border-color: var(--accent);
+            background: var(--zinc-800);
+            border-color: var(--zinc-700);
         }
 
         .instance-avatar {
-            width: 36px;
-            height: 36px;
+            width: 32px;
+            height: 32px;
             border-radius: 8px;
-            background: var(--bg-input);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.9rem;
-            position: relative;
+            font-size: 13px;
+            font-weight: 500;
+            text-transform: uppercase;
         }
 
-        .instance-status-dot {
-            position: absolute;
-            bottom: -2px;
-            right: -2px;
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            border: 2px solid var(--bg-card);
+        .instance-avatar.connected {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--emerald-400);
         }
 
-        .instance-status-dot.connected { background: var(--success); }
-        .instance-status-dot.connecting { background: var(--warning); animation: pulse 1.5s infinite; }
-        .instance-status-dot.disconnected { background: var(--text-dim); }
+        .instance-avatar.disconnected {
+            background: rgba(63, 63, 70, 0.5);
+            color: var(--zinc-400);
+        }
 
         .instance-info {
             flex: 1;
@@ -187,39 +210,214 @@
         }
 
         .instance-name {
-            font-size: 0.875rem;
+            font-size: 14px;
             font-weight: 500;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
 
-        .instance-phone {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            font-family: 'JetBrains Mono', monospace;
+        .instance-status-text {
+            font-size: 12px;
+            color: var(--zinc-500);
         }
 
-        .empty-instances {
-            padding: 32px 16px;
+        .instance-status-text.connected {
+            color: var(--emerald-400);
+        }
+
+        .empty-state {
+            padding: 24px 16px;
             text-align: center;
-            color: var(--text-muted);
+            color: var(--zinc-500);
+            font-size: 12px;
         }
 
-        .empty-instances-icon {
-            font-size: 2.5rem;
+        /* Tools Section */
+        .tools-section {
+            margin-top: auto;
+            padding: 12px;
+            border-top: 1px solid rgba(39, 39, 42, 0.5);
+        }
+
+        .tools-header {
+            font-size: 11px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--zinc-500);
             margin-bottom: 12px;
-            opacity: 0.5;
         }
 
-        .empty-instances p {
-            font-size: 0.875rem;
-            margin-bottom: 16px;
+        .tools-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .tool-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .tool-item svg {
+            width: 14px;
+            height: 14px;
+        }
+
+        .tool-item .tool-name {
+            color: var(--zinc-300);
+        }
+
+        .tool-item .tool-status {
+            margin-left: auto;
+            width: 6px;
+            height: 6px;
+            background: var(--emerald-400);
+            border-radius: 50%;
         }
 
         /* Main Content */
+        .main-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .instance-header {
+            padding: 16px 24px;
+            border-bottom: 1px solid rgba(39, 39, 42, 0.5);
+            background: rgba(24, 24, 27, 0.5);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .header-avatar {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .header-avatar.connected {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--emerald-400);
+        }
+
+        .header-avatar.disconnected {
+            background: rgba(63, 63, 70, 0.5);
+            color: var(--zinc-400);
+        }
+
+        .header-info h2 {
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .header-info .instance-id {
+            font-size: 12px;
+            color: var(--zinc-500);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: inherit;
+        }
+
+        .btn svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--zinc-700);
+            color: var(--zinc-400);
+        }
+
+        .btn-outline:hover {
+            background: var(--zinc-800);
+            color: white;
+        }
+
+        .btn-danger-outline {
+            background: transparent;
+            border: 1px solid rgba(127, 29, 29, 0.5);
+            color: var(--red-400);
+        }
+
+        .btn-danger-outline:hover {
+            background: rgba(69, 10, 10, 0.3);
+        }
+
+        .btn-primary {
+            background: var(--emerald-600);
+            border: none;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--emerald-500);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-danger {
+            background: transparent;
+            border: 1px solid rgba(127, 29, 29, 0.5);
+            color: var(--red-400);
+        }
+
+        .btn-danger:hover {
+            background: rgba(69, 10, 10, 0.3);
+        }
+
+        .btn-ghost {
+            background: transparent;
+            border: none;
+            color: var(--zinc-500);
+        }
+
+        .btn-ghost:hover {
+            color: var(--zinc-300);
+        }
+
+        /* Main Content Area */
         .main {
-            padding: 24px 32px;
+            flex: 1;
+            padding: 24px;
             overflow-y: auto;
         }
 
@@ -230,314 +428,295 @@
             justify-content: center;
             height: 100%;
             text-align: center;
-            color: var(--text-muted);
-        }
-
-        .welcome-icon {
-            font-size: 4rem;
-            margin-bottom: 24px;
-            opacity: 0.3;
+            color: var(--zinc-500);
         }
 
         .welcome-screen h2 {
-            font-size: 1.5rem;
-            color: var(--text);
+            font-size: 20px;
+            color: white;
             margin-bottom: 8px;
         }
 
         .welcome-screen p {
-            max-width: 400px;
-            line-height: 1.6;
+            max-width: 360px;
+            line-height: 1.5;
+            font-size: 14px;
         }
 
-        /* Instance Detail View */
-        .instance-detail {
-            display: none;
-        }
-
-        .instance-detail.visible {
-            display: block;
-        }
-
-        .detail-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 32px;
-        }
-
-        .detail-title {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .detail-avatar {
-            width: 56px;
-            height: 56px;
-            border-radius: 12px;
-            background: linear-gradient(135deg, var(--accent), var(--success));
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.5rem;
-        }
-
-        .detail-title-text h2 {
-            font-size: 1.5rem;
-            font-weight: 600;
-            letter-spacing: -0.5px;
-        }
-
-        .detail-title-text .instance-id {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            font-family: 'JetBrains Mono', monospace;
-        }
-
-        .detail-actions {
-            display: flex;
-            gap: 8px;
-        }
-
-        .btn {
-            padding: 10px 16px;
-            border-radius: 8px;
-            font-size: 0.875rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.15s;
-            border: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            font-family: inherit;
-        }
-
-        .btn-primary {
-            background: var(--accent);
-            color: white;
-        }
-
-        .btn-primary:hover { background: var(--accent-hover); }
-        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        .btn-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-success:hover { background: #059669; }
-        .btn-success:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
-        .btn-danger:hover { background: #dc2626; }
-
-        .btn-ghost {
-            background: transparent;
-            color: var(--text-muted);
-            border: 1px solid var(--border);
-        }
-
-        .btn-ghost:hover {
-            background: var(--bg-elevated);
-            color: var(--text);
-        }
-
-        .btn-small {
-            padding: 6px 12px;
-            font-size: 0.8rem;
-        }
-
-        /* Cards Grid */
-        .cards-grid {
+        /* Grid Layout */
+        .grid-12 {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 20px;
-            margin-bottom: 24px;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 24px;
         }
 
+        .col-4 { grid-column: span 4; }
+        .col-6 { grid-column: span 6; }
+        .col-12 { grid-column: span 12; }
+
+        @media (max-width: 1200px) {
+            .col-4 { grid-column: span 6; }
+        }
+
+        @media (max-width: 900px) {
+            .col-4, .col-6 { grid-column: span 12; }
+        }
+
+        /* Cards */
         .card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
+            background: rgba(24, 24, 27, 0.5);
+            border: 1px solid rgba(39, 39, 42, 0.5);
             border-radius: 12px;
             padding: 20px;
         }
 
-        .card-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        .card-title {
+            font-size: 11px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--zinc-500);
             margin-bottom: 16px;
         }
 
-        .card-title {
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: var(--text-muted);
-        }
-
         /* QR Code Card */
-        .qr-container {
-            background: var(--bg-input);
-            border-radius: 8px;
+        .qr-area {
+            background: rgba(39, 39, 42, 0.5);
+            border-radius: 12px;
+            padding: 24px;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-height: 220px;
-            padding: 20px;
+            min-height: 200px;
+            margin-bottom: 16px;
         }
 
         .qr-code {
-            max-width: 180px;
-            border-radius: 8px;
+            max-width: 160px;
+            border-radius: 12px;
             background: white;
-            padding: 8px;
+            padding: 12px;
+        }
+
+        .qr-connected {
+            text-align: center;
+            padding: 32px 0;
+        }
+
+        .qr-check-circle {
+            width: 64px;
+            height: 64px;
+            background: rgba(16, 185, 129, 0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 12px;
+        }
+
+        .qr-check-circle svg {
+            width: 32px;
+            height: 32px;
+            color: var(--emerald-400);
+        }
+
+        .qr-connected .title {
+            color: var(--emerald-400);
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .qr-connected .desc {
+            font-size: 12px;
+            color: var(--zinc-500);
         }
 
         .qr-placeholder {
             text-align: center;
-            color: var(--text-muted);
+            color: var(--zinc-500);
         }
 
-        .qr-placeholder-icon {
-            font-size: 2.5rem;
-            margin-bottom: 8px;
+        .qr-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
         }
 
-        .qr-placeholder p {
-            font-size: 0.875rem;
+        .btn-clear-auth {
+            width: 100%;
+            margin-top: 8px;
+            padding: 8px;
+            background: transparent;
+            border: none;
+            color: var(--zinc-500);
+            font-size: 14px;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.15s;
+        }
+
+        .btn-clear-auth:hover {
+            color: var(--zinc-300);
         }
 
         /* Status Card */
+        .status-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
         .status-badge {
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 6px 12px;
-            border-radius: 100px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            border: 1px solid;
         }
 
-        .status-badge::before {
-            content: '';
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
+        .status-badge svg {
+            width: 12px;
+            height: 12px;
         }
 
-        .status-connected {
-            background: rgba(16, 185, 129, 0.15);
-            color: var(--success);
-        }
-        .status-connected::before { background: var(--success); }
-
-        .status-connecting {
-            background: rgba(245, 158, 11, 0.15);
-            color: var(--warning);
-        }
-        .status-connecting::before { background: var(--warning); animation: pulse 1.5s infinite; }
-
-        .status-disconnected {
-            background: rgba(74, 74, 92, 0.3);
-            color: var(--text-muted);
-        }
-        .status-disconnected::before { background: var(--text-dim); }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
+        .status-badge.connected {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--emerald-400);
+            border-color: rgba(16, 185, 129, 0.2);
         }
 
-        .info-grid {
+        .status-badge.connecting {
+            background: rgba(251, 191, 36, 0.1);
+            color: var(--amber-400);
+            border-color: rgba(251, 191, 36, 0.2);
+        }
+
+        .status-badge.disconnected {
+            background: rgba(63, 63, 70, 0.5);
+            color: var(--zinc-400);
+            border-color: var(--zinc-600);
+        }
+
+        .info-list {
             display: flex;
             flex-direction: column;
-            gap: 12px;
         }
 
-        .info-row {
+        .info-item {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 12px;
-            background: var(--bg-input);
-            border-radius: 6px;
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(39, 39, 42, 0.5);
+        }
+
+        .info-item:last-child {
+            border-bottom: none;
         }
 
         .info-label {
-            font-size: 0.8rem;
-            color: var(--text-muted);
+            font-size: 14px;
+            color: var(--zinc-400);
         }
 
         .info-value {
+            font-size: 14px;
+            color: white;
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.8rem;
         }
 
-        /* Settings Form */
+        .info-value.highlight {
+            font-weight: 600;
+            font-family: inherit;
+        }
+
+        /* Webhook Card */
         .form-group {
-            margin-bottom: 16px;
+            margin-bottom: 12px;
         }
 
         .form-group label {
             display: block;
-            font-size: 0.75rem;
-            font-weight: 500;
-            color: var(--text-muted);
+            font-size: 12px;
+            color: var(--zinc-500);
             margin-bottom: 6px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
         }
 
-        .form-group input, .form-group select {
+        .input-wrapper {
+            position: relative;
+        }
+
+        .form-group input {
             width: 100%;
-            padding: 10px 12px;
-            background: var(--bg-input);
-            border: 1px solid var(--border);
+            padding: 10px 40px 10px 12px;
+            background: rgba(39, 39, 42, 0.5);
+            border: 1px solid var(--zinc-700);
             border-radius: 6px;
-            color: var(--text);
+            color: white;
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.875rem;
+            font-size: 12px;
             transition: border-color 0.15s;
         }
 
-        .form-group input:focus, .form-group select:focus {
+        .form-group input:focus {
             outline: none;
-            border-color: var(--accent);
+            border-color: var(--emerald-500);
         }
 
         .form-group input::placeholder {
-            color: var(--text-dim);
+            color: var(--zinc-600);
+        }
+
+        .btn-copy {
+            position: absolute;
+            right: 4px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 28px;
+            height: 28px;
+            background: transparent;
+            border: none;
+            color: var(--zinc-400);
+            cursor: pointer;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+        }
+
+        .btn-copy:hover {
+            color: white;
+        }
+
+        .btn-copy svg {
+            width: 14px;
+            height: 14px;
         }
 
         .form-hint {
-            display: block;
-            font-size: 0.7rem;
-            color: var(--text-muted);
-            margin-top: 4px;
+            font-size: 10px;
+            color: var(--zinc-600);
+            margin-top: 6px;
         }
 
-        /* Anti-Ban Presets */
+        /* Anti-Ban Card */
         .preset-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
             gap: 8px;
-            margin-bottom: 16px;
+            margin-bottom: 24px;
         }
 
         .preset-btn {
-            padding: 12px 8px;
-            background: var(--bg-input);
-            border: 1px solid var(--border);
+            padding: 12px;
+            background: rgba(39, 39, 42, 0.5);
+            border: 1px solid transparent;
             border-radius: 8px;
             cursor: pointer;
             transition: all 0.15s;
@@ -545,99 +724,256 @@
         }
 
         .preset-btn:hover {
-            border-color: var(--accent);
+            border-color: var(--zinc-700);
         }
 
         .preset-btn.active {
-            border-color: var(--accent);
-            background: rgba(99, 102, 241, 0.1);
+            background: var(--zinc-700);
+            border-color: var(--zinc-600);
         }
 
-        .preset-btn-name {
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: var(--text);
+        .preset-name {
+            font-size: 14px;
+            font-weight: 500;
+            color: white;
             margin-bottom: 2px;
         }
 
-        .preset-btn-value {
-            font-size: 0.65rem;
-            color: var(--text-muted);
+        .preset-value {
+            font-size: 12px;
+            color: var(--zinc-500);
         }
 
-        /* Usage Bars */
-        .usage-bars {
+        .usage-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .usage-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+        }
+
+        .usage-label {
+            font-size: 14px;
+            color: var(--zinc-400);
+        }
+
+        .usage-value {
+            font-size: 14px;
+            font-family: 'JetBrains Mono', monospace;
+            color: white;
+        }
+
+        /* Behavior Card */
+        .toggle-list {
             display: flex;
             flex-direction: column;
             gap: 12px;
+            margin-bottom: 16px;
         }
 
-        .usage-item {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-
-        .usage-header {
+        .toggle-row {
             display: flex;
             justify-content: space-between;
-            font-size: 0.7rem;
-        }
-
-        .usage-label { color: var(--text-muted); }
-        .usage-value { font-family: 'JetBrains Mono', monospace; }
-
-        .usage-bar {
-            height: 6px;
-            background: var(--bg-input);
-            border-radius: 3px;
-            overflow: hidden;
-        }
-
-        .usage-fill {
-            height: 100%;
-            border-radius: 3px;
-            transition: width 0.3s, background 0.3s;
-        }
-
-        .usage-fill.low { background: var(--success); }
-        .usage-fill.medium { background: var(--warning); }
-        .usage-fill.high { background: var(--danger); }
-
-        /* Logs */
-        .logs-container {
-            background: var(--bg-input);
+            align-items: center;
+            padding: 12px;
+            background: rgba(39, 39, 42, 0.3);
             border-radius: 8px;
-            max-height: 300px;
+        }
+
+        .toggle-info h4 {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 2px;
+        }
+
+        .toggle-info p {
+            font-size: 12px;
+            color: var(--zinc-500);
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--zinc-700);
+            transition: 0.2s;
+            border-radius: 24px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.2s;
+            border-radius: 50%;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: var(--emerald-500);
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(20px);
+        }
+
+        /* Activity Log */
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .log-count {
+            font-size: 12px;
+            color: var(--zinc-600);
+        }
+
+        .log-container {
+            background: rgba(9, 9, 11, 0.5);
+            border-radius: 8px;
+            padding: 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            max-height: 192px;
             overflow-y: auto;
         }
 
         .log-entry {
             display: flex;
-            gap: 12px;
-            padding: 10px 12px;
-            font-size: 0.8rem;
-            font-family: 'JetBrains Mono', monospace;
-            border-bottom: 1px solid var(--border);
+            gap: 16px;
+            padding: 4px 0;
         }
-
-        .log-entry:last-child { border-bottom: none; }
 
         .log-time {
-            color: var(--text-dim);
-            white-space: nowrap;
+            color: var(--zinc-600);
+            flex-shrink: 0;
         }
 
-        .log-message { flex: 1; word-break: break-word; }
-        .log-info { color: var(--info); }
-        .log-success { color: var(--success); }
-        .log-warning { color: var(--warning); }
-        .log-error { color: var(--danger); }
+        .log-message {
+            color: var(--zinc-400);
+        }
+
+        .log-message.success { color: var(--emerald-400); }
+        .log-message.error { color: var(--red-400); }
+        .log-message.warning { color: var(--amber-400); }
+        .log-message.info { color: var(--zinc-400); }
 
         .log-empty {
-            padding: 32px;
+            padding: 24px;
             text-align: center;
-            color: var(--text-dim);
+            color: var(--zinc-600);
+        }
+
+        /* Footer */
+        .footer {
+            padding: 12px 24px;
+            border-top: 1px solid rgba(39, 39, 42, 0.5);
+            background: rgba(24, 24, 27, 0.3);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .footer-status {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .footer-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .footer-item svg {
+            width: 14px;
+            height: 14px;
+            color: var(--zinc-500);
+        }
+
+        .footer-item .label {
+            color: var(--zinc-500);
+        }
+
+        .footer-item .dot {
+            width: 6px;
+            height: 6px;
+            background: var(--emerald-400);
+            border-radius: 50%;
+        }
+
+        .footer-item .status {
+            color: var(--emerald-400);
+        }
+
+        .live-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 12px;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--emerald-400);
+        }
+
+        .live-badge .ping {
+            position: relative;
+            width: 8px;
+            height: 8px;
+        }
+
+        .live-badge .ping-dot {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: var(--emerald-500);
+            border-radius: 50%;
+        }
+
+        .live-badge .ping-ring {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: var(--emerald-400);
+            border-radius: 50%;
+            animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+        }
+
+        @keyframes ping {
+            75%, 100% {
+                transform: scale(2);
+                opacity: 0;
+            }
         }
 
         /* Modal */
@@ -656,24 +992,12 @@
         }
 
         .modal {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
+            background: var(--zinc-900);
+            border: 1px solid var(--zinc-800);
+            border-radius: 12px;
             padding: 24px;
             width: 100%;
-            max-width: 420px;
-            animation: modalIn 0.2s ease;
-        }
-
-        @keyframes modalIn {
-            from {
-                opacity: 0;
-                transform: scale(0.95) translateY(10px);
-            }
-            to {
-                opacity: 1;
-                transform: scale(1) translateY(0);
-            }
+            max-width: 400px;
         }
 
         .modal-header {
@@ -684,20 +1008,23 @@
         }
 
         .modal-header h3 {
-            font-size: 1.1rem;
+            font-size: 18px;
             font-weight: 600;
         }
 
         .modal-close {
             background: none;
             border: none;
-            color: var(--text-muted);
+            color: var(--zinc-400);
             cursor: pointer;
-            font-size: 1.25rem;
-            padding: 4px;
+            font-size: 24px;
+            padding: 0;
+            line-height: 1;
         }
 
-        .modal-close:hover { color: var(--text); }
+        .modal-close:hover {
+            color: white;
+        }
 
         .modal-footer {
             display: flex;
@@ -706,136 +1033,21 @@
             margin-top: 24px;
         }
 
-        /* Connection Indicator */
-        .connection-indicator {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            padding: 8px 14px;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 100px;
-            font-size: 0.75rem;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .connection-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-        }
-
-        .connection-indicator.connected .connection-dot { background: var(--success); }
-        .connection-indicator.disconnected .connection-dot { background: var(--danger); }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-            .app {
-                grid-template-columns: 1fr;
-            }
-
-            .sidebar {
-                position: fixed;
-                left: -280px;
-                top: 0;
-                bottom: 0;
-                z-index: 100;
-                transition: left 0.3s;
-            }
-
-            .sidebar.open {
-                left: 0;
-            }
-
-            .mobile-header {
-                display: flex;
-            }
-        }
-
-        /* Toggle Switch */
-        .toggle-group {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        .toggle-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px;
-            background: var(--bg-input);
-            border-radius: 8px;
-        }
-
-        .toggle-info {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-
-        .toggle-label {
-            font-size: 0.875rem;
-            font-weight: 500;
-        }
-
-        .toggle-desc {
-            font-size: 0.7rem;
-            color: var(--text-muted);
-        }
-
-        .toggle-switch {
-            position: relative;
-            width: 44px;
-            height: 24px;
-            flex-shrink: 0;
-        }
-
-        .toggle-switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-
-        .toggle-slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: var(--border);
-            transition: 0.2s;
-            border-radius: 24px;
-        }
-
-        .toggle-slider:before {
-            position: absolute;
-            content: "";
-            height: 18px;
-            width: 18px;
-            left: 3px;
-            bottom: 3px;
-            background-color: var(--text);
-            transition: 0.2s;
-            border-radius: 50%;
-        }
-
-        .toggle-switch input:checked + .toggle-slider {
-            background-color: var(--accent);
-        }
-
-        .toggle-switch input:checked + .toggle-slider:before {
-            transform: translateX(20px);
-        }
-
         /* Scrollbar */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+        ::-webkit-scrollbar-thumb { background: var(--zinc-700); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--zinc-600); }
+
+        .instance-detail {
+            display: none;
+        }
+
+        .instance-detail.visible {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
     </style>
 </head>
 <body>
@@ -843,199 +1055,249 @@
         <!-- Sidebar -->
         <aside class="sidebar">
             <div class="logo">
-                <div class="logo-icon">📱</div>
+                <div class="logo-icon-wrapper">
+                    <div class="logo-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+                            <line x1="12" y1="18" x2="12" y2="18"/>
+                        </svg>
+                    </div>
+                    <div class="logo-status"></div>
+                </div>
                 <div class="logo-text">
-                    <h1>WhatsApp Manager</h1>
+                    <h1><span class="viper">Viper</span><span class="claw">Claw</span></h1>
                     <span>Multi-Instance</span>
                 </div>
             </div>
 
-            <div class="instances-header">
-                <h2>Instances</h2>
-                <button class="btn-new" id="btn-new-instance" title="Add Instance">+</button>
+            <div class="instances-section">
+                <div class="instances-header">
+                    <h2>Instances</h2>
+                    <button class="btn-add" id="btn-new-instance" title="Add Instance">+</button>
+                </div>
+
+                <div class="instance-list" id="instance-list">
+                    <div class="empty-state" id="empty-instances">
+                        No instances yet.<br>Click + to create one.
+                    </div>
+                </div>
             </div>
 
-            <div class="instance-list" id="instance-list">
-                <div class="empty-instances" id="empty-instances">
-                    <div class="empty-instances-icon">📭</div>
-                    <p>No instances yet</p>
-                    <button class="btn btn-primary btn-small" id="btn-create-first">Create Instance</button>
+            <div class="tools-section">
+                <div class="tools-header">Tools</div>
+                <div class="tools-list">
+                    <div class="tool-item">
+                        <svg style="color: var(--sky-400)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                        <span class="tool-name">Calendar</span>
+                        <span class="tool-status"></span>
+                    </div>
+                    <div class="tool-item">
+                        <svg style="color: var(--amber-400)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                        <span class="tool-name">Job Search</span>
+                        <span class="tool-status"></span>
+                    </div>
+                    <div class="tool-item">
+                        <svg style="color: var(--fuchsia-400)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                        <span class="tool-name">Knowledge Base</span>
+                        <span class="tool-status"></span>
+                    </div>
                 </div>
             </div>
         </aside>
 
         <!-- Main Content -->
-        <main class="main">
+        <div class="main-wrapper">
             <!-- Welcome Screen -->
             <div class="welcome-screen" id="welcome-screen">
-                <div class="welcome-icon">🚀</div>
-                <h2>Welcome to WhatsApp Manager</h2>
-                <p>Create an instance to connect a WhatsApp number. You can manage multiple numbers from this dashboard.</p>
+                <h2>Welcome to ViperClaw</h2>
+                <p>Create an instance to connect a WhatsApp number. Manage multiple numbers from this dashboard.</p>
             </div>
 
             <!-- Instance Detail -->
             <div class="instance-detail" id="instance-detail">
-                <div class="detail-header">
-                    <div class="detail-title">
-                        <div class="detail-avatar">📱</div>
-                        <div class="detail-title-text">
+                <header class="instance-header">
+                    <div class="header-left">
+                        <div class="header-avatar disconnected" id="header-avatar">M</div>
+                        <div class="header-info">
                             <h2 id="detail-name">Instance Name</h2>
                             <div class="instance-id" id="detail-id">wa_xxx</div>
                         </div>
                     </div>
-                    <div class="detail-actions">
-                        <button class="btn btn-ghost btn-small" id="btn-edit-instance">Edit</button>
-                        <button class="btn btn-danger btn-small" id="btn-delete-instance">Delete</button>
+                    <div class="header-actions">
+                        <button class="btn btn-outline" id="btn-edit-instance">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                            Edit
+                        </button>
+                        <button class="btn btn-danger-outline" id="btn-delete-instance">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                            Delete
+                        </button>
                     </div>
-                </div>
+                </header>
 
-                <div class="cards-grid">
-                    <!-- QR Code Card -->
-                    <div class="card">
-                        <div class="card-header">
-                            <span class="card-title">QR Code</span>
-                        </div>
-                        <div class="qr-container" id="qr-container">
-                            <div class="qr-placeholder" id="qr-placeholder">
-                                <div class="qr-placeholder-icon">📱</div>
-                                <p>Click Connect to generate QR</p>
-                            </div>
-                            <img id="qr-code" class="qr-code" style="display: none;" alt="QR Code" />
-                        </div>
-                        <div style="margin-top: 16px; display: flex; gap: 8px;">
-                            <button class="btn btn-success" id="btn-connect" style="flex: 1;">Connect</button>
-                            <button class="btn btn-danger" id="btn-disconnect" style="flex: 1;" disabled>Disconnect</button>
-                        </div>
-                        <button class="btn btn-ghost btn-small" id="btn-clear-auth" style="width: 100%; margin-top: 8px;">Clear Auth</button>
-                    </div>
-
-                    <!-- Status Card -->
-                    <div class="card">
-                        <div class="card-header">
-                            <span class="card-title">Status</span>
-                            <span class="status-badge status-disconnected" id="status-badge">Disconnected</span>
-                        </div>
-                        <div class="info-grid">
-                            <div class="info-row">
-                                <span class="info-label">Phone Number</span>
-                                <span class="info-value" id="info-phone">-</span>
-                            </div>
-                            <div class="info-row">
-                                <span class="info-label">Connected Since</span>
-                                <span class="info-value" id="info-connected">-</span>
-                            </div>
-                            <div class="info-row">
-                                <span class="info-label">Messages Today</span>
-                                <span class="info-value" id="info-messages">0</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Webhook Settings -->
-                    <div class="card">
-                        <div class="card-header">
-                            <span class="card-title">Inbound Webhook</span>
-                        </div>
-                        <div class="form-group">
-                            <label>Instance Webhook URL</label>
-                            <input type="url" id="input-webhook" placeholder="https://your-api.com/webhook">
-                            <span class="form-hint" id="webhook-hint">Leave empty to use global default</span>
-                        </div>
-                        <div class="info-row" style="margin-bottom: 12px;">
-                            <span class="info-label">Effective URL</span>
-                            <span class="info-value" id="info-effective-webhook" style="font-size: 0.7rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis;">-</span>
-                        </div>
-                        <button class="btn btn-primary btn-small" id="btn-save-webhook">Save Webhook</button>
-                    </div>
-                    
-                    <!-- Behavior Settings -->
-                    <div class="card">
-                        <div class="card-header">
-                            <span class="card-title">Behavior Settings</span>
-                        </div>
-                        <div class="toggle-group">
-                            <div class="toggle-item">
-                                <div class="toggle-info">
-                                    <span class="toggle-label">Typing Simulation</span>
-                                    <span class="toggle-desc">Show "typing..." indicator before sending</span>
+                <main class="main">
+                    <div class="grid-12">
+                        <!-- QR Code -->
+                        <div class="card col-4">
+                            <div class="card-title">QR Code</div>
+                            <div class="qr-area" id="qr-area">
+                                <div class="qr-placeholder" id="qr-placeholder">
+                                    <div style="font-size: 32px; margin-bottom: 8px; opacity: 0.5;">📱</div>
+                                    <p style="font-size: 12px;">Click Connect to generate QR</p>
                                 </div>
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="toggle-typing" checked>
-                                    <span class="toggle-slider"></span>
-                                </label>
+                                <img id="qr-code" class="qr-code" style="display: none;" alt="QR Code" />
                             </div>
-                            <div class="toggle-item">
-                                <div class="toggle-info">
-                                    <span class="toggle-label">Response Delays</span>
-                                    <span class="toggle-desc">Human-like delay before responding</span>
-                                </div>
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="toggle-delay" checked>
-                                    <span class="toggle-slider"></span>
-                                </label>
+                            <div class="qr-buttons">
+                                <button class="btn btn-primary" id="btn-connect">Connect</button>
+                                <button class="btn btn-danger" id="btn-disconnect" disabled>Disconnect</button>
                             </div>
+                            <button class="btn-clear-auth" id="btn-clear-auth">Clear Auth</button>
                         </div>
-                        <button class="btn btn-primary btn-small" id="btn-save-behavior" style="margin-top: 12px;">Save Behavior</button>
-                    </div>
 
-                    <!-- Anti-Ban Settings -->
-                    <div class="card">
-                        <div class="card-header">
-                            <span class="card-title">Anti-Ban Protection</span>
+                        <!-- Status -->
+                        <div class="card col-4">
+                            <div class="status-header">
+                                <span class="card-title" style="margin-bottom: 0;">Status</span>
+                                <span class="status-badge disconnected" id="status-badge">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></svg>
+                                    Disconnected
+                                </span>
+                            </div>
+                            <div class="info-list">
+                                <div class="info-item">
+                                    <span class="info-label">Phone Number</span>
+                                    <span class="info-value" id="info-phone">—</span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="info-label">Connected Since</span>
+                                    <span class="info-value" id="info-connected">—</span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="info-label">Messages Today</span>
+                                    <span class="info-value highlight" id="info-messages">0</span>
+                                </div>
+                            </div>
                         </div>
-                        <div class="preset-grid">
-                            <button class="preset-btn" data-preset="conservative">
-                                <div class="preset-btn-name">Conservative</div>
-                                <div class="preset-btn-value">100/hr</div>
-                            </button>
-                            <button class="preset-btn active" data-preset="balanced">
-                                <div class="preset-btn-name">Balanced</div>
-                                <div class="preset-btn-value">200/hr</div>
-                            </button>
-                            <button class="preset-btn" data-preset="aggressive">
-                                <div class="preset-btn-name">Aggressive</div>
-                                <div class="preset-btn-value">400/hr</div>
-                            </button>
-                            <button class="preset-btn" data-preset="custom">
-                                <div class="preset-btn-name">Custom</div>
-                                <div class="preset-btn-value">Configure</div>
-                            </button>
+
+                        <!-- Webhook -->
+                        <div class="card col-4">
+                            <div class="card-title">Inbound Webhook</div>
+                            <div class="form-group">
+                                <label>Instance Webhook URL</label>
+                                <div class="input-wrapper">
+                                    <input type="url" id="input-webhook" placeholder="https://your-webhook-url.com/...">
+                                    <button class="btn-copy" id="btn-copy-webhook" title="Copy">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                    </button>
+                                </div>
+                                <div class="form-hint" id="webhook-hint">Custom webhook for this instance</div>
+                            </div>
+                            <div class="form-group">
+                                <label>Effective URL</label>
+                                <input type="text" id="info-effective-webhook" readonly placeholder="https://your-webhook-url.com/...">
+                            </div>
+                            <button class="btn btn-primary" style="width: 100%;" id="btn-save-webhook">Save Webhook</button>
                         </div>
-                        <div class="usage-bars">
-                            <div class="usage-item">
-                                <div class="usage-header">
+
+                        <!-- Anti-Ban -->
+                        <div class="card col-6">
+                            <div class="card-title">Anti-Ban Protection</div>
+                            <div class="preset-grid">
+                                <button class="preset-btn" data-preset="conservative">
+                                    <div class="preset-name">Conservative</div>
+                                    <div class="preset-value">100/hr</div>
+                                </button>
+                                <button class="preset-btn active" data-preset="balanced">
+                                    <div class="preset-name">Balanced</div>
+                                    <div class="preset-value">200/hr</div>
+                                </button>
+                                <button class="preset-btn" data-preset="aggressive">
+                                    <div class="preset-name">Aggressive</div>
+                                    <div class="preset-value">400/hr</div>
+                                </button>
+                                <button class="preset-btn" data-preset="custom">
+                                    <div class="preset-name">Custom</div>
+                                    <div class="preset-value">Configure</div>
+                                </button>
+                            </div>
+                            <div class="usage-list">
+                                <div class="usage-row">
                                     <span class="usage-label">Messages/Hour</span>
                                     <span class="usage-value" id="usage-msgs-hour">0/200</span>
                                 </div>
-                                <div class="usage-bar">
-                                    <div class="usage-fill low" id="bar-msgs-hour" style="width: 0%"></div>
-                                </div>
-                            </div>
-                            <div class="usage-item">
-                                <div class="usage-header">
+                                <div class="usage-row">
                                     <span class="usage-label">Messages/Day</span>
                                     <span class="usage-value" id="usage-msgs-day">0/5000</span>
                                 </div>
-                                <div class="usage-bar">
-                                    <div class="usage-fill low" id="bar-msgs-day" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <!-- Behavior -->
+                        <div class="card col-6">
+                            <div class="card-title">Behavior Settings</div>
+                            <div class="toggle-list">
+                                <div class="toggle-row">
+                                    <div class="toggle-info">
+                                        <h4>Typing Simulation</h4>
+                                        <p>Show "typing..." indicator before sending</p>
+                                    </div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="toggle-typing">
+                                        <span class="toggle-slider"></span>
+                                    </label>
                                 </div>
+                                <div class="toggle-row">
+                                    <div class="toggle-info">
+                                        <h4>Response Delays</h4>
+                                        <p>Human-like delay before responding</p>
+                                    </div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="toggle-delay">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+                            <button class="btn btn-primary" style="width: 100%;" id="btn-save-behavior">Save Behavior</button>
+                        </div>
+
+                        <!-- Activity Log -->
+                        <div class="card col-12">
+                            <div class="log-header">
+                                <span class="card-title" style="margin-bottom: 0;">Activity Log</span>
+                                <span class="log-count" id="log-count">0 entries</span>
+                            </div>
+                            <div class="log-container" id="log-container">
+                                <div class="log-empty" id="log-empty">No activity yet</div>
                             </div>
                         </div>
                     </div>
-                </div>
+                </main>
 
-                <!-- Activity Log -->
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-title">Activity Log</span>
-                        <span class="card-title" id="log-count">0 entries</span>
+                <footer class="footer">
+                    <div class="footer-status">
+                        <div class="footer-item">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                            <span class="label">Website</span>
+                            <span class="dot"></span>
+                            <span class="status">Live</span>
+                        </div>
+                        <div class="footer-item">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                            <span class="label">API</span>
+                            <span class="dot"></span>
+                            <span class="status">Live</span>
+                        </div>
                     </div>
-                    <div class="logs-container" id="logs-container">
-                        <div class="log-empty" id="log-empty">No activity yet</div>
+                    <div class="live-badge" id="connection-badge">
+                        <span class="ping">
+                            <span class="ping-ring"></span>
+                            <span class="ping-dot"></span>
+                        </span>
+                        <span id="connection-status">Live</span>
                     </div>
-                </div>
+                </footer>
             </div>
-        </main>
+        </div>
     </div>
 
     <!-- Create Instance Modal -->
@@ -1078,31 +1340,24 @@
         </div>
     </div>
 
-    <!-- Connection Indicator -->
-    <div class="connection-indicator disconnected" id="connection-indicator">
-        <span class="connection-dot"></span>
-        <span id="connection-status">Connecting...</span>
-    </div>
-
     <script>
     (function() {
         'use strict';
 
-        // State
         let ws = null;
         let instances = [];
         let selectedInstanceId = null;
         let reconnectTimeout = null;
 
-        // DOM Elements
         const el = {
             instanceList: document.getElementById('instance-list'),
             emptyInstances: document.getElementById('empty-instances'),
             welcomeScreen: document.getElementById('welcome-screen'),
             instanceDetail: document.getElementById('instance-detail'),
+            headerAvatar: document.getElementById('header-avatar'),
             detailName: document.getElementById('detail-name'),
             detailId: document.getElementById('detail-id'),
-            qrContainer: document.getElementById('qr-container'),
+            qrArea: document.getElementById('qr-area'),
             qrPlaceholder: document.getElementById('qr-placeholder'),
             qrCode: document.getElementById('qr-code'),
             statusBadge: document.getElementById('status-badge'),
@@ -1112,24 +1367,22 @@
             inputWebhook: document.getElementById('input-webhook'),
             infoEffectiveWebhook: document.getElementById('info-effective-webhook'),
             webhookHint: document.getElementById('webhook-hint'),
-            logsContainer: document.getElementById('logs-container'),
+            logContainer: document.getElementById('log-container'),
             logEmpty: document.getElementById('log-empty'),
             logCount: document.getElementById('log-count'),
-            connectionIndicator: document.getElementById('connection-indicator'),
+            connectionBadge: document.getElementById('connection-badge'),
             connectionStatus: document.getElementById('connection-status'),
-            // Buttons
             btnNewInstance: document.getElementById('btn-new-instance'),
-            btnCreateFirst: document.getElementById('btn-create-first'),
             btnConnect: document.getElementById('btn-connect'),
             btnDisconnect: document.getElementById('btn-disconnect'),
             btnClearAuth: document.getElementById('btn-clear-auth'),
             btnSaveWebhook: document.getElementById('btn-save-webhook'),
+            btnCopyWebhook: document.getElementById('btn-copy-webhook'),
             btnEditInstance: document.getElementById('btn-edit-instance'),
             btnDeleteInstance: document.getElementById('btn-delete-instance'),
             btnSaveBehavior: document.getElementById('btn-save-behavior'),
             toggleTyping: document.getElementById('toggle-typing'),
             toggleDelay: document.getElementById('toggle-delay'),
-            // Modals
             modalCreate: document.getElementById('modal-create'),
             modalClose: document.getElementById('modal-close'),
             inputInstanceName: document.getElementById('input-instance-name'),
@@ -1141,26 +1394,20 @@
             inputEditName: document.getElementById('input-edit-name'),
             btnCancelEdit: document.getElementById('btn-cancel-edit'),
             btnConfirmEdit: document.getElementById('btn-confirm-edit'),
-            // Usage
             usageMsgsHour: document.getElementById('usage-msgs-hour'),
             usageMsgsDay: document.getElementById('usage-msgs-day'),
-            barMsgsHour: document.getElementById('bar-msgs-hour'),
-            barMsgsDay: document.getElementById('bar-msgs-day'),
         };
 
-        // WebSocket Connection
         function connectWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
             ws.onopen = () => {
-                el.connectionIndicator.className = 'connection-indicator connected';
                 el.connectionStatus.textContent = 'Live';
                 ws.send(JSON.stringify({ type: 'subscribe_all' }));
             };
 
             ws.onclose = () => {
-                el.connectionIndicator.className = 'connection-indicator disconnected';
                 el.connectionStatus.textContent = 'Reconnecting...';
                 clearTimeout(reconnectTimeout);
                 reconnectTimeout = setTimeout(connectWebSocket, 3000);
@@ -1169,10 +1416,9 @@
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    console.log('[WS] Received:', data.type, data.data?.id || '');
                     handleMessage(data);
                 } catch (e) {
-                    console.error('WebSocket message error:', e);
+                    console.error('WebSocket error:', e);
                 }
             };
         }
@@ -1221,9 +1467,7 @@
             }
         }
 
-        // Render Functions
         function renderInstanceList() {
-            // Clear existing items (except empty state)
             const items = el.instanceList.querySelectorAll('.instance-item');
             items.forEach(item => item.remove());
 
@@ -1238,14 +1482,20 @@
                 const item = document.createElement('div');
                 item.className = `instance-item ${instance.id === selectedInstanceId ? 'active' : ''}`;
                 item.dataset.id = instance.id;
+                
+                const firstLetter = (instance.name || 'I').charAt(0).toUpperCase();
+                const isConnected = instance.status === 'connected';
+                const statusText = isConnected && instance.connectedPhone 
+                    ? 'Connected'
+                    : instance.status === 'connecting' 
+                        ? 'Connecting...' 
+                        : 'Not connected';
+                
                 item.innerHTML = `
-                    <div class="instance-avatar">
-                        📱
-                        <div class="instance-status-dot ${instance.status}"></div>
-                    </div>
+                    <div class="instance-avatar ${isConnected ? 'connected' : 'disconnected'}">${firstLetter}</div>
                     <div class="instance-info">
                         <div class="instance-name">${escapeHtml(instance.name)}</div>
-                        <div class="instance-phone">${instance.connectedPhone || 'Not connected'}</div>
+                        <div class="instance-status-text ${isConnected ? 'connected' : ''}">${statusText}</div>
                     </div>
                 `;
                 item.addEventListener('click', () => selectInstance(instance.id));
@@ -1258,58 +1508,57 @@
             const instance = instances.find(i => i.id === id);
             if (!instance) return;
 
-            // Update sidebar selection
             document.querySelectorAll('.instance-item').forEach(item => {
                 item.classList.toggle('active', item.dataset.id === id);
             });
 
-            // Show detail view
             el.welcomeScreen.style.display = 'none';
             el.instanceDetail.classList.add('visible');
-
-            // Render detail
             renderInstanceDetail(instance);
-
-            // Load logs
             loadLogs(id);
         }
 
         function renderInstanceDetail(instance) {
             if (!instance) return;
 
+            const firstLetter = (instance.name || 'I').charAt(0).toUpperCase();
+            const isConnected = instance.status === 'connected';
+            
+            el.headerAvatar.textContent = firstLetter;
+            el.headerAvatar.className = `header-avatar ${isConnected ? 'connected' : 'disconnected'}`;
             el.detailName.textContent = instance.name;
             el.detailId.textContent = instance.id;
             el.inputWebhook.value = instance.webhookUrl || '';
-            
-            // Show effective webhook URL
-            const effectiveUrl = instance.effectiveWebhookUrl;
-            if (effectiveUrl) {
-                el.infoEffectiveWebhook.textContent = effectiveUrl;
-                el.infoEffectiveWebhook.title = effectiveUrl;
-            } else {
-                el.infoEffectiveWebhook.textContent = 'Not configured';
-            }
-            
-            // Update hint based on whether using global
+
+            const effectiveUrl = instance.effectiveWebhookUrl || '';
+            el.infoEffectiveWebhook.value = effectiveUrl;
+
             if (!instance.webhookUrl && effectiveUrl) {
-                el.webhookHint.textContent = 'Using global default: ' + effectiveUrl.substring(0, 40) + '...';
+                el.webhookHint.textContent = 'Using global default';
             } else if (!instance.webhookUrl) {
                 el.webhookHint.textContent = 'Leave empty to use global default';
             } else {
                 el.webhookHint.textContent = 'Custom webhook for this instance';
             }
 
-            // Status
-            el.statusBadge.className = `status-badge status-${instance.status}`;
-            el.statusBadge.textContent = instance.status.charAt(0).toUpperCase() + instance.status.slice(1);
+            // Status badge
+            el.statusBadge.className = `status-badge ${instance.status}`;
+            const statusText = instance.status.charAt(0).toUpperCase() + instance.status.slice(1);
+            el.statusBadge.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></svg>
+                ${statusText}
+            `;
 
-            // Connection info
-            el.infoPhone.textContent = instance.connectedPhone || '-';
+            // Phone info
+            const phone = instance.connectedPhone || '';
+            el.infoPhone.textContent = phone ? '+' + phone.replace(/(\d{2})(\d{4})(\d+)/, '$1 $2 $3') : '—';
             el.infoConnected.textContent = instance.connectedAt 
-                ? new Date(instance.connectedAt).toLocaleString() 
-                : '-';
+                ? new Date(instance.connectedAt).toLocaleString('en-GB', { 
+                    year: 'numeric', month: '2-digit', day: '2-digit', 
+                    hour: '2-digit', minute: '2-digit' 
+                }).replace(',', '')
+                : '—';
 
-            // Buttons
             el.btnConnect.disabled = instance.status !== 'disconnected';
             el.btnDisconnect.disabled = instance.status === 'disconnected';
 
@@ -1322,54 +1571,48 @@
                 el.qrCode.style.display = 'none';
                 el.qrPlaceholder.style.display = 'flex';
                 el.qrPlaceholder.innerHTML = `
-                    <div class="qr-placeholder-icon">✅</div>
-                    <p>Connected to WhatsApp</p>
+                    <div class="qr-connected">
+                        <div class="qr-check-circle">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                        </div>
+                        <div class="title">Session Active</div>
+                        <div class="desc">Device authenticated</div>
+                    </div>
                 `;
             } else if (instance.status === 'connecting') {
                 el.qrCode.style.display = 'none';
                 el.qrPlaceholder.style.display = 'flex';
                 el.qrPlaceholder.innerHTML = `
-                    <div class="qr-placeholder-icon">⏳</div>
-                    <p>Generating QR code...</p>
+                    <div style="font-size: 32px; margin-bottom: 8px;">⏳</div>
+                    <p style="font-size: 12px; color: var(--zinc-500);">Generating QR code...</p>
                 `;
             } else {
                 el.qrCode.style.display = 'none';
                 el.qrPlaceholder.style.display = 'flex';
                 el.qrPlaceholder.innerHTML = `
-                    <div class="qr-placeholder-icon">📱</div>
-                    <p>Click Connect to generate QR</p>
+                    <div style="font-size: 32px; margin-bottom: 8px; opacity: 0.5;">📱</div>
+                    <p style="font-size: 12px; color: var(--zinc-500);">Click Connect to generate QR</p>
                 `;
             }
 
             // Anti-ban usage
             if (instance.antiBanHealth) {
-                const health = instance.antiBanHealth;
-                const stats = health.stats || {};
+                const stats = instance.antiBanHealth.stats || {};
                 const limits = stats.limits || {};
-                
-                updateUsageBar(el.usageMsgsHour, el.barMsgsHour, stats.messagesThisHour || 0, limits.messagesPerHour || 50);
-                updateUsageBar(el.usageMsgsDay, el.barMsgsDay, stats.messagesThisDay || 0, limits.messagesPerDay || 300);
+                el.usageMsgsHour.textContent = `${stats.messagesThisHour || 0}/${limits.messagesPerHour || 200}`;
+                el.usageMsgsDay.textContent = `${stats.messagesThisDay || 0}/${limits.messagesPerDay || 5000}`;
                 el.infoMessages.textContent = stats.messagesThisDay || 0;
             }
 
-            // Preset buttons
             const preset = instance.antiBanSettings?.preset || 'balanced';
             document.querySelectorAll('.preset-btn').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.preset === preset);
             });
-            
-            // Behavior settings
+
             if (instance.behaviorSettings) {
                 el.toggleTyping.checked = instance.behaviorSettings.typingSimulation !== false;
                 el.toggleDelay.checked = instance.behaviorSettings.delayEnabled !== false;
             }
-        }
-
-        function updateUsageBar(labelEl, barEl, current, max) {
-            const percentage = Math.min((current / max) * 100, 100);
-            labelEl.textContent = `${current}/${max}`;
-            barEl.style.width = `${percentage}%`;
-            barEl.className = `usage-fill ${percentage >= 80 ? 'high' : percentage >= 50 ? 'medium' : 'low'}`;
         }
 
         function showWelcome() {
@@ -1388,8 +1631,7 @@
         }
 
         function renderLogs(logs) {
-            // Clear existing entries
-            const entries = el.logsContainer.querySelectorAll('.log-entry');
+            const entries = el.logContainer.querySelectorAll('.log-entry');
             entries.forEach(e => e.remove());
 
             if (logs.length === 0) {
@@ -1403,19 +1645,18 @@
 
             logs.forEach(log => {
                 const entry = createLogEntry(log);
-                el.logsContainer.insertBefore(entry, el.logEmpty);
+                el.logContainer.insertBefore(entry, el.logEmpty);
             });
         }
 
         function appendLog(log) {
             el.logEmpty.style.display = 'none';
             const entry = createLogEntry(log);
-            el.logsContainer.insertBefore(entry, el.logsContainer.firstChild);
+            el.logContainer.insertBefore(entry, el.logContainer.firstChild);
 
-            const entries = el.logsContainer.querySelectorAll('.log-entry');
+            const entries = el.logContainer.querySelectorAll('.log-entry');
             el.logCount.textContent = `${entries.length} entries`;
 
-            // Limit displayed logs
             while (entries.length > 100) {
                 entries[entries.length - 1].remove();
             }
@@ -1424,14 +1665,14 @@
         function createLogEntry(log) {
             const entry = document.createElement('div');
             entry.className = 'log-entry';
+            const levelClass = log.level === 'error' ? 'error' : log.level === 'warning' ? 'warning' : log.level === 'info' ? 'info' : 'success';
             entry.innerHTML = `
-                <span class="log-time">${new Date(log.timestamp).toLocaleTimeString()}</span>
-                <span class="log-message log-${log.level}">${escapeHtml(log.message)}</span>
+                <span class="log-time">${new Date(log.timestamp).toLocaleTimeString('en-GB')}</span>
+                <span class="log-message ${levelClass}">${escapeHtml(log.message)}</span>
             `;
             return entry;
         }
 
-        // API Calls
         async function apiCall(endpoint, method = 'GET', body = null) {
             const options = { method, headers: {} };
             if (body) {
@@ -1444,12 +1685,6 @@
 
         // Event Handlers
         el.btnNewInstance.addEventListener('click', () => {
-            el.inputInstanceName.value = '';
-            el.inputInstanceWebhook.value = '';
-            el.modalCreate.classList.add('visible');
-        });
-
-        el.btnCreateFirst.addEventListener('click', () => {
             el.inputInstanceName.value = '';
             el.inputInstanceWebhook.value = '';
             el.modalCreate.classList.add('visible');
@@ -1473,7 +1708,7 @@
                     el.modalCreate.classList.remove('visible');
                 }
             } catch (e) {
-                alert('Error creating instance: ' + e.message);
+                alert('Error: ' + e.message);
             }
 
             el.btnConfirmCreate.disabled = false;
@@ -1490,7 +1725,6 @@
                     alert('Connection error: ' + result.error);
                     el.btnConnect.disabled = false;
                 }
-                // Button will be re-enabled by WebSocket status update
             } catch (e) {
                 alert('Error: ' + e.message);
                 el.btnConnect.disabled = false;
@@ -1540,23 +1774,33 @@
             }
         });
 
+        el.btnCopyWebhook.addEventListener('click', () => {
+            const url = el.inputWebhook.value;
+            if (url) {
+                navigator.clipboard.writeText(url);
+                el.btnCopyWebhook.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+                setTimeout(() => {
+                    el.btnCopyWebhook.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+                }, 2000);
+            }
+        });
+
         el.btnDeleteInstance.addEventListener('click', async () => {
             if (!selectedInstanceId) return;
             if (!confirm('Delete this instance? This cannot be undone.')) return;
-
             try {
                 await apiCall(`/instances/${selectedInstanceId}`, 'DELETE');
             } catch (e) {
                 alert('Error: ' + e.message);
             }
         });
-        
+
         el.btnSaveBehavior.addEventListener('click', async () => {
             if (!selectedInstanceId) return;
-            
+
             el.btnSaveBehavior.disabled = true;
             el.btnSaveBehavior.textContent = 'Saving...';
-            
+
             try {
                 await fetch(`/api/instances/${selectedInstanceId}/behavior`, {
                     method: 'PUT',
@@ -1603,7 +1847,6 @@
             el.btnConfirmEdit.disabled = false;
         });
 
-        // Preset buttons
         document.querySelectorAll('.preset-btn').forEach(btn => {
             btn.addEventListener('click', async () => {
                 if (!selectedInstanceId) return;
@@ -1620,14 +1863,12 @@
             });
         });
 
-        // Utilities
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
         }
 
-        // Initialize
         connectWebSocket();
     })();
     </script>

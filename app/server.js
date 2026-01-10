@@ -357,16 +357,33 @@ app.post('/api/instances/:id/send', async (req, res) => {
 });
 
 /**
+ * Normalize phone number - remove leading + and any non-digit characters
+ */
+function normalizePhone(phone) {
+    if (!phone) return null;
+    return phone.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
+}
+
+/**
  * POST /api/send
- * Send a message (auto-select instance by phone or specify instanceId)
- * Body: { instanceId?, to: "phone_number", message: "text", typingSimulation?: boolean, delayEnabled?: boolean }
+ * Global send endpoint - finds instance by 'from_phone' number
+ * Body: { 
+ *   from_phone: "sender_phone_number",  // Which of your connected numbers to send from
+ *   to_phone: "recipient_phone_number", 
+ *   message: "text", 
+ *   typingSimulation?: boolean, 
+ *   delayEnabled?: boolean 
+ * }
  */
 app.post('/api/send', async (req, res) => {
     try {
-        const { instanceId, to, message, typingSimulation, delayEnabled } = req.body;
+        // Support both new format (from_phone, to_phone) and legacy format (from, to)
+        const fromPhone = req.body.from_phone || req.body.from;
+        const toPhone = req.body.to_phone || req.body.to;
+        const { message, typingSimulation, delayEnabled } = req.body;
         
-        if (!to || !message) {
-            return res.status(400).json({ error: 'Missing required fields: to, message' });
+        if (!toPhone || !message) {
+            return res.status(400).json({ error: 'Missing required fields: to_phone, message' });
         }
         
         // Build options for per-message behavior override
@@ -374,29 +391,100 @@ app.post('/api/send', async (req, res) => {
         if (typingSimulation !== undefined) options.typingSimulation = typingSimulation;
         if (delayEnabled !== undefined) options.delayEnabled = delayEnabled;
         
-        // If instanceId provided, use that instance
-        if (instanceId) {
-            const result = await instanceManager.sendMessage(instanceId, to, message, options);
-            return res.json({ success: true, result });
+        let targetInstanceId = null;
+        let matchedInstance = null;
+        
+        // If 'from_phone' provided, find the instance with that connected number
+        if (fromPhone) {
+            const instances = instanceManager.getAllInstances();
+            
+            // Normalize the 'from' number (remove +, spaces, dashes)
+            const normalizedFrom = normalizePhone(fromPhone);
+            
+            // Find instance where connectedPhone matches
+            matchedInstance = instances.find(i => {
+                if (!i.connectedPhone || i.status !== 'connected') return false;
+                const normalizedConnected = normalizePhone(i.connectedPhone);
+                // Match if either is a suffix of the other (handles country code variations)
+                return normalizedConnected.endsWith(normalizedFrom) || 
+                       normalizedFrom.endsWith(normalizedConnected) ||
+                       normalizedConnected === normalizedFrom;
+            });
+            
+            if (!matchedInstance) {
+                return res.status(400).json({ 
+                    error: `No connected instance found for phone number: ${fromPhone}`,
+                    hint: 'Make sure the phone number is connected and matches exactly'
+                });
+            }
+            
+            targetInstanceId = matchedInstance.id;
+        } else {
+            // No from_phone provided - use first connected instance
+            const instances = instanceManager.getAllInstances();
+            matchedInstance = instances.find(i => i.status === 'connected');
+            
+            if (!matchedInstance) {
+                return res.status(400).json({ error: 'No connected instances available' });
+            }
+            
+            targetInstanceId = matchedInstance.id;
         }
         
-        // Otherwise, use first connected instance
-        const instances = instanceManager.getAllInstances();
-        const connectedInstance = instances.find(i => i.status === 'connected');
+        const result = await instanceManager.sendMessage(targetInstanceId, toPhone, message, options);
         
-        if (!connectedInstance) {
-            return res.status(400).json({ error: 'No connected instances available' });
+        // Determine status based on actual result
+        let status = 'sent';
+        if (!result.sent) {
+            status = result.reason?.includes('Rate') ? 'rate_limited' : 'failed';
         }
         
-        const result = await instanceManager.sendMessage(connectedInstance.id, to, message, options);
-        res.json({ 
-            success: true, 
-            instanceId: connectedInstance.id,
-            result 
-        });
+        res.json([{
+            message_id: crypto.randomUUID(),
+            created_at: new Date().toISOString(),
+            from_phone: normalizePhone(matchedInstance.connectedPhone),
+            to_phone: normalizePhone(toPhone),
+            message: message,
+            status: status
+        }]);
     } catch (error) {
-        res.status(400).json({ error: error.message });
+        // Check if error indicates a ban or connection issue
+        const errorMsg = error.message.toLowerCase();
+        let status = 'failed';
+        if (errorMsg.includes('rate') || errorMsg.includes('limit')) {
+            status = 'rate_limited';
+        } else if (errorMsg.includes('ban') || errorMsg.includes('blocked')) {
+            status = 'banned';
+        } else if (errorMsg.includes('connect') || errorMsg.includes('disconnect')) {
+            status = 'disconnected';
+        }
+        
+        res.status(400).json({ 
+            error: error.message,
+            status: status
+        });
     }
+});
+
+/**
+ * GET /api/numbers
+ * Get list of all connected phone numbers (for webhook integration)
+ */
+app.get('/api/numbers', (req, res) => {
+    const instances = instanceManager.getAllInstances();
+    const numbers = instances
+        .filter(i => i.status === 'connected' && i.connectedPhone)
+        .map(i => ({
+            phone: normalizePhone(i.connectedPhone),
+            instanceId: i.id,
+            name: i.name
+        }));
+    
+    res.json({ 
+        success: true,
+        count: numbers.length,
+        numbers 
+    });
 });
 
 // ========================================
@@ -806,8 +894,9 @@ API Endpoints:
   POST   /api/instances/:id/clear-auth  Clear credentials
   GET    /api/instances/:id/qr          Get QR code
   
-  POST   /api/instances/:id/send        Send message
-  POST   /api/send                      Send (auto-select instance)
+  POST   /api/instances/:id/send        Send message via specific instance
+  POST   /api/send                      Send message (by 'from' phone or instanceId)
+  GET    /api/numbers                   List all connected phone numbers
   
   GET    /api/instances/:id/logs        Get activity logs
   GET    /api/instances/:id/anti-ban    Get anti-ban status
