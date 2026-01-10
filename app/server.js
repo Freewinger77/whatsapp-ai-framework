@@ -233,14 +233,17 @@ app.delete('/api/instances/:id', async (req, res) => {
  * Start WhatsApp connection for instance
  */
 app.post('/api/instances/:id/connect', async (req, res) => {
+    console.log(`[API] Connect request for instance: ${req.params.id}`);
     try {
         const instance = await instanceManager.connectInstance(req.params.id);
+        console.log(`[API] Connect successful for: ${req.params.id}`);
         res.json({ 
             success: true, 
             message: 'Connection started',
             instance 
         });
     } catch (error) {
+        console.error(`[API] Connect error for ${req.params.id}:`, error.message);
         res.status(400).json({ error: error.message });
     }
 });
@@ -746,26 +749,35 @@ function handleWebSocketMessage(ws, data) {
  * Broadcast to all connected WebSocket clients
  */
 function broadcastToAll(data) {
+    console.log(`[WS] Broadcasting to ALL:`, data.type);
     const message = JSON.stringify(data);
+    let sentCount = 0;
     wsClients.forEach((clientState, ws) => {
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(message);
+            sentCount++;
         }
     });
+    console.log(`[WS] Sent to ${sentCount} clients`);
 }
 
 /**
  * Broadcast to clients subscribed to a specific instance
  */
 function broadcastToInstance(instanceId, data) {
+    console.log(`[WS] Broadcasting to instance ${instanceId}:`, data.type);
     const message = JSON.stringify(data);
+    let sentCount = 0;
     wsClients.forEach((clientState, ws) => {
         if (ws.readyState === WebSocket.OPEN) {
-            if (clientState.subscribedInstances.has(instanceId) || clientState.subscribedInstances.size === 0) {
+            // Send to all clients when they're subscribed to all (empty set) or to this specific instance
+            if (clientState.subscribedInstances.size === 0 || clientState.subscribedInstances.has(instanceId)) {
                 ws.send(message);
+                sentCount++;
             }
         }
     });
+    console.log(`[WS] Sent to ${sentCount} clients`);
 }
 
 // ========================================
@@ -813,6 +825,7 @@ Initializing...
     
     // Set up event handlers
     instanceManager.onStatusChange = (instanceId, status) => {
+        console.log(`[Event] Status change for ${instanceId}: ${status.status}, hasQR: ${!!status.qrCode}`);
         broadcastToInstance(instanceId, {
             type: 'instance_status',
             data: status

@@ -1169,6 +1169,7 @@
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
+                    console.log('[WS] Received:', data.type, data.data?.id || '');
                     handleMessage(data);
                 } catch (e) {
                     console.error('WebSocket message error:', e);
@@ -1482,12 +1483,19 @@
         el.btnConnect.addEventListener('click', async () => {
             if (!selectedInstanceId) return;
             el.btnConnect.disabled = true;
+            el.btnConnect.textContent = 'Connecting...';
             try {
-                await apiCall(`/instances/${selectedInstanceId}/connect`, 'POST');
+                const result = await apiCall(`/instances/${selectedInstanceId}/connect`, 'POST');
+                if (result.error) {
+                    alert('Connection error: ' + result.error);
+                    el.btnConnect.disabled = false;
+                }
+                // Button will be re-enabled by WebSocket status update
             } catch (e) {
                 alert('Error: ' + e.message);
                 el.btnConnect.disabled = false;
             }
+            el.btnConnect.textContent = 'Connect';
         });
 
         el.btnDisconnect.addEventListener('click', async () => {

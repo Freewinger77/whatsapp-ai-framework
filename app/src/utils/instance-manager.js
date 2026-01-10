@@ -82,6 +82,8 @@ class WhatsAppInstance {
      * Start WhatsApp connection
      */
     async connect() {
+        console.log(`[Instance ${this.id}] connect() called, current status: ${this.status}`);
+        
         if (this.status === 'connected') {
             throw new Error('Already connected');
         }
@@ -94,12 +96,18 @@ class WhatsAppInstance {
         this._log('Starting connection...', 'info');
         
         try {
+            // Ensure auth folder exists
+            await fs.mkdir(this.authFolder, { recursive: true });
+            console.log(`[Instance ${this.id}] Auth folder ready: ${this.authFolder}`);
+            
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
+            console.log(`[Instance ${this.id}] Auth state loaded`);
             
             this.socket = makeWASocket({
                 auth: state,
                 printQRInTerminal: false
             });
+            console.log(`[Instance ${this.id}] Socket created`);
             
             // Save credentials when updated
             this.socket.ev.on('creds.update', saveCreds);
@@ -164,6 +172,7 @@ class WhatsAppInstance {
             
         } catch (error) {
             console.error(`[Instance ${this.id}] Connection error:`, error);
+            console.error(`[Instance ${this.id}] Error stack:`, error.stack);
             this.status = 'disconnected';
             this._emitStatusChange();
             this._log(`Connection error: ${error.message}`, 'error');
@@ -195,10 +204,29 @@ class WhatsAppInstance {
      * Clear auth data (logout + delete credentials)
      */
     async clearAuth() {
-        await this.disconnect();
+        console.log(`[Instance ${this.id}] Clearing auth...`);
+        
+        // Disconnect first if connected
+        if (this.socket) {
+            try {
+                await this.socket.logout();
+            } catch (e) {
+                console.log(`[Instance ${this.id}] Logout during clear auth:`, e.message);
+            }
+            this.socket = null;
+        }
+        
+        this.status = 'disconnected';
+        this.qrCode = null;
+        this.connectedPhone = null;
+        this.connectedAt = null;
+        this._emitStatusChange();
+        
         try {
+            console.log(`[Instance ${this.id}] Deleting auth folder: ${this.authFolder}`);
             await fs.rm(this.authFolder, { recursive: true, force: true });
             await fs.mkdir(this.authFolder, { recursive: true });
+            console.log(`[Instance ${this.id}] Auth folder cleared and recreated`);
             this._log('Auth cleared - ready for new QR scan', 'info');
         } catch (error) {
             console.error(`[Instance ${this.id}] Clear auth error:`, error);
@@ -287,9 +315,19 @@ class WhatsAppInstance {
             // Get effective webhook URL (instance-specific or global default)
             const effectiveWebhookUrl = this.webhookUrl || DEFAULT_WEBHOOK_URL;
             
+            // Debug logging
+            console.log(`[Instance ${this.id}] Webhook check:`, {
+                instanceWebhook: this.webhookUrl || '(none)',
+                globalDefault: DEFAULT_WEBHOOK_URL || '(none)',
+                effective: effectiveWebhookUrl || '(none)'
+            });
+            
             // If webhook URL is configured (either instance or global), forward to it
             if (effectiveWebhookUrl && effectiveWebhookUrl !== 'YOUR_N8N_WEBHOOK_URL_HERE') {
+                this._log(`Forwarding to webhook: ${effectiveWebhookUrl.substring(0, 50)}...`, 'info');
                 await this._forwardToWebhook(msg, messageContent, from, phoneNumber, effectiveWebhookUrl);
+            } else {
+                this._log('No webhook configured - message not forwarded', 'warning');
             }
             
         } catch (error) {
@@ -309,13 +347,15 @@ class WhatsAppInstance {
     async _forwardToWebhook(msg, messageContent, from, phoneNumber, webhookUrl) {
         const axios = require('axios');
         
+        console.log(`[Instance ${this.id}] Calling webhook: ${webhookUrl}`);
+        
         try {
             // Show typing indicator
             try {
                 await this.socket.sendPresenceUpdate('composing', from);
             } catch (e) {}
             
-            const response = await axios.post(webhookUrl, {
+            const payload = {
                 instanceId: this.id,
                 from: phoneNumber,
                 fromJid: from,
@@ -325,7 +365,13 @@ class WhatsAppInstance {
                 quotedMessage: messageContent.quotedText,
                 timestamp: new Date().toISOString(),
                 messageId: msg.key.id
-            }, { timeout: 30000 });
+            };
+            
+            console.log(`[Instance ${this.id}] Webhook payload:`, JSON.stringify(payload, null, 2));
+            
+            const response = await axios.post(webhookUrl, payload, { timeout: 30000 });
+            
+            console.log(`[Instance ${this.id}] Webhook response:`, response.status, response.data);
             
             // Handle response
             if (response.data?.skip) {
@@ -357,6 +403,10 @@ class WhatsAppInstance {
             }
             
         } catch (error) {
+            console.error(`[Instance ${this.id}] Webhook error:`, error.message);
+            if (error.response) {
+                console.error(`[Instance ${this.id}] Webhook response error:`, error.response.status, error.response.data);
+            }
             this._log(`Webhook error: ${error.message}`, 'error');
             try {
                 await this.socket.sendPresenceUpdate('paused', from);
@@ -539,6 +589,8 @@ class InstanceManager {
     async createInstance(config = {}) {
         const id = config.id || this._generateId();
         
+        console.log(`[InstanceManager] Creating instance: ${id}`);
+        
         if (this.instances.has(id)) {
             throw new Error(`Instance ${id} already exists`);
         }
@@ -549,6 +601,8 @@ class InstanceManager {
             webhookUrl: config.webhookUrl || '',
             antiBanSettings: config.antiBanSettings
         });
+        
+        console.log(`[InstanceManager] Instance object created, auth folder: ${instance.authFolder}`);
         
         // Set up event handlers
         instance.onStatusChange = (id, status) => {
@@ -562,10 +616,14 @@ class InstanceManager {
         };
         
         await instance.init();
-        this.instances.set(id, instance);
-        await this._saveInstances();
+        console.log(`[InstanceManager] Instance initialized`);
         
-        console.log(`[InstanceManager] Created instance: ${id}`);
+        this.instances.set(id, instance);
+        console.log(`[InstanceManager] Instance added to map, total instances: ${this.instances.size}`);
+        
+        await this._saveInstances();
+        console.log(`[InstanceManager] Instances saved to disk`);
+        
         return instance.getStatus();
     }
     
@@ -637,10 +695,18 @@ class InstanceManager {
      * Connect an instance
      */
     async connectInstance(id) {
+        console.log(`[InstanceManager] Connecting instance: ${id}`);
+        console.log(`[InstanceManager] Available instances:`, Array.from(this.instances.keys()));
+        
         const instance = this.instances.get(id);
         if (!instance) {
+            console.error(`[InstanceManager] Instance ${id} not found in map`);
             throw new Error(`Instance ${id} not found`);
         }
+        
+        console.log(`[InstanceManager] Instance found, current status: ${instance.status}`);
+        console.log(`[InstanceManager] Auth folder: ${instance.authFolder}`);
+        
         await instance.connect();
         return instance.getStatus();
     }
