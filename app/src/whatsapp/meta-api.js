@@ -10,8 +10,8 @@
  * 3. Set environment variables (see .env.example)
  */
 
-const axios = require('axios');
-const crypto = require('crypto');
+import axios from 'axios';
+import crypto from 'crypto';
 
 // Meta API Configuration
 const META_API_VERSION = 'v18.0';
@@ -534,7 +534,7 @@ function createWebhookMiddleware(metaApi) {
     };
 }
 
-module.exports = {
+export {
     MetaWhatsAppAPI,
     createWebhookMiddleware
 };

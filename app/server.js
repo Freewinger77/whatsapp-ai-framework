@@ -9,16 +9,23 @@
  * - API key authentication for external platform integration
  */
 
-require('dotenv').config();
+import 'dotenv/config';
+import express from 'express';
+import http from 'http';
+import { WebSocketServer } from 'ws';
+import path from 'path';
+import crypto from 'crypto';
+import fs from 'fs/promises';
+import fsSync from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 
-const express = require('express');
-const http = require('http');
-const WebSocket = require('ws');
-const path = require('path');
-const crypto = require('crypto');
+// ES Module __dirname equivalent
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Instance Manager
-const { InstanceManager } = require('./src/utils/instance-manager');
+import { InstanceManager } from './src/utils/instance-manager.js';
 
 // ========================================
 // CONFIGURATION
@@ -44,7 +51,7 @@ const app = express();
 const server = http.createServer(app);
 
 // WebSocket server
-const wss = new WebSocket.Server({ server, path: '/ws' });
+const wss = new WebSocketServer({ server, path: '/ws' });
 
 // Middleware
 app.use(express.json({ limit: '50mb' }));
@@ -636,7 +643,7 @@ app.put('/api/instances/:id/anti-ban', async (req, res) => {
         const { preset, messagesPerHour, messagesPerDay, uniqueChatsPerHour, uniqueChatsPerDay } = req.body;
         
         // Build antiBanSettings object
-        const { PRESETS } = require('./src/utils/anti-ban');
+        const { PRESETS } = await import('./src/utils/anti-ban.js');
         let antiBanSettings;
         
         if (preset && PRESETS[preset]) {
@@ -817,9 +824,6 @@ app.post('/api/generate-api-key', (req, res) => {
  * Restore instances from backup file (for deployment recovery)
  */
 app.post('/api/restore-instances', async (req, res) => {
-    const fs = require('fs').promises;
-    const fsSync = require('fs');
-    
     try {
         const backupPath = path.join(__dirname, 'instances-backup.json');
         const instancesDir = path.join(__dirname, 'instances');
@@ -868,9 +872,6 @@ app.post('/api/restore-instances', async (req, res) => {
  * Check if backup file exists and instances are configured
  */
 app.get('/api/backup-status', async (req, res) => {
-    const fs = require('fs').promises;
-    const fsSync = require('fs');
-    
     const backupPath = path.join(__dirname, 'instances-backup.json');
     const instancesFile = path.join(__dirname, 'instances', 'instances.json');
     
@@ -903,9 +904,6 @@ app.get('/api/backup-status', async (req, res) => {
  * CRITICAL: Call this BEFORE deploying to preserve WhatsApp sessions
  */
 app.get('/api/export-all-credentials', async (req, res) => {
-    const fs = require('fs').promises;
-    const fsSync = require('fs');
-    
     try {
         const instancesDir = path.join(__dirname, 'instances');
         const instancesFile = path.join(instancesDir, 'instances.json');
@@ -955,8 +953,6 @@ app.get('/api/export-all-credentials', async (req, res) => {
  * Call this AFTER deploying to restore WhatsApp sessions
  */
 app.post('/api/import-all-credentials', async (req, res) => {
-    const fs = require('fs').promises;
-    
     try {
         const backup = req.body;
         

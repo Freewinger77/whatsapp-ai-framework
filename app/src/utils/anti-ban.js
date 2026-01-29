@@ -581,7 +581,7 @@ async function safeSendMessage(socket, jid, message, incomingText, antiBanManage
     return safeSendMessageDirect(socket, jid, message, incomingText, antiBanManager, options);
 }
 
-module.exports = {
+export {
     AntiBanManager,
     MessageBatcher,
     delay,

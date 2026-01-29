@@ -9,15 +9,20 @@
  * - Full API control for external platform integration
  */
 
-const path = require('path');
-const fs = require('fs').promises;
-const fsSync = require('fs');
-const crypto = require('crypto');
-const QRCode = require('qrcode');
-const NodeCache = require('node-cache');
-const pino = require('pino');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const { AntiBanManager, safeSendMessage, delay } = require('./anti-ban');
+import path from 'path';
+import fs from 'fs/promises';
+import fsSync from 'fs';
+import crypto from 'crypto';
+import QRCode from 'qrcode';
+import NodeCache from 'node-cache';
+import pino from 'pino';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason } from 'baileys';
+import { AntiBanManager, safeSendMessage, delay } from './anti-ban.js';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Create a silent logger for Baileys (reduces noise, improves stealth)
 const logger = pino({ level: 'silent' });
@@ -783,7 +788,7 @@ class WhatsAppInstance {
      * @param {string} webhookUrl - Webhook URL to forward to
      */
     async _forwardToWebhook(msg, messageContent, from, phoneNumber, webhookUrl) {
-        const axios = require('axios');
+        const axios = (await import('axios')).default;
         
         console.log(`[Instance ${this.id}] Calling webhook: ${webhookUrl}`);
         
@@ -1322,4 +1327,4 @@ class InstanceManager {
     }
 }
 
-module.exports = { InstanceManager, WhatsAppInstance };
+export { InstanceManager, WhatsAppInstance };

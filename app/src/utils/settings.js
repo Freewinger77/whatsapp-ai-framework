@@ -6,9 +6,14 @@
  * - Other configurable options
  */
 
-const fs = require('fs').promises;
-const fsSync = require('fs');
-const path = require('path');
+import fs from 'fs/promises';
+import fsSync from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const SETTINGS_FILE = path.join(__dirname, '../../settings.json');
 
@@ -72,8 +77,8 @@ function getSettings() {
 /**
  * Get specific setting by path (e.g., 'antiBan.preset')
  */
-function getSetting(path) {
-    const keys = path.split('.');
+function getSetting(settingPath) {
+    const keys = settingPath.split('.');
     let value = currentSettings;
     for (const key of keys) {
         if (value && typeof value === 'object' && key in value) {
@@ -105,7 +110,7 @@ async function updateSettings(section, updates) {
  * @param {Object} updates - { preset?, messagesPerHour?, messagesPerDay?, etc. }
  */
 async function updateAntiBanSettings(updates) {
-    const { PRESETS } = require('./anti-ban');
+    const { PRESETS } = await import('./anti-ban.js');
 
     // If a preset is selected, apply preset values
     if (updates.preset && PRESETS[updates.preset]) {
@@ -163,7 +168,7 @@ function isObject(item) {
     return item && typeof item === 'object' && !Array.isArray(item);
 }
 
-module.exports = {
+export {
     loadSettings,
     saveSettings,
     getSettings,
