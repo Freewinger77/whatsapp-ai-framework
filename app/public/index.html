@@ -1061,7 +1061,7 @@
                             <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
                             <line x1="12" y1="18" x2="12" y2="18"/>
                         </svg>
-                    </div>
+            </div>
                     <div class="logo-status"></div>
                 </div>
                 <div class="logo-text">
@@ -1090,7 +1090,7 @@
                         <svg style="color: var(--sky-400)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
                         <span class="tool-name">Calendar</span>
                         <span class="tool-status"></span>
-                    </div>
+                </div>
                     <div class="tool-item">
                         <svg style="color: var(--amber-400)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
                         <span class="tool-name">Job Search</span>
@@ -1111,7 +1111,7 @@
             <div class="welcome-screen" id="welcome-screen">
                 <h2>Welcome to ViperClaw</h2>
                 <p>Create an instance to connect a WhatsApp number. Manage multiple numbers from this dashboard.</p>
-            </div>
+                </div>
 
             <!-- Instance Detail -->
             <div class="instance-detail" id="instance-detail">
@@ -1121,7 +1121,7 @@
                         <div class="header-info">
                             <h2 id="detail-name">Instance Name</h2>
                             <div class="instance-id" id="detail-id">wa_xxx</div>
-                        </div>
+                </div>
                     </div>
                     <div class="header-actions">
                         <button class="btn btn-outline" id="btn-edit-instance">
@@ -1144,7 +1144,7 @@
                                 <div class="qr-placeholder" id="qr-placeholder">
                                     <div style="font-size: 32px; margin-bottom: 8px; opacity: 0.5;">📱</div>
                                     <p style="font-size: 12px;">Click Connect to generate QR</p>
-                                </div>
+                    </div>
                                 <img id="qr-code" class="qr-code" style="display: none;" alt="QR Code" />
                             </div>
                             <div class="qr-buttons">
@@ -1164,20 +1164,20 @@
                                 </span>
                             </div>
                             <div class="info-list">
-                                <div class="info-item">
-                                    <span class="info-label">Phone Number</span>
+                    <div class="info-item">
+                        <span class="info-label">Phone Number</span>
                                     <span class="info-value" id="info-phone">—</span>
-                                </div>
-                                <div class="info-item">
-                                    <span class="info-label">Connected Since</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Connected Since</span>
                                     <span class="info-value" id="info-connected">—</span>
-                                </div>
+                    </div>
                                 <div class="info-item">
                                     <span class="info-label">Messages Today</span>
                                     <span class="info-value highlight" id="info-messages">0</span>
-                                </div>
-                            </div>
-                        </div>
+                </div>
+            </div>
+        </div>
 
                         <!-- Webhook -->
                         <div class="card col-4">
@@ -1189,15 +1189,15 @@
                                     <button class="btn-copy" id="btn-copy-webhook" title="Copy">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                                     </button>
-                                </div>
+            </div>
                                 <div class="form-hint" id="webhook-hint">Custom webhook for this instance</div>
-                            </div>
+            </div>
                             <div class="form-group">
                                 <label>Effective URL</label>
                                 <input type="text" id="info-effective-webhook" readonly placeholder="https://your-webhook-url.com/...">
-                            </div>
+        </div>
                             <button class="btn btn-primary" style="width: 100%;" id="btn-save-webhook">Save Webhook</button>
-                        </div>
+            </div>
 
                         <!-- Anti-Ban -->
                         <div class="card col-6">
@@ -1206,31 +1206,31 @@
                                 <button class="preset-btn" data-preset="conservative">
                                     <div class="preset-name">Conservative</div>
                                     <div class="preset-value">100/hr</div>
-                                </button>
-                                <button class="preset-btn active" data-preset="balanced">
+                </button>
+                <button class="preset-btn active" data-preset="balanced">
                                     <div class="preset-name">Balanced</div>
                                     <div class="preset-value">200/hr</div>
-                                </button>
+                </button>
                                 <button class="preset-btn" data-preset="aggressive">
                                     <div class="preset-name">Aggressive</div>
                                     <div class="preset-value">400/hr</div>
-                                </button>
-                                <button class="preset-btn" data-preset="custom">
+                </button>
+                <button class="preset-btn" data-preset="custom">
                                     <div class="preset-name">Custom</div>
                                     <div class="preset-value">Configure</div>
-                                </button>
-                            </div>
+                </button>
+            </div>
                             <div class="usage-list">
                                 <div class="usage-row">
                                     <span class="usage-label">Messages/Hour</span>
                                     <span class="usage-value" id="usage-msgs-hour">0/200</span>
-                                </div>
+                </div>
                                 <div class="usage-row">
                                     <span class="usage-label">Messages/Day</span>
                                     <span class="usage-value" id="usage-msgs-day">0/5000</span>
-                                </div>
-                            </div>
-                        </div>
+                </div>
+                </div>
+            </div>
 
                         <!-- Behavior -->
                         <div class="card col-6">
@@ -1240,36 +1240,36 @@
                                     <div class="toggle-info">
                                         <h4>Typing Simulation</h4>
                                         <p>Show "typing..." indicator before sending</p>
-                                    </div>
+                </div>
                                     <label class="toggle-switch">
                                         <input type="checkbox" id="toggle-typing">
                                         <span class="toggle-slider"></span>
                                     </label>
-                                </div>
+                        </div>
                                 <div class="toggle-row">
                                     <div class="toggle-info">
                                         <h4>Response Delays</h4>
                                         <p>Human-like delay before responding</p>
-                                    </div>
+                        </div>
                                     <label class="toggle-switch">
                                         <input type="checkbox" id="toggle-delay">
                                         <span class="toggle-slider"></span>
                                     </label>
-                                </div>
-                            </div>
-                            <button class="btn btn-primary" style="width: 100%;" id="btn-save-behavior">Save Behavior</button>
+                    </div>
                         </div>
+                            <button class="btn btn-primary" style="width: 100%;" id="btn-save-behavior">Save Behavior</button>
+                    </div>
 
                         <!-- Activity Log -->
                         <div class="card col-12">
                             <div class="log-header">
                                 <span class="card-title" style="margin-bottom: 0;">Activity Log</span>
                                 <span class="log-count" id="log-count">0 entries</span>
-                            </div>
+                        </div>
                             <div class="log-container" id="log-container">
                                 <div class="log-empty" id="log-empty">No activity yet</div>
-                            </div>
                         </div>
+                    </div>
                     </div>
                 </main>
 
@@ -1294,11 +1294,11 @@
                             <span class="ping-dot"></span>
                         </span>
                         <span id="connection-status">Live</span>
-                    </div>
+                </div>
                 </footer>
+                </div>
             </div>
         </div>
-    </div>
 
     <!-- Create Instance Modal -->
     <div class="modal-overlay" id="modal-create">
@@ -1306,11 +1306,11 @@
             <div class="modal-header">
                 <h3>Create New Instance</h3>
                 <button class="modal-close" id="modal-close">&times;</button>
-            </div>
+                </div>
             <div class="form-group">
                 <label>Instance Name</label>
                 <input type="text" id="input-instance-name" placeholder="My WhatsApp">
-            </div>
+                </div>
             <div class="form-group">
                 <label>Webhook URL (Optional)</label>
                 <input type="url" id="input-instance-webhook" placeholder="https://your-api.com/webhook">
@@ -1341,13 +1341,13 @@
     </div>
 
     <script>
-    (function() {
-        'use strict';
+        (function() {
+            'use strict';
 
-        let ws = null;
+            let ws = null;
         let instances = [];
         let selectedInstanceId = null;
-        let reconnectTimeout = null;
+            let reconnectTimeout = null;
 
         const el = {
             instanceList: document.getElementById('instance-list'),
@@ -1358,18 +1358,18 @@
             detailName: document.getElementById('detail-name'),
             detailId: document.getElementById('detail-id'),
             qrArea: document.getElementById('qr-area'),
-            qrPlaceholder: document.getElementById('qr-placeholder'),
-            qrCode: document.getElementById('qr-code'),
+                qrPlaceholder: document.getElementById('qr-placeholder'),
+                qrCode: document.getElementById('qr-code'),
             statusBadge: document.getElementById('status-badge'),
-            infoPhone: document.getElementById('info-phone'),
-            infoConnected: document.getElementById('info-connected'),
+                infoPhone: document.getElementById('info-phone'),
+                infoConnected: document.getElementById('info-connected'),
             infoMessages: document.getElementById('info-messages'),
             inputWebhook: document.getElementById('input-webhook'),
             infoEffectiveWebhook: document.getElementById('info-effective-webhook'),
             webhookHint: document.getElementById('webhook-hint'),
-            logContainer: document.getElementById('log-container'),
-            logEmpty: document.getElementById('log-empty'),
-            logCount: document.getElementById('log-count'),
+                logContainer: document.getElementById('log-container'),
+                logEmpty: document.getElementById('log-empty'),
+                logCount: document.getElementById('log-count'),
             connectionBadge: document.getElementById('connection-badge'),
             connectionStatus: document.getElementById('connection-status'),
             btnNewInstance: document.getElementById('btn-new-instance'),
@@ -1394,12 +1394,12 @@
             inputEditName: document.getElementById('input-edit-name'),
             btnCancelEdit: document.getElementById('btn-cancel-edit'),
             btnConfirmEdit: document.getElementById('btn-confirm-edit'),
-            usageMsgsHour: document.getElementById('usage-msgs-hour'),
-            usageMsgsDay: document.getElementById('usage-msgs-day'),
+                usageMsgsHour: document.getElementById('usage-msgs-hour'),
+                usageMsgsDay: document.getElementById('usage-msgs-day'),
         };
 
-        function connectWebSocket() {
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            function connectWebSocket() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
             ws.onopen = () => {
@@ -1409,9 +1409,9 @@
 
             ws.onclose = () => {
                 el.connectionStatus.textContent = 'Reconnecting...';
-                clearTimeout(reconnectTimeout);
-                reconnectTimeout = setTimeout(connectWebSocket, 3000);
-            };
+                    clearTimeout(reconnectTimeout);
+                    reconnectTimeout = setTimeout(connectWebSocket, 3000);
+                };
 
             ws.onmessage = (event) => {
                 try {
@@ -1424,22 +1424,22 @@
         }
 
         function handleMessage(data) {
-            switch (data.type) {
-                case 'init':
+                switch (data.type) {
+                    case 'init':
                     instances = data.data.instances || [];
                     renderInstanceList();
-                    break;
+                        break;
                 case 'instance_created':
                     instances.push(data.data);
                     renderInstanceList();
                     selectInstance(data.data.id);
-                    break;
+                        break;
                 case 'instance_status':
                     updateInstance(data.data);
-                    break;
+                        break;
                 case 'instance_updated':
                     updateInstance(data.data);
-                    break;
+                        break;
                 case 'instance_deleted':
                     instances = instances.filter(i => i.id !== data.data.id);
                     renderInstanceList();
@@ -1447,7 +1447,7 @@
                         selectedInstanceId = null;
                         showWelcome();
                     }
-                    break;
+                        break;
                 case 'log':
                     if (data.instanceId === selectedInstanceId) {
                         appendLog(data.data);
@@ -1473,8 +1473,8 @@
 
             if (instances.length === 0) {
                 el.emptyInstances.style.display = 'block';
-                return;
-            }
+                    return;
+                }
 
             el.emptyInstances.style.display = 'none';
 
@@ -1530,13 +1530,11 @@
             el.detailId.textContent = instance.id;
             el.inputWebhook.value = instance.webhookUrl || '';
 
-            const effectiveUrl = instance.effectiveWebhookUrl || '';
-            el.infoEffectiveWebhook.value = effectiveUrl;
+            // Show effective URL (now only instance-specific, no global fallback)
+            el.infoEffectiveWebhook.value = instance.webhookUrl || '(none - messages logged only)';
 
-            if (!instance.webhookUrl && effectiveUrl) {
-                el.webhookHint.textContent = 'Using global default';
-            } else if (!instance.webhookUrl) {
-                el.webhookHint.textContent = 'Leave empty to use global default';
+            if (!instance.webhookUrl) {
+                el.webhookHint.textContent = 'Set webhook to forward messages';
             } else {
                 el.webhookHint.textContent = 'Custom webhook for this instance';
             }
@@ -1761,7 +1759,7 @@
             el.btnSaveWebhook.textContent = 'Saving...';
 
             try {
-                await apiCall(`/instances/${selectedInstanceId}`, 'PUT', { webhookUrl });
+                await apiCall(`/instances/${selectedInstanceId}/webhook`, 'PUT', { webhookUrl });
                 el.btnSaveWebhook.textContent = 'Saved!';
                 setTimeout(() => {
                     el.btnSaveWebhook.textContent = 'Save Webhook';
@@ -1814,7 +1812,7 @@
                 setTimeout(() => {
                     el.btnSaveBehavior.textContent = 'Save Behavior';
                     el.btnSaveBehavior.disabled = false;
-                }, 1500);
+                        }, 1500);
             } catch (e) {
                 alert('Error: ' + e.message);
                 el.btnSaveBehavior.disabled = false;
@@ -1860,8 +1858,8 @@
                 } catch (e) {
                     console.error('Failed to update anti-ban:', e);
                 }
+                });
             });
-        });
 
         function escapeHtml(text) {
             const div = document.createElement('div');
@@ -1869,8 +1867,8 @@
             return div.innerHTML;
         }
 
-        connectWebSocket();
-    })();
+            connectWebSocket();
+        })();
     </script>
 </body>
 </html>

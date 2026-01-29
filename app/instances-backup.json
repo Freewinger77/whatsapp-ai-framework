@@ -1,0 +1,359 @@
+[
+  {
+    "id": "wa_mkazdl9e_cso4t",
+    "name": "telo-business",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-12T09:48:59.234Z"
+  },
+  {
+    "id": "wa_mkdsw7a9_bn6tl",
+    "name": "[DEPRECATED] CS-002",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-14T09:10:48.801Z"
+  },
+  {
+    "id": "wa_mkh6tcwy_vdzuv",
+    "name": "eu-001-OUTBOUND-nordicshape",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": false
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-16T18:03:49.282Z"
+  },
+  {
+    "id": "wa_mkn8sy0m_hsnwz",
+    "name": "uk-001-taurus",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-20T23:46:06.262Z"
+  },
+  {
+    "id": "wa_mkvqxlnr_kt8uk",
+    "name": "wasup1",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-26T22:35:46.023Z"
+  },
+  {
+    "id": "wa_mkvqyybp_3suul",
+    "name": "wasup2",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-26T22:36:49.093Z"
+  },
+  {
+    "id": "wa_mkvr2goz_df7l3",
+    "name": "wasup4",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-26T22:39:32.867Z"
+  },
+  {
+    "id": "wa_mkvr89q0_8bi1w",
+    "name": "wasup5",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-26T22:44:03.768Z"
+  },
+  {
+    "id": "wa_mkvr93k2_pov7v",
+    "name": "wasup6",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-26T22:44:42.434Z"
+  },
+  {
+    "id": "wa_mkvrck67_0gvbd",
+    "name": "wasup3",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-26T22:47:23.935Z"
+  },
+  {
+    "id": "wa_mkwve7xe_uzyz0",
+    "name": "Bashir-test",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/whatsapp-booking",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-27T17:28:26.018Z"
+  },
+  {
+    "id": "wa_mky5zojh_v6ezl",
+    "name": "wasup-fi",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-28T15:12:49.661Z"
+  },
+  {
+    "id": "wa_mkyeqbqu_yf51w",
+    "name": "wasup7",
+    "webhookUrl": "",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-28T19:17:29.718Z"
+  },
+  {
+    "id": "wa_mkyeun34_7u9wi",
+    "name": "wasup8",
+    "webhookUrl": "",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-28T19:20:51.041Z"
+  },
+  {
+    "id": "wa_mkyezvyg_cct73",
+    "name": "wasup9",
+    "webhookUrl": "",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-28T19:24:55.816Z"
+  },
+  {
+    "id": "wa_mkyf642j_gni9x",
+    "name": "wasup10",
+    "webhookUrl": "",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-28T19:29:46.267Z"
+  },
+  {
+    "id": "wa_mkyg312g_wg69b",
+    "name": "wasup11 UK-01",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-28T19:55:22.024Z"
+  },
+  {
+    "id": "wa_mkyg52fp_1x5s7",
+    "name": "wasup12 - UK01",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-28T19:56:57.109Z"
+  },
+  {
+    "id": "wa_mkyi2bw8_zsvvg",
+    "name": "wasup14 UK-02",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-28T20:50:48.632Z"
+  },
+  {
+    "id": "wa_mkz4catn_bm75j",
+    "name": "RSMY-1",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound-local",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-29T07:14:25.355Z"
+  },
+  {
+    "id": "wa_mkzf1w9z_oot4t",
+    "name": "RSMY-2",
+    "webhookUrl": "https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net/webhook/wa-inbound-staging",
+    "behaviorSettings": {
+      "typingSimulation": true,
+      "delayEnabled": true
+    },
+    "antiBanSettings": {
+      "preset": "balanced",
+      "messagesPerHour": 200,
+      "messagesPerDay": 5000,
+      "uniqueChatsPerHour": 50,
+      "uniqueChatsPerDay": 500
+    },
+    "createdAt": "2026-01-29T12:14:15.719Z"
+  }
+]

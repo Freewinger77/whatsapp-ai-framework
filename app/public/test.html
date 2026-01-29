@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp API Tester</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #e4e4e4;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 10px;
+            color: #25d366;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .card {
+            background: #1f2937;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #25d366;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .form-group {
+            margin-bottom: 16px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 13px;
+            color: #9ca3af;
+            font-weight: 500;
+        }
+        
+        input, textarea, select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #374151;
+            border-radius: 8px;
+            background: #111827;
+            color: #e4e4e4;
+            font-size: 14px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #25d366;
+            box-shadow: 0 0 0 3px rgba(37, 211, 102, 0.1);
+        }
+        
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+        
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        
+        @media (max-width: 600px) {
+            .row {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: #25d366;
+            color: #000;
+        }
+        
+        .btn-primary:hover {
+            background: #20bd5a;
+            transform: translateY(-1px);
+        }
+        
+        .btn-primary:disabled {
+            background: #1a9149;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-secondary {
+            background: #374151;
+            color: #e4e4e4;
+        }
+        
+        .btn-secondary:hover {
+            background: #4b5563;
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 20px;
+        }
+        
+        .response-box {
+            background: #111827;
+            border: 1px solid #374151;
+            border-radius: 8px;
+            padding: 16px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 400px;
+            overflow-y: auto;
+            min-height: 100px;
+        }
+        
+        .response-box.success {
+            border-color: #25d366;
+            background: rgba(37, 211, 102, 0.1);
+        }
+        
+        .response-box.error {
+            border-color: #ef4444;
+            background: rgba(239, 68, 68, 0.1);
+        }
+        
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            font-size: 13px;
+        }
+        
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #6b7280;
+        }
+        
+        .status-indicator.success { background: #25d366; }
+        .status-indicator.error { background: #ef4444; }
+        .status-indicator.loading { background: #f59e0b; animation: pulse 1s infinite; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .quick-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+        
+        .quick-btn {
+            padding: 6px 12px;
+            background: #374151;
+            border: none;
+            border-radius: 6px;
+            color: #e4e4e4;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .quick-btn:hover {
+            background: #4b5563;
+        }
+        
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+        }
+        
+        .options-row {
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+        
+        .hint {
+            font-size: 11px;
+            color: #6b7280;
+            margin-top: 4px;
+        }
+        
+        .divider {
+            height: 1px;
+            background: #374151;
+            margin: 20px 0;
+        }
+        
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: #9ca3af;
+            text-decoration: none;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+        
+        .back-link:hover {
+            color: #25d366;
+        }
+        
+        .history-item {
+            background: #111827;
+            border: 1px solid #374151;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+        
+        .history-item .time {
+            color: #6b7280;
+        }
+        
+        .history-item .status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        
+        .history-item .status.success {
+            background: rgba(37, 211, 102, 0.2);
+            color: #25d366;
+        }
+        
+        .history-item .status.error {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-link">← Back to Dashboard</a>
+        
+        <h1>📱 WhatsApp API Tester</h1>
+        <p class="subtitle">Test the /api/send endpoint with custom parameters</p>
+        
+        <!-- Configuration Card -->
+        <div class="card">
+            <div class="card-title">⚙️ Configuration</div>
+            
+            <div class="form-group">
+                <label>Base API URL</label>
+                <input type="text" id="baseUrl" placeholder="http://localhost:3000">
+                <div class="hint">Leave empty to use current origin (window.location.origin)</div>
+            </div>
+            
+            <div class="form-group">
+                <label>API Key (optional)</label>
+                <input type="password" id="apiKey" placeholder="Enter API key if required">
+            </div>
+        </div>
+        
+        <!-- Message Card -->
+        <div class="card">
+            <div class="card-title">📨 Send Message</div>
+            
+            <div class="row">
+                <div class="form-group">
+                    <label>From Phone (your connected number)</label>
+                    <input type="text" id="fromPhone" placeholder="60123456789">
+                    <div class="hint">Leave empty to use first connected instance</div>
+                </div>
+                
+                <div class="form-group">
+                    <label>To Phone *</label>
+                    <input type="text" id="toPhone" placeholder="60198765432" required>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>Message *</label>
+                <textarea id="message" placeholder="Type your message here...">Hello! This is a test message.</textarea>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <div class="card-title" style="margin-top: 0;">🛡️ Anti-Ban Options</div>
+            
+            <div class="row">
+                <div class="form-group">
+                    <label>Contact Name (for new contacts)</label>
+                    <input type="text" id="contactName" placeholder="Unknown User">
+                    <div class="hint">Leave empty for auto-generated name</div>
+                </div>
+                
+                <div class="form-group">
+                    <label>&nbsp;</label>
+                    <div class="options-row">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="typingSimulation" checked>
+                            <label for="typingSimulation" style="margin: 0;">Typing Simulation</label>
+                        </div>
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="delayEnabled" checked>
+                            <label for="delayEnabled" style="margin: 0;">Human Delays</label>
+                        </div>
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="skipContactSave">
+                            <label for="skipContactSave" style="margin: 0;">Skip Contact Save</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="btn-group">
+                <button class="btn btn-primary" id="sendBtn" onclick="sendMessage()">
+                    <span id="sendBtnText">🚀 Send Message</span>
+                </button>
+                <button class="btn btn-secondary" onclick="clearForm()">Clear</button>
+            </div>
+            
+            <div class="quick-actions">
+                <span style="color: #6b7280; font-size: 12px;">Quick Messages:</span>
+                <button class="quick-btn" onclick="setMessage('Hello!')">Hello!</button>
+                <button class="quick-btn" onclick="setMessage('Hi, how are you?')">How are you?</button>
+                <button class="quick-btn" onclick="setMessage('Testing 1-2-3')">Test 123</button>
+                <button class="quick-btn" onclick="setMessage('👋')">Wave</button>
+            </div>
+        </div>
+        
+        <!-- Response Card -->
+        <div class="card">
+            <div class="card-title">📋 Response</div>
+            
+            <div class="status-bar">
+                <div class="status-indicator" id="statusIndicator"></div>
+                <span id="statusText">Ready to send</span>
+            </div>
+            
+            <div class="response-box" id="responseBox">Waiting for request...</div>
+        </div>
+        
+        <!-- History Card -->
+        <div class="card">
+            <div class="card-title">📜 Request History</div>
+            <div id="historyContainer">
+                <p style="color: #6b7280; font-size: 13px;">No requests yet</p>
+            </div>
+            <button class="btn btn-secondary" onclick="clearHistory()" style="margin-top: 12px;">Clear History</button>
+        </div>
+    </div>
+    
+    <script>
+        // Load saved settings on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedBaseUrl = localStorage.getItem('wa_test_baseUrl');
+            const savedApiKey = localStorage.getItem('wa_test_apiKey');
+            const savedFromPhone = localStorage.getItem('wa_test_fromPhone');
+            
+            if (savedBaseUrl) document.getElementById('baseUrl').value = savedBaseUrl;
+            if (savedApiKey) document.getElementById('apiKey').value = savedApiKey;
+            if (savedFromPhone) document.getElementById('fromPhone').value = savedFromPhone;
+            
+            loadHistory();
+        });
+        
+        // Save settings when changed
+        document.getElementById('baseUrl').addEventListener('change', (e) => {
+            localStorage.setItem('wa_test_baseUrl', e.target.value);
+        });
+        document.getElementById('apiKey').addEventListener('change', (e) => {
+            localStorage.setItem('wa_test_apiKey', e.target.value);
+        });
+        document.getElementById('fromPhone').addEventListener('change', (e) => {
+            localStorage.setItem('wa_test_fromPhone', e.target.value);
+        });
+        
+        function setMessage(msg) {
+            document.getElementById('message').value = msg;
+        }
+        
+        function clearForm() {
+            document.getElementById('toPhone').value = '';
+            document.getElementById('message').value = 'Hello! This is a test message.';
+            document.getElementById('contactName').value = '';
+            document.getElementById('typingSimulation').checked = true;
+            document.getElementById('delayEnabled').checked = true;
+            document.getElementById('skipContactSave').checked = false;
+        }
+        
+        function setStatus(status, text) {
+            const indicator = document.getElementById('statusIndicator');
+            const statusText = document.getElementById('statusText');
+            const responseBox = document.getElementById('responseBox');
+            
+            indicator.className = 'status-indicator ' + status;
+            statusText.textContent = text;
+            responseBox.className = 'response-box ' + (status === 'error' ? 'error' : status === 'success' ? 'success' : '');
+        }
+        
+        async function sendMessage() {
+            const baseUrl = document.getElementById('baseUrl').value || window.location.origin;
+            const apiKey = document.getElementById('apiKey').value;
+            const fromPhone = document.getElementById('fromPhone').value;
+            const toPhone = document.getElementById('toPhone').value;
+            const message = document.getElementById('message').value;
+            const contactName = document.getElementById('contactName').value;
+            const typingSimulation = document.getElementById('typingSimulation').checked;
+            const delayEnabled = document.getElementById('delayEnabled').checked;
+            const skipContactSave = document.getElementById('skipContactSave').checked;
+            
+            if (!toPhone || !message) {
+                setStatus('error', 'Missing required fields');
+                document.getElementById('responseBox').textContent = 'Error: Please fill in To Phone and Message fields';
+                return;
+            }
+            
+            const sendBtn = document.getElementById('sendBtn');
+            const sendBtnText = document.getElementById('sendBtnText');
+            sendBtn.disabled = true;
+            sendBtnText.textContent = '⏳ Sending...';
+            setStatus('loading', 'Sending message...');
+            
+            const payload = {
+                to_phone: toPhone,
+                message: message,
+                typingSimulation,
+                delayEnabled,
+                skipContactSave
+            };
+            
+            if (fromPhone) payload.from_phone = fromPhone;
+            if (contactName) payload.contactName = contactName;
+            
+            const headers = {
+                'Content-Type': 'application/json'
+            };
+            
+            if (apiKey) {
+                headers['X-API-Key'] = apiKey;
+            }
+            
+            const startTime = Date.now();
+            
+            try {
+                const response = await fetch(`${baseUrl}/api/send`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(payload)
+                });
+                
+                const elapsed = Date.now() - startTime;
+                const data = await response.json();
+                
+                if (response.ok) {
+                    setStatus('success', `Success (${elapsed}ms)`);
+                    document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
+                    addToHistory(toPhone, message, true, elapsed);
+                } else {
+                    setStatus('error', `Error ${response.status} (${elapsed}ms)`);
+                    document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
+                    addToHistory(toPhone, message, false, elapsed, data.error);
+                }
+            } catch (error) {
+                const elapsed = Date.now() - startTime;
+                setStatus('error', 'Request failed');
+                document.getElementById('responseBox').textContent = `Error: ${error.message}\n\nMake sure the API server is running at: ${baseUrl}`;
+                addToHistory(toPhone, message, false, elapsed, error.message);
+            } finally {
+                sendBtn.disabled = false;
+                sendBtnText.textContent = '🚀 Send Message';
+            }
+        }
+        
+        function addToHistory(to, message, success, elapsed, error = null) {
+            const history = JSON.parse(localStorage.getItem('wa_test_history') || '[]');
+            history.unshift({
+                to,
+                message: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
+                success,
+                elapsed,
+                error,
+                time: new Date().toLocaleTimeString()
+            });
+            
+            // Keep only last 10 items
+            if (history.length > 10) history.pop();
+            
+            localStorage.setItem('wa_test_history', JSON.stringify(history));
+            loadHistory();
+        }
+        
+        function loadHistory() {
+            const history = JSON.parse(localStorage.getItem('wa_test_history') || '[]');
+            const container = document.getElementById('historyContainer');
+            
+            if (history.length === 0) {
+                container.innerHTML = '<p style="color: #6b7280; font-size: 13px;">No requests yet</p>';
+                return;
+            }
+            
+            container.innerHTML = history.map(item => `
+                <div class="history-item">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <span class="status ${item.success ? 'success' : 'error'}">${item.success ? 'SUCCESS' : 'FAILED'}</span>
+                        <span class="time">${item.time} (${item.elapsed}ms)</span>
+                    </div>
+                    <div><strong>To:</strong> ${item.to}</div>
+                    <div><strong>Message:</strong> ${item.message}</div>
+                    ${item.error ? `<div style="color: #ef4444;"><strong>Error:</strong> ${item.error}</div>` : ''}
+                </div>
+            `).join('');
+        }
+        
+        function clearHistory() {
+            localStorage.removeItem('wa_test_history');
+            loadHistory();
+        }
+        
+        // Allow Ctrl+Enter to send
+        document.getElementById('message').addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>

@@ -330,11 +330,18 @@ app.get('/api/instances/:id/qr', (req, res) => {
 /**
  * POST /api/instances/:id/send
  * Send a message via instance
- * Body: { to: "phone_number", message: "text", typingSimulation?: boolean, delayEnabled?: boolean }
+ * Body: { 
+ *   to: "phone_number", 
+ *   message: "text", 
+ *   typingSimulation?: boolean, 
+ *   delayEnabled?: boolean,
+ *   contactName?: string,      // Optional: Name to save contact as (default: "Unknown User XXXX")
+ *   skipContactSave?: boolean  // Optional: Skip auto-saving contact (default: false)
+ * }
  */
 app.post('/api/instances/:id/send', async (req, res) => {
     try {
-        const { to, message, typingSimulation, delayEnabled } = req.body;
+        const { to, message, typingSimulation, delayEnabled, contactName, skipContactSave } = req.body;
         
         if (!to || !message) {
             return res.status(400).json({ error: 'Missing required fields: to, message' });
@@ -344,6 +351,8 @@ app.post('/api/instances/:id/send', async (req, res) => {
         const options = {};
         if (typingSimulation !== undefined) options.typingSimulation = typingSimulation;
         if (delayEnabled !== undefined) options.delayEnabled = delayEnabled;
+        if (contactName !== undefined) options.contactName = contactName;
+        if (skipContactSave !== undefined) options.skipContactSave = skipContactSave;
         
         const result = await instanceManager.sendMessage(req.params.id, to, message, options);
         
@@ -372,7 +381,9 @@ function normalizePhone(phone) {
  *   to_phone: "recipient_phone_number", 
  *   message: "text", 
  *   typingSimulation?: boolean, 
- *   delayEnabled?: boolean 
+ *   delayEnabled?: boolean,
+ *   contactName?: string,      // Optional: Name to save contact as (default: "Unknown User XXXX")
+ *   skipContactSave?: boolean  // Optional: Skip auto-saving contact (default: false)
  * }
  */
 app.post('/api/send', async (req, res) => {
@@ -380,7 +391,7 @@ app.post('/api/send', async (req, res) => {
         // Support both new format (from_phone, to_phone) and legacy format (from, to)
         const fromPhone = req.body.from_phone || req.body.from;
         const toPhone = req.body.to_phone || req.body.to;
-        const { message, typingSimulation, delayEnabled } = req.body;
+        const { message, typingSimulation, delayEnabled, contactName, skipContactSave } = req.body;
         
         if (!toPhone || !message) {
             return res.status(400).json({ error: 'Missing required fields: to_phone, message' });
@@ -390,6 +401,8 @@ app.post('/api/send', async (req, res) => {
         const options = {};
         if (typingSimulation !== undefined) options.typingSimulation = typingSimulation;
         if (delayEnabled !== undefined) options.delayEnabled = delayEnabled;
+        if (contactName !== undefined) options.contactName = contactName;
+        if (skipContactSave !== undefined) options.skipContactSave = skipContactSave;
         
         let targetInstanceId = null;
         let matchedInstance = null;
@@ -398,23 +411,46 @@ app.post('/api/send', async (req, res) => {
         if (fromPhone) {
             const instances = instanceManager.getAllInstances();
             
+            // Debug: Log all instances
+            console.log(`[API /send] Looking for from_phone: ${fromPhone}`);
+            console.log(`[API /send] Available instances:`, instances.map(i => ({
+                id: i.id,
+                status: i.status,
+                connectedPhone: i.connectedPhone
+            })));
+            
             // Normalize the 'from' number (remove +, spaces, dashes)
             const normalizedFrom = normalizePhone(fromPhone);
+            console.log(`[API /send] Normalized from: ${normalizedFrom}`);
             
             // Find instance where connectedPhone matches
             matchedInstance = instances.find(i => {
-                if (!i.connectedPhone || i.status !== 'connected') return false;
+                if (!i.connectedPhone || i.status !== 'connected') {
+                    console.log(`[API /send] Skipping ${i.id}: phone=${i.connectedPhone}, status=${i.status}`);
+                    return false;
+                }
                 const normalizedConnected = normalizePhone(i.connectedPhone);
+                console.log(`[API /send] Comparing: ${normalizedConnected} vs ${normalizedFrom}`);
                 // Match if either is a suffix of the other (handles country code variations)
-                return normalizedConnected.endsWith(normalizedFrom) || 
+                const matches = normalizedConnected.endsWith(normalizedFrom) || 
                        normalizedFrom.endsWith(normalizedConnected) ||
                        normalizedConnected === normalizedFrom;
+                console.log(`[API /send] Match result: ${matches}`);
+                return matches;
             });
             
             if (!matchedInstance) {
                 return res.status(400).json({ 
                     error: `No connected instance found for phone number: ${fromPhone}`,
-                    hint: 'Make sure the phone number is connected and matches exactly'
+                    hint: 'Make sure the phone number is connected and matches exactly',
+                    debug: { 
+                        searchedFor: normalizedFrom,
+                        availableInstances: instances.map(i => ({
+                            id: i.id,
+                            status: i.status,
+                            phone: i.connectedPhone
+                        }))
+                    }
                 });
             }
             
@@ -643,10 +679,7 @@ app.put('/api/instances/:id/anti-ban', async (req, res) => {
 app.get('/api/webhook', (req, res) => {
     res.json({
         success: true,
-        defaultWebhookUrl: DEFAULT_WEBHOOK_URL || null,
-        message: DEFAULT_WEBHOOK_URL 
-            ? 'Global webhook configured' 
-            : 'No global webhook. Set DEFAULT_WEBHOOK_URL or N8N_WEBHOOK_URL in .env'
+        message: 'Webhooks are configured per-instance. Use GET /api/instances/:id/webhook to check.'
     });
 });
 
@@ -664,9 +697,7 @@ app.get('/api/instances/:id/webhook', (req, res) => {
         const status = instance.getStatus();
         res.json({
             success: true,
-            instanceWebhookUrl: status.webhookUrl || null,
-            effectiveWebhookUrl: status.effectiveWebhookUrl,
-            usingGlobalDefault: !status.webhookUrl && !!DEFAULT_WEBHOOK_URL
+            webhookUrl: status.webhookUrl || null
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -693,12 +724,10 @@ app.put('/api/instances/:id/webhook', async (req, res) => {
         
         res.json({
             success: true,
-            instanceWebhookUrl: instance.webhookUrl || null,
-            effectiveWebhookUrl: instance.webhookUrl || DEFAULT_WEBHOOK_URL || null,
-            usingGlobalDefault: !instance.webhookUrl && !!DEFAULT_WEBHOOK_URL,
+            webhookUrl: instance.webhookUrl || null,
             message: instance.webhookUrl 
                 ? 'Instance webhook URL set' 
-                : (DEFAULT_WEBHOOK_URL ? 'Using global default webhook' : 'No webhook configured')
+                : 'No webhook configured - messages will be logged only'
         });
     } catch (error) {
         res.status(400).json({ error: error.message });
@@ -723,8 +752,7 @@ app.get('/api/health', (req, res) => {
         instances: {
             total: instances.length,
             connected: connectedCount
-        },
-        defaultWebhookConfigured: !!DEFAULT_WEBHOOK_URL
+        }
     });
 });
 
@@ -757,6 +785,91 @@ app.post('/api/generate-api-key', (req, res) => {
         apiKey: newKey,
         message: 'Add this to your .env file as API_KEY=<key>'
     });
+});
+
+/**
+ * POST /api/restore-instances
+ * Restore instances from backup file (for deployment recovery)
+ */
+app.post('/api/restore-instances', async (req, res) => {
+    const fs = require('fs').promises;
+    const fsSync = require('fs');
+    
+    try {
+        const backupPath = path.join(__dirname, 'instances-backup.json');
+        const instancesDir = path.join(__dirname, 'instances');
+        const instancesFile = path.join(instancesDir, 'instances.json');
+        
+        // Check if backup exists
+        if (!fsSync.existsSync(backupPath)) {
+            return res.status(404).json({ 
+                error: 'Backup file not found',
+                path: backupPath
+            });
+        }
+        
+        // Read backup
+        const backupData = await fs.readFile(backupPath, 'utf8');
+        const instances = JSON.parse(backupData);
+        
+        // Create instances directory
+        await fs.mkdir(instancesDir, { recursive: true });
+        
+        // Create folder structure for each instance
+        for (const instance of instances) {
+            const instanceDir = path.join(instancesDir, instance.id);
+            const authDir = path.join(instanceDir, 'auth');
+            const logsDir = path.join(instanceDir, 'logs');
+            
+            await fs.mkdir(authDir, { recursive: true });
+            await fs.mkdir(logsDir, { recursive: true });
+        }
+        
+        // Write instances.json
+        await fs.writeFile(instancesFile, JSON.stringify(instances, null, 2));
+        
+        res.json({
+            success: true,
+            message: `Restored ${instances.length} instances. Restart the app to load them.`,
+            instances: instances.map(i => ({ id: i.id, name: i.name }))
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/backup-status
+ * Check if backup file exists and instances are configured
+ */
+app.get('/api/backup-status', async (req, res) => {
+    const fs = require('fs').promises;
+    const fsSync = require('fs');
+    
+    const backupPath = path.join(__dirname, 'instances-backup.json');
+    const instancesFile = path.join(__dirname, 'instances', 'instances.json');
+    
+    const status = {
+        backupExists: fsSync.existsSync(backupPath),
+        instancesExists: fsSync.existsSync(instancesFile),
+        backupCount: 0,
+        activeCount: 0
+    };
+    
+    try {
+        if (status.backupExists) {
+            const backup = JSON.parse(await fs.readFile(backupPath, 'utf8'));
+            status.backupCount = backup.length;
+        }
+        if (status.instancesExists) {
+            const instances = JSON.parse(await fs.readFile(instancesFile, 'utf8'));
+            status.activeCount = instances.length;
+        }
+    } catch (e) {
+        // ignore parse errors
+    }
+    
+    res.json(status);
 });
 
 // ========================================
