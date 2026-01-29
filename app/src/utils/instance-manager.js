@@ -1207,14 +1207,41 @@ class InstanceManager {
     }
     
     /**
-     * Load instances from DB file
+     * Load instances from DB file with retry (for Railway volume mount timing)
      */
     async _loadInstances() {
+        const MAX_RETRIES = 5;
+        const RETRY_DELAY_MS = 2000;
+        
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                console.log(`[InstanceManager] Looking for instances at: ${INSTANCES_DB_FILE} (attempt ${attempt}/${MAX_RETRIES})`);
+                console.log(`[InstanceManager] Instances folder exists: ${fsSync.existsSync(INSTANCES_FOLDER)}`);
+                console.log(`[InstanceManager] Instances file exists: ${fsSync.existsSync(INSTANCES_DB_FILE)}`);
+                
+                if (fsSync.existsSync(INSTANCES_DB_FILE)) {
+                    await this._loadInstancesFromFile();
+                    return; // Success, exit retry loop
+                } else if (attempt < MAX_RETRIES) {
+                    console.log(`[InstanceManager] File not found, waiting ${RETRY_DELAY_MS}ms before retry...`);
+                    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+                } else {
+                    console.log(`[InstanceManager] No instances file found after ${MAX_RETRIES} attempts`);
+                }
+            } catch (error) {
+                console.error(`[InstanceManager] Error loading instances (attempt ${attempt}):`, error.message);
+                if (attempt < MAX_RETRIES) {
+                    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+                }
+            }
+        }
+    }
+    
+    /**
+     * Actually load instances from the file
+     */
+    async _loadInstancesFromFile() {
         try {
-            console.log(`[InstanceManager] Looking for instances at: ${INSTANCES_DB_FILE}`);
-            console.log(`[InstanceManager] Instances folder exists: ${fsSync.existsSync(INSTANCES_FOLDER)}`);
-            console.log(`[InstanceManager] Instances file exists: ${fsSync.existsSync(INSTANCES_DB_FILE)}`);
-            
             if (fsSync.existsSync(INSTANCES_DB_FILE)) {
                 const data = await fs.readFile(INSTANCES_DB_FILE, 'utf8');
                 console.log(`[InstanceManager] Read ${data.length} bytes from instances file`);

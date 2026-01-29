@@ -1128,11 +1128,6 @@ API Endpoints:
 Initializing...
     `);
     
-    // Wait for volume mount (Railway volumes may take a moment to mount)
-    const STARTUP_DELAY_MS = parseInt(process.env.STARTUP_DELAY_MS) || 3000;
-    console.log(`[Server] Waiting ${STARTUP_DELAY_MS}ms for volume mount...`);
-    await new Promise(resolve => setTimeout(resolve, STARTUP_DELAY_MS));
-    
     // Initialize instance manager
     instanceManager = new InstanceManager();
     await instanceManager.init();
