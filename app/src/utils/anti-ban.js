@@ -47,6 +47,159 @@ const PRESETS = {
     }
 };
 
+// Batching configuration
+const BATCH_CONFIG = {
+    maxBatchSize: 30,           // Max messages per batch
+    batchCooldownMs: 300000,    // 5 minutes between batches
+    priorityQueueEnabled: true   // Prioritize reply messages
+};
+
+/**
+ * ANTI-BAN: Message Queue with Batching
+ * Prevents volume spikes by queuing messages and sending in controlled batches
+ */
+class MessageBatcher {
+    constructor(config = {}) {
+        this.batchSize = config.maxBatchSize || BATCH_CONFIG.maxBatchSize;
+        this.cooldownMs = config.batchCooldownMs || BATCH_CONFIG.batchCooldownMs;
+        
+        // Separate queues for priority (replies) and normal (broadcast) messages
+        this.priorityQueue = [];  // Replies - processed immediately
+        this.normalQueue = [];    // Broadcast - batched
+        
+        // Batch tracking
+        this.currentBatchCount = 0;
+        this.lastBatchTime = 0;
+        this.isProcessing = false;
+        
+        // Stats
+        this.totalQueued = 0;
+        this.totalSent = 0;
+        this.batchesSent = 0;
+    }
+    
+    /**
+     * Queue a message for sending
+     * @param {Object} messageData - { socket, jid, message, incomingText, antiBanManager, options, resolve, reject }
+     * @param {boolean} isPriority - Whether this is a reply (priority) message
+     */
+    queueMessage(messageData, isPriority = false) {
+        this.totalQueued++;
+        
+        if (isPriority) {
+            // Priority messages (replies) go to front
+            this.priorityQueue.push(messageData);
+        } else {
+            // Normal messages (broadcast) are batched
+            this.normalQueue.push(messageData);
+        }
+        
+        // Start processing if not already
+        if (!this.isProcessing) {
+            this._processQueue();
+        }
+    }
+    
+    /**
+     * Check if we should wait for batch cooldown
+     */
+    shouldWaitForCooldown() {
+        if (this.currentBatchCount >= this.batchSize) {
+            const timeSinceLastBatch = Date.now() - this.lastBatchTime;
+            if (timeSinceLastBatch < this.cooldownMs) {
+                return {
+                    shouldWait: true,
+                    waitTime: this.cooldownMs - timeSinceLastBatch
+                };
+            }
+            // Reset batch count after cooldown
+            this.currentBatchCount = 0;
+            this.lastBatchTime = Date.now();
+            this.batchesSent++;
+        }
+        return { shouldWait: false };
+    }
+    
+    /**
+     * Process the message queue
+     */
+    async _processQueue() {
+        if (this.isProcessing) return;
+        this.isProcessing = true;
+        
+        try {
+            while (this.priorityQueue.length > 0 || this.normalQueue.length > 0) {
+                // Always process priority queue first (replies)
+                let messageData;
+                if (this.priorityQueue.length > 0) {
+                    messageData = this.priorityQueue.shift();
+                } else {
+                    // Check batch cooldown for normal messages
+                    const cooldownCheck = this.shouldWaitForCooldown();
+                    if (cooldownCheck.shouldWait) {
+                        console.log(`[Anti-Ban] Batch cooldown: waiting ${Math.ceil(cooldownCheck.waitTime / 1000)}s`);
+                        await delay(cooldownCheck.waitTime);
+                    }
+                    messageData = this.normalQueue.shift();
+                }
+                
+                if (!messageData) continue;
+                
+                try {
+                    // Send the message using safeSendMessage
+                    const result = await safeSendMessageDirect(
+                        messageData.socket,
+                        messageData.jid,
+                        messageData.message,
+                        messageData.incomingText,
+                        messageData.antiBanManager,
+                        messageData.options
+                    );
+                    
+                    this.currentBatchCount++;
+                    this.totalSent++;
+                    
+                    if (messageData.resolve) {
+                        messageData.resolve(result);
+                    }
+                } catch (error) {
+                    if (messageData.reject) {
+                        messageData.reject(error);
+                    }
+                }
+            }
+        } finally {
+            this.isProcessing = false;
+        }
+    }
+    
+    /**
+     * Get queue statistics
+     */
+    getStats() {
+        return {
+            priorityQueueLength: this.priorityQueue.length,
+            normalQueueLength: this.normalQueue.length,
+            currentBatchCount: this.currentBatchCount,
+            batchSize: this.batchSize,
+            totalQueued: this.totalQueued,
+            totalSent: this.totalSent,
+            batchesSent: this.batchesSent,
+            isProcessing: this.isProcessing
+        };
+    }
+    
+    /**
+     * Clear all queued messages
+     */
+    clearQueue() {
+        const cleared = this.priorityQueue.length + this.normalQueue.length;
+        this.priorityQueue = [];
+        this.normalQueue = [];
+        return cleared;
+    }
+}
+
 class AntiBanManager {
     constructor(customLimits = null) {
         this.messageCount = { hour: 0, day: 0 };
@@ -320,20 +473,45 @@ async function simulateTyping(socket, jid, messageLength) {
 }
 
 /**
- * Safe send message with all anti-ban protections
+ * ANTI-BAN: Simulate reading a message before replying
+ * Marks the message as read and waits a realistic "reading" time
  * @param {Object} socket - Baileys socket
- * @param {string} jid - Chat JID
- * @param {Object|string} message - Message to send
- * @param {string} incomingText - Original incoming message text
- * @param {AntiBanManager} antiBanManager - Anti-ban manager instance
- * @param {Object} options - Additional options
- * @param {boolean} options.typingSimulation - Enable typing simulation (default: true)
- * @param {boolean} options.delayEnabled - Enable human-like delays (default: true)
+ * @param {Object} messageKey - The message key to mark as read
+ * @param {string} messageText - The message text (for calculating read time)
  */
-async function safeSendMessage(socket, jid, message, incomingText, antiBanManager, options = {}) {
+async function simulateReadReceipt(socket, messageKey, messageText = '') {
+    try {
+        // Mark message as read (sends blue ticks)
+        await socket.readMessages([messageKey]);
+        
+        // Calculate realistic reading time based on message length
+        // Average reading speed: 200-250 words per minute = ~4 words per second
+        const wordCount = (messageText || '').split(/\s+/).length;
+        const readingTime = Math.max(1000, Math.min(5000, wordCount * 250)); // 1-5 seconds
+        
+        // Add some variance
+        const variance = readingTime * 0.3;
+        const finalReadTime = readingTime + (Math.random() * 2 - 1) * variance;
+        
+        console.log(`[Anti-Ban] Simulating read receipt: ${Math.round(finalReadTime)}ms reading time`);
+        await delay(finalReadTime);
+        
+    } catch (error) {
+        console.error('[Anti-Ban] Read receipt simulation error:', error.message);
+        // Continue even if read receipt fails
+    }
+}
+
+/**
+ * Direct send message with all anti-ban protections (internal use)
+ * This is the actual sending function, used directly or via batcher
+ */
+async function safeSendMessageDirect(socket, jid, message, incomingText, antiBanManager, options = {}) {
     const { 
         typingSimulation = true, 
-        delayEnabled = true 
+        delayEnabled = true,
+        messageKey = null,
+        simulateReading = true
     } = options;
     
     // Check rate limits
@@ -341,6 +519,11 @@ async function safeSendMessage(socket, jid, message, incomingText, antiBanManage
     if (!canSend.allowed) {
         console.log(`[Anti-Ban] BLOCKED: ${canSend.reason}. Wait ${Math.ceil(canSend.waitTime / 1000)}s`);
         return { sent: false, reason: canSend.reason, waitTime: canSend.waitTime };
+    }
+    
+    // ANTI-BAN: Simulate reading the message first (if messageKey provided)
+    if (simulateReading && messageKey) {
+        await simulateReadReceipt(socket, messageKey, incomingText);
     }
 
     // Get message text for delay calculation
@@ -380,11 +563,33 @@ async function safeSendMessage(socket, jid, message, incomingText, antiBanManage
     return { sent: true, delay: delayMs, typingSimulation, delayEnabled };
 }
 
+/**
+ * Safe send message with all anti-ban protections
+ * This is the main export - uses direct sending (batching is optional and managed separately)
+ * @param {Object} socket - Baileys socket
+ * @param {string} jid - Chat JID
+ * @param {Object|string} message - Message to send
+ * @param {string} incomingText - Original incoming message text
+ * @param {AntiBanManager} antiBanManager - Anti-ban manager instance
+ * @param {Object} options - Additional options
+ * @param {boolean} options.typingSimulation - Enable typing simulation (default: true)
+ * @param {boolean} options.delayEnabled - Enable human-like delays (default: true)
+ * @param {Object} options.messageKey - Original message key for read receipt simulation
+ * @param {boolean} options.simulateReading - Enable read receipt simulation (default: true)
+ */
+async function safeSendMessage(socket, jid, message, incomingText, antiBanManager, options = {}) {
+    return safeSendMessageDirect(socket, jid, message, incomingText, antiBanManager, options);
+}
+
 module.exports = {
     AntiBanManager,
+    MessageBatcher,
     delay,
     simulateTyping,
+    simulateReadReceipt,
     safeSendMessage,
+    safeSendMessageDirect,
     PRESETS,
-    DELAY_CONFIG
+    DELAY_CONFIG,
+    BATCH_CONFIG
 };

@@ -623,11 +623,210 @@ app.get('/api/anti-ban/health', (req, res) => {
 
 ---
 
+## 11. Baileys-Recommended Socket Configuration
+
+Based on the official [Baileys documentation](https://baileys.wiki/docs/socket/configuration/), the following configurations are **critical** for anti-ban protection.
+
+### cachedGroupMetadata (CRITICAL)
+
+From Baileys docs:
+> "When sending messages to a group, the sendMessage function will try to get the group participant list (to encrypt the message to each participant). **This is a problem and causes a ratelimit and potential bans from WhatsApp.** To counter this, you should provide the socket with a cachedGroupMetadata cache."
+
+```javascript
+const NodeCache = require('node-cache');
+const groupCache = new NodeCache({ stdTTL: 300 }); // 5 min TTL
+
+const sock = makeWASocket({
+    cachedGroupMetadata: async (jid) => groupCache.get(jid)
+});
+
+// Update cache on group events
+sock.ev.on('groups.update', (updates) => {
+    for (const update of updates) {
+        groupCache.set(update.id, update);
+    }
+});
+```
+
+### userDevicesCache
+
+Reduces redundant device list queries when messaging the same user multiple times.
+
+```javascript
+const userDevicesCache = new NodeCache({ stdTTL: 600 });
+
+const sock = makeWASocket({
+    userDevicesCache: userDevicesCache
+});
+```
+
+### markOnlineOnConnect: false (Stealth Mode)
+
+From Baileys docs:
+> "By default, Baileys sets your presence as online on connect. This will stop sending notifications to your phone."
+
+Setting this to `false` makes the bot appear offline until explicitly set online.
+
+```javascript
+const sock = makeWASocket({
+    markOnlineOnConnect: false
+});
+```
+
+### getMessage Implementation (Retry Handling)
+
+From Baileys docs:
+> "This functionality is needed for resending missing messages or decrypting poll votes... implement this so that messages failed to send can be retried"
+
+```javascript
+const messageStore = new Map();
+
+const sock = makeWASocket({
+    getMessage: async (key) => {
+        const msg = messageStore.get(key.id);
+        return msg?.message || undefined;
+    }
+});
+
+// Store messages for retry
+sock.ev.on('messages.upsert', ({ messages }) => {
+    for (const msg of messages) {
+        if (msg.key?.id && msg.message) {
+            messageStore.set(msg.key.id, { message: msg.message });
+        }
+    }
+});
+```
+
+### msgRetryCounterCache
+
+Prevents excessive retry attempts that could look suspicious.
+
+```javascript
+const msgRetryCounterCache = new NodeCache({ stdTTL: 1800 });
+
+const sock = makeWASocket({
+    msgRetryCounterCache: msgRetryCounterCache
+});
+```
+
+### mediaCache
+
+Prevents re-uploading the same media repeatedly.
+
+```javascript
+const mediaCache = new NodeCache({ stdTTL: 3600 });
+
+const sock = makeWASocket({
+    mediaCache: mediaCache
+});
+```
+
+### Full Socket Configuration Example
+
+```javascript
+const NodeCache = require('node-cache');
+const pino = require('pino');
+
+// Create caches
+const groupMetadataCache = new NodeCache({ stdTTL: 300 });
+const userDevicesCache = new NodeCache({ stdTTL: 600 });
+const msgRetryCounterCache = new NodeCache({ stdTTL: 1800 });
+const mediaCache = new NodeCache({ stdTTL: 3600 });
+const messageStore = new Map();
+
+const sock = makeWASocket({
+    auth: state,
+    logger: pino({ level: 'silent' }),
+    
+    // CRITICAL: Group metadata cache
+    cachedGroupMetadata: async (jid) => groupMetadataCache.get(jid),
+    
+    // Reduce API calls
+    userDevicesCache: userDevicesCache,
+    msgRetryCounterCache: msgRetryCounterCache,
+    mediaCache: mediaCache,
+    
+    // Stealth mode
+    markOnlineOnConnect: false,
+    
+    // Retry handling
+    getMessage: async (key) => messageStore.get(key.id)?.message,
+    
+    // Session health
+    enableAutoSessionRecreation: true,
+    enableRecentMessageCache: true
+});
+```
+
+---
+
+## 12. Advanced Anti-Ban Techniques
+
+### Read Receipt Simulation
+
+Before replying, mark the message as read and wait a realistic "reading" time:
+
+```javascript
+async function simulateReadReceipt(socket, messageKey, messageText) {
+    // Mark as read (sends blue ticks)
+    await socket.readMessages([messageKey]);
+    
+    // Calculate reading time (1-5 seconds based on length)
+    const wordCount = messageText.split(/\s+/).length;
+    const readingTime = Math.max(1000, Math.min(5000, wordCount * 250));
+    
+    await delay(readingTime);
+}
+```
+
+### Presence Cycling
+
+Periodically toggle online/offline status to avoid "always online" pattern:
+
+```javascript
+// Cycle presence every 3-7 minutes
+setInterval(async () => {
+    const random = Math.random();
+    if (random < 0.3) {
+        await sock.sendPresenceUpdate('unavailable');
+    } else {
+        await sock.sendPresenceUpdate('available');
+    }
+}, 180000 + Math.random() * 240000); // 3-7 minutes
+```
+
+### Message Batching
+
+For broadcast/bulk messaging, send in batches with cooldowns:
+
+```javascript
+const BATCH_CONFIG = {
+    maxBatchSize: 30,           // Max messages per batch
+    batchCooldownMs: 300000     // 5 minutes between batches
+};
+```
+
+### Contact Saving Before Messaging
+
+Save contacts before sending to reduce "messaging non-contacts" risk:
+
+```javascript
+await socket.addOrEditContact(jid, {
+    fullName: contactName,
+    firstName: contactName,
+    saveOnPrimaryAddressbook: true
+});
+```
+
+---
+
 ## Document History
 
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | Dec 17, 2025 | Initial documentation |
+| 2.0 | Jan 29, 2026 | Added Baileys-recommended socket configurations, read receipt simulation, presence cycling, message batching, contact saving |
 
 ---
 

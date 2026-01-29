@@ -14,8 +14,13 @@ const fs = require('fs').promises;
 const fsSync = require('fs');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
+const NodeCache = require('node-cache');
+const pino = require('pino');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const { AntiBanManager, safeSendMessage } = require('./anti-ban');
+const { AntiBanManager, safeSendMessage, delay } = require('./anti-ban');
+
+// Create a silent logger for Baileys (reduces noise, improves stealth)
+const logger = pino({ level: 'silent' });
 
 /**
  * Generate a UUID v4
@@ -91,6 +96,30 @@ class WhatsAppInstance {
         // Activity log (in-memory, capped)
         this.activityLog = [];
         
+        // ========================================
+        // ANTI-BAN: Baileys-recommended caches
+        // ========================================
+        
+        // Group metadata cache - CRITICAL: Prevents rate limits when sending to groups
+        // From Baileys docs: "This is a problem and causes a ratelimit and potential bans"
+        this.groupMetadataCache = new NodeCache({ stdTTL: 300, checkperiod: 60 }); // 5 min TTL
+        
+        // User devices cache - Reduces device list API calls
+        this.userDevicesCache = new NodeCache({ stdTTL: 600, checkperiod: 120 }); // 10 min TTL
+        
+        // Message retry counter cache - Prevents retry storms
+        this.msgRetryCounterCache = new NodeCache({ stdTTL: 1800, checkperiod: 300 }); // 30 min TTL
+        
+        // Media cache - Prevents repeated uploads
+        this.mediaCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 }); // 1 hour TTL
+        
+        // Message store - For getMessage function (retry handling)
+        this.messageStore = new Map();
+        this.maxStoredMessages = 1000;
+        
+        // Presence cycling interval (for stealth mode)
+        this.presenceCycleInterval = null;
+        
         // Event callbacks
         this.onStatusChange = null;
         this.onMessage = null;
@@ -147,11 +176,45 @@ class WhatsAppInstance {
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
             console.log(`[Instance ${this.id}] Auth state loaded`);
             
+            // ========================================
+            // ANTI-BAN: Baileys-recommended socket configuration
+            // Based on https://baileys.wiki/docs/socket/configuration/
+            // ========================================
             this.socket = makeWASocket({
                 auth: state,
+                logger: logger,
+                
+                // CRITICAL: Group metadata cache prevents rate limits and bans
+                // "This is a problem and causes a ratelimit and potential bans from WhatsApp"
+                cachedGroupMetadata: async (jid) => this.groupMetadataCache.get(jid),
+                
+                // User devices cache - reduces device list API calls
+                userDevicesCache: this.userDevicesCache,
+                
+                // Message retry counter - prevents retry storms
+                msgRetryCounterCache: this.msgRetryCounterCache,
+                
+                // Media cache - prevents repeated uploads
+                mediaCache: this.mediaCache,
+                
+                // STEALTH: Don't auto-mark as online on connect
+                // Makes the bot appear offline until explicitly set online
+                markOnlineOnConnect: false,
+                
+                // Message store for retry handling (prevents "this message can take a while" errors)
+                getMessage: async (key) => {
+                    const msg = this.messageStore.get(key.id);
+                    return msg?.message || undefined;
+                },
+                
+                // Session health options
+                enableAutoSessionRecreation: true,
+                enableRecentMessageCache: true,
+                
+                // Don't print QR in terminal (we handle it via API)
                 printQRInTerminal: false
             });
-            console.log(`[Instance ${this.id}] Socket created`);
+            console.log(`[Instance ${this.id}] Socket created with anti-ban config`);
             
             // Save credentials when updated
             this.socket.ev.on('creds.update', saveCreds);
@@ -202,6 +265,12 @@ class WhatsAppInstance {
                     this.connectedAt = new Date().toISOString();
                     this._emitStatusChange();
                     this._log(`Connected as ${this.connectedPhone}`, 'success');
+                    
+                    // ========================================
+                    // ANTI-BAN: Start presence cycling
+                    // Avoids "always online" pattern which looks suspicious
+                    // ========================================
+                    this._startPresenceCycling();
                 }
             });
             
@@ -237,6 +306,56 @@ class WhatsAppInstance {
                 }
             });
             
+            // ========================================
+            // ANTI-BAN: Group metadata cache updates
+            // Prevents rate limits when sending to groups
+            // ========================================
+            this.socket.ev.on('groups.update', (updates) => {
+                for (const update of updates) {
+                    if (update.id) {
+                        // Merge with existing cache entry
+                        const existing = this.groupMetadataCache.get(update.id) || {};
+                        this.groupMetadataCache.set(update.id, { ...existing, ...update });
+                        console.log(`[Instance ${this.id}] Group cache updated: ${update.id}`);
+                    }
+                }
+            });
+            
+            this.socket.ev.on('groups.upsert', (groups) => {
+                for (const group of groups) {
+                    if (group.id) {
+                        this.groupMetadataCache.set(group.id, group);
+                        console.log(`[Instance ${this.id}] Group cache added: ${group.id}`);
+                    }
+                }
+            });
+            
+            // ========================================
+            // ANTI-BAN: Store messages for retry handling
+            // Prevents "this message can take a while" errors
+            // ========================================
+            this.socket.ev.on('messages.upsert', ({ messages }) => {
+                for (const msg of messages) {
+                    if (msg.key?.id && msg.message) {
+                        this.messageStore.set(msg.key.id, {
+                            message: msg.message,
+                            timestamp: Date.now()
+                        });
+                        
+                        // Cleanup old messages to prevent memory leak
+                        if (this.messageStore.size > this.maxStoredMessages) {
+                            const entries = Array.from(this.messageStore.entries());
+                            const toDelete = entries
+                                .sort((a, b) => a[1].timestamp - b[1].timestamp)
+                                .slice(0, 100);
+                            for (const [key] of toDelete) {
+                                this.messageStore.delete(key);
+                            }
+                        }
+                    }
+                }
+            });
+            
         } catch (error) {
             console.error(`[Instance ${this.id}] Connection error:`, error);
             console.error(`[Instance ${this.id}] Error stack:`, error.stack);
@@ -251,6 +370,9 @@ class WhatsAppInstance {
      * Disconnect WhatsApp
      */
     async disconnect() {
+        // Stop presence cycling
+        this._stopPresenceCycling();
+        
         if (this.socket) {
             try {
                 await this.socket.logout();
@@ -265,6 +387,59 @@ class WhatsAppInstance {
         this.connectedPhone = null;
         this.connectedAt = null;
         this._emitStatusChange();
+    }
+    
+    /**
+     * ANTI-BAN: Start presence cycling
+     * Randomly toggles online/offline status to appear more natural
+     */
+    _startPresenceCycling() {
+        // Clear any existing interval
+        this._stopPresenceCycling();
+        
+        // Cycle presence every 3-7 minutes
+        const cyclePresence = async () => {
+            if (!this.socket || this.status !== 'connected') return;
+            
+            try {
+                const random = Math.random();
+                if (random < 0.3) {
+                    // 30% chance to go offline
+                    await this.socket.sendPresenceUpdate('unavailable');
+                    console.log(`[Instance ${this.id}] Presence: unavailable (stealth)`);
+                } else {
+                    // 70% chance to stay/go online
+                    await this.socket.sendPresenceUpdate('available');
+                    console.log(`[Instance ${this.id}] Presence: available`);
+                }
+            } catch (error) {
+                console.error(`[Instance ${this.id}] Presence cycle error:`, error.message);
+            }
+        };
+        
+        // Random interval between 3-7 minutes
+        const getRandomInterval = () => (180000 + Math.random() * 240000); // 3-7 min
+        
+        const scheduleNext = () => {
+            this.presenceCycleInterval = setTimeout(async () => {
+                await cyclePresence();
+                scheduleNext();
+            }, getRandomInterval());
+        };
+        
+        // Start cycling
+        scheduleNext();
+        this._log('Presence cycling started (anti-ban)', 'info');
+    }
+    
+    /**
+     * ANTI-BAN: Stop presence cycling
+     */
+    _stopPresenceCycling() {
+        if (this.presenceCycleInterval) {
+            clearTimeout(this.presenceCycleInterval);
+            this.presenceCycleInterval = null;
+        }
     }
     
     /**
@@ -668,7 +843,11 @@ class WhatsAppInstance {
                     reply, 
                     messageContent.text, 
                     this.antiBanManager,
-                    this.behaviorSettings
+                    {
+                        ...this.behaviorSettings,
+                        messageKey: msg.key,  // Pass message key for read receipt simulation
+                        simulateReading: true
+                    }
                 );
                 if (result.sent) {
                     this._log(`Replied to ${phoneNumber}: ${reply.substring(0, 50)}...`, 'success');
@@ -1032,9 +1211,15 @@ class InstanceManager {
      */
     async _loadInstances() {
         try {
+            console.log(`[InstanceManager] Looking for instances at: ${INSTANCES_DB_FILE}`);
+            console.log(`[InstanceManager] Instances folder exists: ${fsSync.existsSync(INSTANCES_FOLDER)}`);
+            console.log(`[InstanceManager] Instances file exists: ${fsSync.existsSync(INSTANCES_DB_FILE)}`);
+            
             if (fsSync.existsSync(INSTANCES_DB_FILE)) {
                 const data = await fs.readFile(INSTANCES_DB_FILE, 'utf8');
+                console.log(`[InstanceManager] Read ${data.length} bytes from instances file`);
                 const instanceConfigs = JSON.parse(data);
+                console.log(`[InstanceManager] Parsed ${instanceConfigs.length} instance configs`);
                 
                 for (const config of instanceConfigs) {
                     const instance = new WhatsAppInstance(config);
@@ -1051,6 +1236,7 @@ class InstanceManager {
                     
                     await instance.init();
                     this.instances.set(instance.id, instance);
+                    console.log(`[InstanceManager] Loaded instance: ${instance.id} (${instance.name})`);
                     
                     // Auto-connect if instance has saved credentials
                     const credsFile = path.join(instance.authFolder, 'creds.json');
@@ -1062,9 +1248,13 @@ class InstanceManager {
                         });
                     }
                 }
+                console.log(`[InstanceManager] Finished loading ${this.instances.size} instances`);
+            } else {
+                console.log(`[InstanceManager] No instances file found at ${INSTANCES_DB_FILE}`);
             }
         } catch (error) {
             console.error('[InstanceManager] Error loading instances:', error);
+            console.error('[InstanceManager] Error stack:', error.stack);
         }
     }
     
