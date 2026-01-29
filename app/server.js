@@ -898,6 +898,7 @@ app.get('/api/backup-status', async (req, res) => {
     res.json(status);
 });
 
+<<<<<<< HEAD
 /**
  * GET /api/export-all-credentials
  * Export ALL instance data including auth credentials for backup
@@ -999,6 +1000,8 @@ app.post('/api/import-all-credentials', async (req, res) => {
     }
 });
 
+=======
+>>>>>>> parent of ba05231 (Add credential export/import endpoints for deployment safety)
 // ========================================
 // WEBSOCKET HANDLING
 // ========================================

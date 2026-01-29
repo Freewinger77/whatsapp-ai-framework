@@ -10,9 +10,6 @@ auth_info/
 # Multi-instance data (credentials + logs per instance)
 instances/
 
-# Credentials backup (contains sensitive auth tokens)
-full-credentials-backup.json
-
 # Logs
 logs/
 *.log
