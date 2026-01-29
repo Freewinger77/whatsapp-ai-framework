@@ -872,6 +872,112 @@ app.get('/api/backup-status', async (req, res) => {
     res.json(status);
 });
 
+/**
+ * GET /api/export-all-credentials
+ * Export ALL instance data including auth credentials for backup
+ * CRITICAL: Call this BEFORE deploying to preserve WhatsApp sessions
+ */
+app.get('/api/export-all-credentials', async (req, res) => {
+    const fs = require('fs').promises;
+    const fsSync = require('fs');
+    
+    try {
+        const instancesDir = path.join(__dirname, 'instances');
+        const instancesFile = path.join(instancesDir, 'instances.json');
+        
+        if (!fsSync.existsSync(instancesFile)) {
+            return res.status(404).json({ error: 'No instances found' });
+        }
+        
+        const instances = JSON.parse(await fs.readFile(instancesFile, 'utf8'));
+        const fullBackup = {
+            exportedAt: new Date().toISOString(),
+            instances: [],
+            credentials: {}
+        };
+        
+        for (const instance of instances) {
+            fullBackup.instances.push(instance);
+            
+            // Read auth credentials for this instance
+            const authDir = path.join(instancesDir, instance.id, 'auth');
+            if (fsSync.existsSync(authDir)) {
+                const authFiles = await fs.readdir(authDir);
+                fullBackup.credentials[instance.id] = {};
+                
+                for (const file of authFiles) {
+                    const filePath = path.join(authDir, file);
+                    const stat = await fs.stat(filePath);
+                    if (stat.isFile()) {
+                        const content = await fs.readFile(filePath, 'utf8');
+                        fullBackup.credentials[instance.id][file] = content;
+                    }
+                }
+            }
+        }
+        
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename=whatsapp-full-backup-${Date.now()}.json`);
+        res.json(fullBackup);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/import-all-credentials
+ * Import ALL instance data including auth credentials from backup
+ * Call this AFTER deploying to restore WhatsApp sessions
+ */
+app.post('/api/import-all-credentials', async (req, res) => {
+    const fs = require('fs').promises;
+    
+    try {
+        const backup = req.body;
+        
+        if (!backup || !backup.instances || !backup.credentials) {
+            return res.status(400).json({ error: 'Invalid backup format. Need instances and credentials.' });
+        }
+        
+        const instancesDir = path.join(__dirname, 'instances');
+        const instancesFile = path.join(instancesDir, 'instances.json');
+        
+        // Create instances directory
+        await fs.mkdir(instancesDir, { recursive: true });
+        
+        // Write instances.json
+        await fs.writeFile(instancesFile, JSON.stringify(backup.instances, null, 2));
+        
+        // Restore credentials for each instance
+        let restoredCount = 0;
+        for (const instance of backup.instances) {
+            const instanceDir = path.join(instancesDir, instance.id);
+            const authDir = path.join(instanceDir, 'auth');
+            const logsDir = path.join(instanceDir, 'logs');
+            
+            await fs.mkdir(authDir, { recursive: true });
+            await fs.mkdir(logsDir, { recursive: true });
+            
+            // Write auth files
+            if (backup.credentials[instance.id]) {
+                for (const [filename, content] of Object.entries(backup.credentials[instance.id])) {
+                    const filePath = path.join(authDir, filename);
+                    await fs.writeFile(filePath, content);
+                }
+                restoredCount++;
+            }
+        }
+        
+        res.json({
+            success: true,
+            message: `Restored ${backup.instances.length} instances with ${restoredCount} credential sets. RESTART THE APP to reconnect.`,
+            instances: backup.instances.map(i => ({ id: i.id, name: i.name }))
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // ========================================
 // WEBSOCKET HANDLING
 // ========================================
