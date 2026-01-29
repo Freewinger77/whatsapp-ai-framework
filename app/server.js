@@ -776,6 +776,30 @@ app.get('/api/status', (req, res) => {
 });
 
 /**
+ * POST /api/reload-instances
+ * Manually trigger instance loading from disk (for Railway volume mount timing issues)
+ */
+app.post('/api/reload-instances', async (req, res) => {
+    try {
+        console.log('[API] Manual instance reload triggered');
+        await instanceManager._loadInstances();
+        const instances = instanceManager.getAllInstances();
+        res.json({
+            success: true,
+            message: `Loaded ${instances.length} instances`,
+            instances: instances.map(i => ({
+                id: i.id,
+                name: i.name,
+                status: i.status
+            }))
+        });
+    } catch (error) {
+        console.error('[API] Instance reload error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
  * POST /api/generate-api-key
  * Generate a new API key (admin only)
  */
