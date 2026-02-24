@@ -274,6 +274,35 @@ app.post('/api/instances/:id/disconnect', async (req, res) => {
 });
 
 /**
+ * POST /api/instances/:id/pair
+ * Connect using pairing code (alternative to QR)
+ * Body: { phoneNumber: "447393002183" }
+ */
+app.post('/api/instances/:id/pair', async (req, res) => {
+    console.log(`[API] Pairing code request for instance: ${req.params.id}`);
+    try {
+        const { phoneNumber } = req.body;
+        
+        if (!phoneNumber) {
+            return res.status(400).json({ error: 'Missing required field: phoneNumber (with country code, e.g. "447393002183")' });
+        }
+        
+        const result = await instanceManager.connectInstanceWithPairingCode(req.params.id, phoneNumber);
+        
+        console.log(`[API] Pairing code generated for: ${req.params.id}`);
+        res.json({ 
+            success: true, 
+            pairingCode: result.code,
+            message: `Enter this code on WhatsApp: ${result.code}. Go to WhatsApp > Linked Devices > Link a Device > Link with phone number`,
+            instance: result.instance
+        });
+    } catch (error) {
+        console.error(`[API] Pairing code error for ${req.params.id}:`, error.message);
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
  * POST /api/instances/:id/clear-auth
  * Clear instance auth (logout + delete credentials)
  */
@@ -898,11 +927,9 @@ app.get('/api/backup-status', async (req, res) => {
     res.json(status);
 });
 
-<<<<<<< HEAD
 /**
  * GET /api/export-all-credentials
  * Export ALL instance data including auth credentials for backup
- * CRITICAL: Call this BEFORE deploying to preserve WhatsApp sessions
  */
 app.get('/api/export-all-credentials', async (req, res) => {
     try {
@@ -922,13 +949,10 @@ app.get('/api/export-all-credentials', async (req, res) => {
         
         for (const instance of instances) {
             fullBackup.instances.push(instance);
-            
-            // Read auth credentials for this instance
             const authDir = path.join(instancesDir, instance.id, 'auth');
             if (fsSync.existsSync(authDir)) {
                 const authFiles = await fs.readdir(authDir);
                 fullBackup.credentials[instance.id] = {};
-                
                 for (const file of authFiles) {
                     const filePath = path.join(authDir, file);
                     const stat = await fs.stat(filePath);
@@ -951,7 +975,6 @@ app.get('/api/export-all-credentials', async (req, res) => {
 /**
  * POST /api/import-all-credentials
  * Import ALL instance data including auth credentials from backup
- * Call this AFTER deploying to restore WhatsApp sessions
  */
 app.post('/api/import-all-credentials', async (req, res) => {
     try {
@@ -964,13 +987,9 @@ app.post('/api/import-all-credentials', async (req, res) => {
         const instancesDir = path.join(__dirname, 'instances');
         const instancesFile = path.join(instancesDir, 'instances.json');
         
-        // Create instances directory
         await fs.mkdir(instancesDir, { recursive: true });
-        
-        // Write instances.json
         await fs.writeFile(instancesFile, JSON.stringify(backup.instances, null, 2));
         
-        // Restore credentials for each instance
         let restoredCount = 0;
         for (const instance of backup.instances) {
             const instanceDir = path.join(instancesDir, instance.id);
@@ -980,7 +999,6 @@ app.post('/api/import-all-credentials', async (req, res) => {
             await fs.mkdir(authDir, { recursive: true });
             await fs.mkdir(logsDir, { recursive: true });
             
-            // Write auth files
             if (backup.credentials[instance.id]) {
                 for (const [filename, content] of Object.entries(backup.credentials[instance.id])) {
                     const filePath = path.join(authDir, filename);
@@ -1000,8 +1018,6 @@ app.post('/api/import-all-credentials', async (req, res) => {
     }
 });
 
-=======
->>>>>>> parent of ba05231 (Add credential export/import endpoints for deployment safety)
 // ========================================
 // WEBSOCKET HANDLING
 // ========================================

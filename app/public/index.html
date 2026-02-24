@@ -1137,20 +1137,26 @@
 
                 <main class="main">
                     <div class="grid-12">
-                        <!-- QR Code -->
+                        <!-- Connection -->
                         <div class="card col-4">
-                            <div class="card-title">QR Code</div>
+                            <div class="card-title">Connection</div>
                             <div class="qr-area" id="qr-area">
                                 <div class="qr-placeholder" id="qr-placeholder">
                                     <div style="font-size: 32px; margin-bottom: 8px; opacity: 0.5;">📱</div>
-                                    <p style="font-size: 12px;">Click Connect to generate QR</p>
-                    </div>
+                                    <p style="font-size: 12px;">Choose a connection method below</p>
+                                </div>
                                 <img id="qr-code" class="qr-code" style="display: none;" alt="QR Code" />
+                                <div id="pairing-code-display" style="display: none; text-align: center;">
+                                    <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--zinc-500); margin-bottom: 12px;">Enter this code on WhatsApp</div>
+                                    <div id="pairing-code-value" style="font-size: 36px; font-weight: 700; letter-spacing: 6px; font-family: 'JetBrains Mono', monospace; color: var(--emerald-400);"></div>
+                                    <div style="font-size: 11px; color: var(--zinc-500); margin-top: 12px;">Linked Devices > Link a Device > Link with phone number</div>
+                                </div>
                             </div>
                             <div class="qr-buttons">
-                                <button class="btn btn-primary" id="btn-connect">Connect</button>
-                                <button class="btn btn-danger" id="btn-disconnect" disabled>Disconnect</button>
+                                <button class="btn btn-primary" id="btn-connect">QR Code</button>
+                                <button class="btn btn-outline" id="btn-pair" style="border-color: var(--emerald-600); color: var(--emerald-400);">Pair Code</button>
                             </div>
+                            <button class="btn btn-danger" id="btn-disconnect" disabled style="width: 100%; margin-top: 8px;">Disconnect</button>
                             <button class="btn-clear-auth" id="btn-clear-auth">Clear Auth</button>
                         </div>
 
@@ -1322,6 +1328,26 @@
         </div>
     </div>
 
+    <!-- Pairing Code Modal -->
+    <div class="modal-overlay" id="modal-pair">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Link with Pairing Code</h3>
+                <button class="modal-close" id="modal-pair-close">&times;</button>
+            </div>
+            <p style="font-size: 13px; color: var(--zinc-400); margin-bottom: 16px;">Enter the phone number of the WhatsApp account you want to link. Include the country code without + or spaces.</p>
+            <div class="form-group">
+                <label>Phone Number (with country code)</label>
+                <input type="tel" id="input-pair-phone" placeholder="447393002183">
+            </div>
+            <div class="form-hint" style="margin-bottom: 0;">Example: 447393002183 (UK), 14155552671 (US)</div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" id="btn-cancel-pair">Cancel</button>
+                <button class="btn btn-primary" id="btn-confirm-pair">Get Pairing Code</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Edit Instance Modal -->
     <div class="modal-overlay" id="modal-edit">
         <div class="modal">
@@ -1380,6 +1406,14 @@
             btnCopyWebhook: document.getElementById('btn-copy-webhook'),
             btnEditInstance: document.getElementById('btn-edit-instance'),
             btnDeleteInstance: document.getElementById('btn-delete-instance'),
+            btnPair: document.getElementById('btn-pair'),
+            pairingCodeDisplay: document.getElementById('pairing-code-display'),
+            pairingCodeValue: document.getElementById('pairing-code-value'),
+            modalPair: document.getElementById('modal-pair'),
+            modalPairClose: document.getElementById('modal-pair-close'),
+            inputPairPhone: document.getElementById('input-pair-phone'),
+            btnCancelPair: document.getElementById('btn-cancel-pair'),
+            btnConfirmPair: document.getElementById('btn-confirm-pair'),
             btnSaveBehavior: document.getElementById('btn-save-behavior'),
             toggleTyping: document.getElementById('toggle-typing'),
             toggleDelay: document.getElementById('toggle-delay'),
@@ -1558,10 +1592,18 @@
                 : '—';
 
             el.btnConnect.disabled = instance.status !== 'disconnected';
+            el.btnPair.disabled = instance.status !== 'disconnected';
             el.btnDisconnect.disabled = instance.status === 'disconnected';
 
-            // QR Code
-            if (instance.qrCode) {
+            // Connection display (QR, Pairing Code, or Status)
+            el.pairingCodeDisplay.style.display = 'none';
+            
+            if (instance.pairingCode && instance.status === 'connecting') {
+                el.qrCode.style.display = 'none';
+                el.qrPlaceholder.style.display = 'none';
+                el.pairingCodeDisplay.style.display = 'block';
+                el.pairingCodeValue.textContent = instance.pairingCode;
+            } else if (instance.qrCode) {
                 el.qrCode.src = instance.qrCode;
                 el.qrCode.style.display = 'block';
                 el.qrPlaceholder.style.display = 'none';
@@ -1582,14 +1624,14 @@
                 el.qrPlaceholder.style.display = 'flex';
                 el.qrPlaceholder.innerHTML = `
                     <div style="font-size: 32px; margin-bottom: 8px;">⏳</div>
-                    <p style="font-size: 12px; color: var(--zinc-500);">Generating QR code...</p>
+                    <p style="font-size: 12px; color: var(--zinc-500);">Waiting for connection...</p>
                 `;
             } else {
                 el.qrCode.style.display = 'none';
                 el.qrPlaceholder.style.display = 'flex';
                 el.qrPlaceholder.innerHTML = `
                     <div style="font-size: 32px; margin-bottom: 8px; opacity: 0.5;">📱</div>
-                    <p style="font-size: 12px; color: var(--zinc-500);">Click Connect to generate QR</p>
+                    <p style="font-size: 12px; color: var(--zinc-500);">Choose a connection method below</p>
                 `;
             }
 
@@ -1743,12 +1785,55 @@
 
         el.btnClearAuth.addEventListener('click', async () => {
             if (!selectedInstanceId) return;
-            if (!confirm('Clear auth? You will need to scan QR again.')) return;
+            if (!confirm('Clear auth? You will need to scan QR or pair again.')) return;
             try {
                 await apiCall(`/instances/${selectedInstanceId}/clear-auth`, 'POST');
             } catch (e) {
                 alert('Error: ' + e.message);
             }
+        });
+
+        el.btnPair.addEventListener('click', () => {
+            if (!selectedInstanceId) return;
+            el.inputPairPhone.value = '';
+            el.modalPair.classList.add('visible');
+        });
+
+        el.modalPairClose.addEventListener('click', () => el.modalPair.classList.remove('visible'));
+        el.btnCancelPair.addEventListener('click', () => el.modalPair.classList.remove('visible'));
+
+        el.btnConfirmPair.addEventListener('click', async () => {
+            if (!selectedInstanceId) return;
+            const phoneNumber = el.inputPairPhone.value.trim().replace(/[^\d]/g, '');
+            if (!phoneNumber || phoneNumber.length < 7) {
+                alert('Please enter a valid phone number with country code');
+                return;
+            }
+
+            el.btnConfirmPair.disabled = true;
+            el.btnConfirmPair.textContent = 'Requesting...';
+
+            try {
+                const result = await apiCall(`/instances/${selectedInstanceId}/pair`, 'POST', { phoneNumber });
+                if (result.error) {
+                    alert('Error: ' + result.error);
+                } else {
+                    el.modalPair.classList.remove('visible');
+                    // Update instance with pairing code
+                    const idx = instances.findIndex(i => i.id === selectedInstanceId);
+                    if (idx !== -1) {
+                        instances[idx].pairingCode = result.pairingCode;
+                        instances[idx].status = 'connecting';
+                        renderInstanceDetail(instances[idx]);
+                        renderInstanceList();
+                    }
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+
+            el.btnConfirmPair.disabled = false;
+            el.btnConfirmPair.textContent = 'Get Pairing Code';
         });
 
         el.btnSaveWebhook.addEventListener('click', async () => {

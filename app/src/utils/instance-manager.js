@@ -372,6 +372,110 @@ class WhatsAppInstance {
     }
     
     /**
+     * Start WhatsApp connection using pairing code (alternative to QR)
+     * @param {string} phoneNumber - Phone number with country code (e.g. "447393002183")
+     * @returns {Promise<string>} The 8-digit pairing code to enter on WhatsApp
+     */
+    async connectWithPairingCode(phoneNumber) {
+        console.log(`[Instance ${this.id}] connectWithPairingCode() called for: ${phoneNumber}`);
+        
+        if (this.status === 'connected') {
+            throw new Error('Already connected');
+        }
+        
+        if (this.socket) {
+            try {
+                this.socket.ev.removeAllListeners();
+                this.socket.end();
+            } catch (e) {}
+            this.socket = null;
+        }
+        
+        this.status = 'connecting';
+        this._emitStatusChange();
+        this._log('Starting pairing code connection...', 'info');
+        
+        try {
+            await fs.mkdir(this.authFolder, { recursive: true });
+            const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
+            
+            this.socket = makeWASocket({
+                auth: state,
+                printQRInTerminal: false
+            });
+            
+            this.socket.ev.on('creds.update', saveCreds);
+            
+            this.socket.ev.on('connection.update', async (update) => {
+                const { connection, lastDisconnect } = update;
+                
+                if (connection === 'close') {
+                    const statusCode = lastDisconnect?.error?.output?.statusCode;
+                    const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+                    
+                    this.status = 'disconnected';
+                    this.qrCode = null;
+                    this.pairingCode = null;
+                    this.connectedPhone = null;
+                    this.connectedAt = null;
+                    this._emitStatusChange();
+                    
+                    if (shouldReconnect) {
+                        this._log('Connection lost - reconnecting in 5 seconds...', 'warning');
+                        setTimeout(() => this.connect(), 5000);
+                    } else {
+                        this._log('Logged out - pair again to reconnect', 'error');
+                    }
+                }
+                
+                if (connection === 'open') {
+                    this.status = 'connected';
+                    this.qrCode = null;
+                    this.pairingCode = null;
+                    this.connectedPhone = this.socket.user?.id?.split(':')[0] || 'Unknown';
+                    this.connectedAt = new Date().toISOString();
+                    this._emitStatusChange();
+                    this._log(`Connected as ${this.connectedPhone} (via pairing code)`, 'success');
+                    this._startPresenceCycling();
+                }
+            });
+            
+            this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
+                if (type !== 'notify') return;
+                for (const msg of messages) {
+                    const now = Math.floor(Date.now() / 1000);
+                    if (now - msg.messageTimestamp > 60) continue;
+                    await this._handleMessage(msg);
+                }
+            });
+            
+            this.socket.ev.on('lid-mapping.update', async (mappings) => {
+                for (const [lid, pn] of Object.entries(mappings)) {
+                    await this._storeLidMapping(lid, pn);
+                }
+            });
+            
+            if (!this.socket.authState.creds.registered) {
+                const cleanNumber = phoneNumber.replace(/[^\d]/g, '');
+                const code = await this.socket.requestPairingCode(cleanNumber);
+                this.pairingCode = code;
+                this._log(`Pairing code generated: ${code}`, 'info');
+                return code;
+            } else {
+                this._log('Already registered, reconnecting...', 'info');
+                return null;
+            }
+            
+        } catch (error) {
+            console.error(`[Instance ${this.id}] Pairing code error:`, error);
+            this.status = 'disconnected';
+            this._emitStatusChange();
+            this._log(`Pairing code error: ${error.message}`, 'error');
+            throw error;
+        }
+    }
+
+    /**
      * Disconnect WhatsApp
      */
     async disconnect() {
@@ -708,6 +812,20 @@ class WhatsAppInstance {
     }
 
     /**
+     * Send read receipt for a message (blue ticks) with human-like delay
+     */
+    async _sendReadReceipt(msgKey) {
+        try {
+            const readDelay = 500 + Math.random() * 1500;
+            await new Promise(r => setTimeout(r, readDelay));
+            await this.socket.readMessages([msgKey]);
+            console.log(`[Instance ${this.id}] Read receipt sent for ${msgKey.id}`);
+        } catch (error) {
+            console.error(`[Instance ${this.id}] Read receipt error:`, error.message);
+        }
+    }
+
+    /**
      * Handle incoming message
      */
     async _handleMessage(msg) {
@@ -727,7 +845,7 @@ class WhatsAppInstance {
             // Cleanup old message IDs to prevent memory leak
             if (this.processedMessages.size > this.maxProcessedMessages) {
                 const idsArray = Array.from(this.processedMessages);
-                this.processedMessages = new Set(idsArray.slice(-500)); // Keep last 500
+                this.processedMessages = new Set(idsArray.slice(-500));
             }
             
             const from = msg.key.remoteJid;
@@ -739,6 +857,9 @@ class WhatsAppInstance {
             let phoneNumber = await this._resolvePhoneNumber(msg, from);
             
             this._log(`Received from ${phoneNumber}: ${messageContent.text.substring(0, 50)}...`, 'info');
+            
+            // Anti-ban: Send read receipt before replying (blue ticks)
+            await this._sendReadReceipt(msg.key);
             
             // Check rate limits
             const canSend = this.antiBanManager.canSendMessage(from);
@@ -960,9 +1081,9 @@ class WhatsAppInstance {
             name: this.name,
             status: this.status,
             qrCode: this.qrCode,
+            pairingCode: this.pairingCode || null,
             connectedPhone: this.connectedPhone,
             connectedAt: this.connectedAt,
-            webhookUrl: this.webhookUrl,
             webhookUrl: this.webhookUrl || null,
             behaviorSettings: this.behaviorSettings,
             antiBanSettings: this.antiBanSettings,
@@ -1172,6 +1293,18 @@ class InstanceManager {
         return instance.getStatus();
     }
     
+    /**
+     * Connect an instance using pairing code
+     */
+    async connectInstanceWithPairingCode(id, phoneNumber) {
+        const instance = this.instances.get(id);
+        if (!instance) {
+            throw new Error(`Instance ${id} not found`);
+        }
+        const code = await instance.connectWithPairingCode(phoneNumber);
+        return { code, instance: instance.getStatus() };
+    }
+
     /**
      * Disconnect an instance
      */
