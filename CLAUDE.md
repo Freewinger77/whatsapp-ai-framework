@@ -286,6 +286,40 @@ GOOGLE_DRIVE_FOLDER_ID=folder-id
 
 ---
 
+## ⚠️ CRITICAL: Deployment Rules (READ BEFORE DEPLOYING)
+
+The application is hosted on an **Azure VM** at `wasup.northeurope.cloudapp.azure.com` (`20.107.202.157`).
+
+### NEVER restart PM2 to deploy frontend/static changes
+
+Restarting PM2 kills the Node.js process, which **terminates all active WhatsApp (Baileys) sessions**. WhatsApp often **permanently invalidates** the auth credentials on reconnect, forcing users to re-scan QR codes for every single instance. This has happened multiple times and is extremely disruptive.
+
+### Deployment decision tree
+
+| What changed? | How to deploy | Command |
+|---|---|---|
+| **Static files only** (`public/index.html`, `public/test.html`, `public/docs.html`, `openapi.yaml`) | **SCP the file directly** — no restart needed | `scp app/public/index.html azureuser@20.107.202.157:/opt/whatsapp-ai/app/public/index.html` |
+| **Server code** (`server.js`, `src/utils/*.js`, `package.json`) | **SCP files then graceful PM2 reload** | `scp <files> ... && ssh azureuser@20.107.202.157 'cd /opt/whatsapp-ai && pm2 reload whatsapp-api'` |
+| **New npm dependencies** (`package.json` changed) | **Full deploy script** (last resort) | `bash deploy/deploy-to-vm.sh 20.107.202.157` — then manual PM2 fix if needed |
+
+### Key rules
+
+1. **Always check what files changed** before choosing a deploy method.
+2. **For HTML/CSS/JS frontend changes**: Use `scp` only. Express serves static files from disk on each request — no restart needed.
+3. **For server-side code**: Use `pm2 reload` (graceful, zero-downtime) instead of `pm2 restart` (hard kill). If reload fails, use `pm2 delete whatsapp-api && pm2 start deploy/ecosystem.config.cjs`.
+4. **NEVER run `deploy/deploy-to-vm.sh` for frontend-only changes** — it runs `npm install` and `pm2 restart` which will disconnect all WhatsApp sessions.
+5. **After any deploy, always verify** instances are still connected: `curl -s https://wasup.northeurope.cloudapp.azure.com/api/instances | python3 -c "import sys,json; [print(f'{i[\"name\"]}: {i[\"status\"]}') for i in json.load(sys.stdin)['instances']]"`
+
+### VM details
+
+- **IP**: `20.107.202.157`
+- **User**: `azureuser`
+- **App path**: `/opt/whatsapp-ai`
+- **Domain**: `wasup.northeurope.cloudapp.azure.com`
+- **Process manager**: PM2 (app name: `whatsapp-api`)
+
+---
+
 ## After Making Changes
 
 Update `docs/CLAUDE_SESSION_NOTES.md` with:

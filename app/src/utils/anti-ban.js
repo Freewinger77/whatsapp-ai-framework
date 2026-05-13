@@ -434,7 +434,7 @@ function delay(ms) {
 
 /**
  * Simulate typing indicator for realistic behavior
- * @param {Object} socket - Baileys socket
+ * @param {Object} socket - WhatsApp socket
  * @param {string} jid - Chat JID
  * @param {number} messageLength - Length of message to "type"
  */
@@ -475,7 +475,7 @@ async function simulateTyping(socket, jid, messageLength) {
 /**
  * ANTI-BAN: Simulate reading a message before replying
  * Marks the message as read and waits a realistic "reading" time
- * @param {Object} socket - Baileys socket
+ * @param {Object} socket - WhatsApp socket
  * @param {Object} messageKey - The message key to mark as read
  * @param {string} messageText - The message text (for calculating read time)
  */
@@ -555,18 +555,18 @@ async function safeSendMessageDirect(socket, jid, message, incomingText, antiBan
 
     // Send the message
     const messageObj = typeof message === 'string' ? { text: message } : message;
-    await socket.sendMessage(jid, messageObj);
+    const sentMsg = await socket.sendMessage(jid, messageObj);
 
     // Record the message for rate limiting
     antiBanManager.recordMessage(jid);
 
-    return { sent: true, delay: delayMs, typingSimulation, delayEnabled };
+    return { sent: true, delay: delayMs, typingSimulation, delayEnabled, key: sentMsg?.key };
 }
 
 /**
  * Safe send message with all anti-ban protections
  * This is the main export - uses direct sending (batching is optional and managed separately)
- * @param {Object} socket - Baileys socket
+ * @param {Object} socket - WhatsApp socket
  * @param {string} jid - Chat JID
  * @param {Object|string} message - Message to send
  * @param {string} incomingText - Original incoming message text

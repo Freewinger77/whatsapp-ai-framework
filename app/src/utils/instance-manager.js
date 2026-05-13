@@ -16,16 +16,82 @@ import crypto from 'crypto';
 import QRCode from 'qrcode';
 import NodeCache from 'node-cache';
 import pino from 'pino';
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from 'baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, downloadMediaMessage, extensionForMediaMessage, fetchLatestWaWebVersion } from 'baileys';
+import baileysHelper from 'baileys_helper';
 import { AntiBanManager, safeSendMessage, delay } from './anti-ban.js';
+import { uploadMedia, isStorageEnabled } from './azure-storage.js';
+import {
+    createProxyAgent,
+    getDeploymentDefaultProxy,
+    parseProxyConfig,
+    redactProxy,
+    resolveEffectiveProxy,
+} from './proxy.js';
+import { ProxyPoolManager } from './proxy-pool.js';
+import {
+    buildAntibanContext,
+    legacyToV2Config,
+    pickOrLoadFingerprint,
+    planReconnect,
+    rampPresence,
+    DEFAULT_V2_MODULES,
+} from './antiban-v2.js';
+
+const { sendButtons, sendInteractiveMessage } = baileysHelper;
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Create a silent logger for Baileys (reduces noise, improves stealth)
+/** Bracketed error tag from the anti-ban transport guard (do not expose vendor names to API clients). */
+function isAntibanTransportGuardMessage(msg) {
+    return typeof msg === 'string' && /^\[[^\]]*-antiban[^\]]*\]/i.test(msg.trim());
+}
+
+/** Strip third-party library names from strings returned to API clients or shown in operator-facing logs. */
+function redactTechVendorNames(s) {
+    if (typeof s !== 'string') return s;
+    return s
+        .replace(/baileys-antiban/gi, 'Wasup anti-ban')
+        .replace(/baileys_helper/gi, 'Wasup interactive helper')
+        .replace(/\bBaileys\b/gi, 'WhatsApp transport');
+}
+
+/** Client-safe reason when the anti-ban transport guard blocks a send. */
+const API_ANTIBAN_BLOCK_REASON = 'Wasup anti-ban policy blocked this send.';
+
+function sanitizeClientReason(r) {
+    if (typeof r !== 'string') return r;
+    if (isAntibanTransportGuardMessage(r)) return API_ANTIBAN_BLOCK_REASON;
+    return redactTechVendorNames(r);
+}
+
+// Silent socket logger (reduces noise, improves stealth)
 const logger = pino({ level: 'silent' });
+
+let cachedWaWebVersion = null;
+let cachedWaWebVersionAt = 0;
+const WA_WEB_VERSION_CACHE_MS = 6 * 60 * 60 * 1000;
+const WA_WEB_VERSION_TIMEOUT_MS = 5000;
+
+async function getCurrentWaWebVersion() {
+    const now = Date.now();
+    if (cachedWaWebVersion && now - cachedWaWebVersionAt < WA_WEB_VERSION_CACHE_MS) {
+        return cachedWaWebVersion;
+    }
+
+    const timeout = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('WhatsApp Web version lookup timed out')), WA_WEB_VERSION_TIMEOUT_MS);
+    });
+    const result = await Promise.race([fetchLatestWaWebVersion(), timeout]);
+    if (!Array.isArray(result?.version)) {
+        throw new Error('WhatsApp Web version lookup returned no version');
+    }
+    cachedWaWebVersion = result.version;
+    cachedWaWebVersionAt = now;
+    return cachedWaWebVersion;
+}
 
 /**
  * Generate a UUID v4
@@ -45,9 +111,102 @@ function normalizePhone(phone) {
 // Base paths
 const INSTANCES_FOLDER = path.join(__dirname, '../../instances');
 const INSTANCES_DB_FILE = path.join(INSTANCES_FOLDER, 'instances.json');
+const PROXY_POOL_FILE = path.join(INSTANCES_FOLDER, 'proxy-pool.json');
 
 // Global default webhook URL (from environment)
 const DEFAULT_WEBHOOK_URL = process.env.DEFAULT_WEBHOOK_URL || process.env.N8N_WEBHOOK_URL || '';
+
+const BEHAVIOR_PROFILES = {
+    BOT_NATIVE: 'bot-native',
+    NOTIFICATION_BALANCED: 'notification-balanced',
+    NOTIFICATION_MAX: 'notification-max',
+};
+
+const DEFAULT_NOTIFICATION_GRACE_MS = 12_000;
+const MAX_NOTIFICATION_GRACE_MS = 120_000;
+
+function clampNotificationGraceMs(value, fallback = DEFAULT_NOTIFICATION_GRACE_MS) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(0, Math.min(MAX_NOTIFICATION_GRACE_MS, Math.round(n)));
+}
+
+function normalizeBehaviorProfile(settings = {}, previous = {}) {
+    const requested = settings.behaviorProfile || settings.profile;
+    if (Object.values(BEHAVIOR_PROFILES).includes(requested)) return requested;
+    if (
+        settings.phoneNotificationsEnabled === undefined
+        && settings.typingSimulation === undefined
+        && Object.values(BEHAVIOR_PROFILES).includes(previous.behaviorProfile)
+    ) {
+        return previous.behaviorProfile;
+    }
+
+    // Backward compatibility: older clients only knew phoneNotificationsEnabled.
+    const phoneNotificationsEnabled = settings.phoneNotificationsEnabled !== undefined
+        ? !!settings.phoneNotificationsEnabled
+        : !!previous.phoneNotificationsEnabled;
+    const typingSimulation = settings.typingSimulation !== undefined
+        ? !!settings.typingSimulation
+        : previous.typingSimulation;
+
+    if (phoneNotificationsEnabled) {
+        return typingSimulation === false
+            ? BEHAVIOR_PROFILES.NOTIFICATION_MAX
+            : BEHAVIOR_PROFILES.NOTIFICATION_BALANCED;
+    }
+    return BEHAVIOR_PROFILES.BOT_NATIVE;
+}
+
+function normalizeBehaviorSettings(settings = {}, previous = {}) {
+    const behaviorProfile = normalizeBehaviorProfile(settings, previous);
+    const profileDefaults = {
+        [BEHAVIOR_PROFILES.BOT_NATIVE]: {
+            typingSimulation: true,
+            delayEnabled: true,
+            phoneNotificationsEnabled: false,
+            notificationGraceMs: 0,
+        },
+        [BEHAVIOR_PROFILES.NOTIFICATION_BALANCED]: {
+            typingSimulation: true,
+            delayEnabled: true,
+            phoneNotificationsEnabled: true,
+            notificationGraceMs: DEFAULT_NOTIFICATION_GRACE_MS,
+        },
+        [BEHAVIOR_PROFILES.NOTIFICATION_MAX]: {
+            typingSimulation: false,
+            delayEnabled: true,
+            phoneNotificationsEnabled: true,
+            notificationGraceMs: DEFAULT_NOTIFICATION_GRACE_MS,
+        },
+    }[behaviorProfile];
+
+    const merged = {
+        ...profileDefaults,
+        ...previous,
+        ...settings,
+        behaviorProfile,
+    };
+
+    const profileChanged = previous.behaviorProfile && previous.behaviorProfile !== behaviorProfile;
+    merged.typingSimulation = settings.typingSimulation !== undefined
+        ? !!settings.typingSimulation
+        : (profileChanged || previous.typingSimulation === undefined ? !!profileDefaults.typingSimulation : !!previous.typingSimulation);
+    merged.delayEnabled = settings.delayEnabled !== undefined
+        ? !!settings.delayEnabled
+        : (profileChanged || previous.delayEnabled === undefined ? !!profileDefaults.delayEnabled : !!previous.delayEnabled);
+    merged.phoneNotificationsEnabled = behaviorProfile !== BEHAVIOR_PROFILES.BOT_NATIVE;
+    merged.notificationGraceMs = clampNotificationGraceMs(
+        settings.notificationGraceMs !== undefined ? settings.notificationGraceMs : merged.notificationGraceMs,
+        profileDefaults.notificationGraceMs
+    );
+
+    if (behaviorProfile === BEHAVIOR_PROFILES.NOTIFICATION_MAX) {
+        merged.typingSimulation = false;
+    }
+
+    return merged;
+}
 
 /**
  * Single WhatsApp Instance
@@ -58,11 +217,29 @@ class WhatsAppInstance {
         this.name = config.name || `Instance ${config.id}`;
         this.webhookUrl = config.webhookUrl || '';
         this.createdAt = config.createdAt || new Date().toISOString();
+
+        // Per-instance proxy override (null = inherit deployment default from env vars)
+        // Shape: { enabled: boolean, type, host, port, username?, password? }
+        //   - enabled=false  -> explicitly disable (ignore deployment default)
+        //   - enabled=true   -> use this instance-specific proxy
+        //   - null/undefined -> fall back to deployment default (DEFAULT_PROXY_URL env var)
+        this.proxy = this._normalizeProxy(config.proxy);
+
+        // Anti-ban v2 (Wasup transport anti-ban pipeline)
+        // Per-instance config block. If absent, derived from legacy antiBanSettings
+        // on first connect. See docs/ANTIBAN_V2_DESIGN.md.
+        this.antibanV2 = config.antibanV2 || null;
+        // Runtime context (built per-connect, destroyed on disconnect)
+        this.antibanCtx = null;
+        // AbortController for stealth presence ramp (cancelled on disconnect)
+        this.presenceRampAbort = null;
         
         // Connection state
         this.socket = null;
+        this.rawSocket = null;
         this.status = 'disconnected'; // disconnected | connecting | connected
         this.qrCode = null;
+        this.pairingCode = null; // For pairing code login (alternative to QR)
         this.connectedPhone = null;
         this.connectedAt = null;
         
@@ -76,11 +253,9 @@ class WhatsAppInstance {
         // Saved contacts cache (to avoid re-saving contacts we've already saved)
         this.savedContacts = new Set();
         
-        // Behavior settings (typing simulation, delays)
-        this.behaviorSettings = config.behaviorSettings || {
-            typingSimulation: true,   // Show "typing..." indicator
-            delayEnabled: true,       // Human-like response delays
-        };
+        // Behavior profiles control how much the linked device acts like an
+        // active reader versus preserving handset notifications.
+        this.behaviorSettings = normalizeBehaviorSettings(config.behaviorSettings || {});
         
         // Anti-ban settings
         this.antiBanSettings = config.antiBanSettings || {
@@ -101,12 +276,16 @@ class WhatsAppInstance {
         // Activity log (in-memory, capped)
         this.activityLog = [];
         
+        // Message history (in-memory, capped) for inbound/outbound tracking
+        this.messageHistory = [];
+        this.maxMessageHistory = 1000;
+        
         // ========================================
-        // ANTI-BAN: Baileys-recommended caches
+        // ANTI-BAN: transport-recommended caches
         // ========================================
         
         // Group metadata cache - CRITICAL: Prevents rate limits when sending to groups
-        // From Baileys docs: "This is a problem and causes a ratelimit and potential bans"
+        // From transport docs: unbounded caches cause ratelimits and risk flags
         this.groupMetadataCache = new NodeCache({ stdTTL: 300, checkperiod: 60 }); // 5 min TTL
         
         // User devices cache - Reduces device list API calls
@@ -124,6 +303,17 @@ class WhatsAppInstance {
         
         // Presence cycling interval (for stealth mode)
         this.presenceCycleInterval = null;
+        
+        // Human handoff settings (per-instance configurable)
+        this.handoffSettings = Object.assign({
+            resumeKeywords: ['#ai', '#assistant', '#bot', '#resume'],
+            resumeMessage: '',   // optional auto-reply when bot resumes (empty = silent)
+        }, config.handoffSettings || {});
+
+        // Human handoff: JID -> { taggedAt, taggedBy, autoResumeAt? }
+        this.humanModeChats = new Map();
+        // IDs of messages we sent via the bot, so we can distinguish manual sends
+        this.botSentMessageIds = new Set();
         
         // Event callbacks
         this.onStatusChange = null;
@@ -145,10 +335,13 @@ class WhatsAppInstance {
     }
     
     /**
-     * Start WhatsApp connection
+     * Start WhatsApp connection (QR code mode by default, or pairing code if phone provided)
+     * @param {Object} options - Connection options
+     * @param {string} options.pairingPhone - Phone number for pairing code login (alternative to QR)
      */
-    async connect() {
-        console.log(`[Instance ${this.id}] connect() called, current status: ${this.status}`);
+    async connect(options = {}) {
+        const usePairingCode = !!options.pairingPhone;
+        console.log(`[Instance ${this.id}] connect() called, mode: ${usePairingCode ? 'pairing' : 'qr'}, status: ${this.status}`);
         
         if (this.status === 'connected') {
             throw new Error('Already connected');
@@ -157,7 +350,7 @@ class WhatsAppInstance {
             throw new Error('Connection in progress');
         }
         
-        // Clean up existing socket if any (prevents duplicate event listeners on reconnect)
+        // Clean up existing socket if any
         if (this.socket) {
             console.log(`[Instance ${this.id}] Cleaning up old socket before reconnect`);
             try {
@@ -167,69 +360,169 @@ class WhatsAppInstance {
                 console.log(`[Instance ${this.id}] Cleanup error:`, e.message);
             }
             this.socket = null;
+            this.rawSocket = null;
         }
         
         this.status = 'connecting';
+        this.pairingCode = null;
         this._emitStatusChange();
-        this._log('Starting connection...', 'info');
+        this._log(`Starting ${usePairingCode ? 'pairing code' : 'QR code'} connection...`, 'info');
         
         try {
-            // Ensure auth folder exists
             await fs.mkdir(this.authFolder, { recursive: true });
             console.log(`[Instance ${this.id}] Auth folder ready: ${this.authFolder}`);
             
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
             console.log(`[Instance ${this.id}] Auth state loaded`);
-            
-            // ========================================
-            // ANTI-BAN: Baileys-recommended socket configuration
-            // Based on https://baileys.wiki/docs/socket/configuration/
-            // ========================================
-            this.socket = makeWASocket({
+
+            // Resolve proxy (instance override > deployment default > none) and build agent
+            const resolved = resolveEffectiveProxy(this.proxy);
+            this._activeProxy = resolved;                  // remember for diagnostics / status
+            this._activeProxyAgent = null;                 // reset; may be set below
+            this._activeProxyAt = null;
+            let proxyAgent = null;
+            if (resolved.config) {
+                try {
+                    proxyAgent = createProxyAgent(resolved.config);
+                    this._activeProxyAgent = proxyAgent;
+                    this._activeProxyAt = new Date().toISOString();
+                    const r = redactProxy(resolved.config);
+                    this._log(
+                        `Using ${resolved.source} proxy: ${r.type}://${r.username ? r.username + '@' : ''}${r.host}:${r.port}`,
+                        'info'
+                    );
+                } catch (err) {
+                    this._log(`Proxy agent creation failed, connecting direct: ${err.message}`, 'error');
+                    proxyAgent = null;
+                }
+            } else {
+                console.log(`[Instance ${this.id}] No proxy configured, direct connection`);
+                this._activeProxyAt = new Date().toISOString();
+            }
+
+            const isInitialRegistration = !state.creds.registered;
+
+            // ─── Anti-ban v2 integration ──────────────────────────────────
+            // 1) Lazy-init the v2 config from legacy on first connect
+            if (!this.antibanV2) {
+                this.antibanV2 = legacyToV2Config(this.antiBanSettings);
+                // If this instance was already connected before v2 launch, skip warmup
+                if (this.connectedPhone || this.createdAt < new Date('2026-04-30').toISOString()) {
+                    this.antibanV2._skipWarmup = true;
+                }
+                this._log('Anti-ban v2 config seeded from legacy settings', 'info');
+            }
+
+            // 2) Build the v2 context for already-registered sessions only.
+            // Registration is the most protocol-sensitive phase; use the transport
+            // defaults until WhatsApp accepts the new linked device, then wrap.
+            let fingerprint = null;
+            if (!isInitialRegistration) {
+                fingerprint = await pickOrLoadFingerprint(path.join(INSTANCES_FOLDER, this.id));
+                try {
+                    this.antibanCtx = await buildAntibanContext({
+                        instanceId: this.id,
+                        instanceFolder: path.join(INSTANCES_FOLDER, this.id),
+                        v2config: this.antibanV2,
+                        onLog: (msg, level) => this._log(`[v2] ${msg}`, level),
+                        onRiskChange: (change) => this._onRiskChange(change),
+                    });
+                } catch (err) {
+                    this._log(`Failed to build anti-ban v2 context: ${err.message}. Falling back to legacy.`, 'error');
+                    this.antibanCtx = null;
+                }
+            } else {
+                this.antibanCtx = null;
+                this._log('Using registration-safe socket profile until device is linked', 'info');
+            }
+
+            // 3) Build the raw socket; apply the sticky fingerprint only after registration
+            let waWebVersion = null;
+            try {
+                waWebVersion = await getCurrentWaWebVersion();
+                this._log(`Using WhatsApp Web version ${waWebVersion.join('.')}`, 'info');
+            } catch (err) {
+                this._log(`Could not refresh WhatsApp Web version, using transport default: ${err.message}`, 'warning');
+            }
+
+            const rawSocket = makeWASocket({
                 auth: state,
                 logger: logger,
-                
-                // CRITICAL: Group metadata cache prevents rate limits and bans
-                // "This is a problem and causes a ratelimit and potential bans from WhatsApp"
+                ...(waWebVersion ? { version: waWebVersion } : {}),
                 cachedGroupMetadata: async (jid) => this.groupMetadataCache.get(jid),
-                
-                // User devices cache - reduces device list API calls
                 userDevicesCache: this.userDevicesCache,
-                
-                // Message retry counter - prevents retry storms
                 msgRetryCounterCache: this.msgRetryCounterCache,
-                
-                // Media cache - prevents repeated uploads
                 mediaCache: this.mediaCache,
-                
-                // STEALTH: Don't auto-mark as online on connect
-                // Makes the bot appear offline until explicitly set online
                 markOnlineOnConnect: false,
-                
-                // Message store for retry handling (prevents "this message can take a while" errors)
+                ...(fingerprint ? { browser: fingerprint.browser } : {}),
                 getMessage: async (key) => {
                     const msg = this.messageStore.get(key.id);
                     return msg?.message || undefined;
                 },
-                
-                // Session health options
                 enableAutoSessionRecreation: true,
                 enableRecentMessageCache: true,
-                
-                // Don't print QR in terminal (we handle it via API)
-                printQRInTerminal: false
+                ...(proxyAgent && { agent: proxyAgent, fetchAgent: proxyAgent }),
             });
-            console.log(`[Instance ${this.id}] Socket created with anti-ban config`);
+            this.rawSocket = rawSocket;
+
+            // 4) Wrap with anti-ban v2 (sendMessage now intercepted with full pipeline)
+            if (this.antibanCtx?.wrap) {
+                try {
+                    this.socket = this.antibanCtx.wrap(rawSocket);
+                    this._log(`Socket wrapped with anti-ban v2 (browser: ${fingerprint.browser.join('/')})`, 'success');
+                } catch (err) {
+                    this._log(`Wrap failed, using raw socket: ${err.message}`, 'error');
+                    this.socket = rawSocket;
+                }
+            } else {
+                this.socket = rawSocket;
+            }
+            console.log(`[Instance ${this.id}] Socket created${proxyAgent ? ' (via proxy)' : ''}${this.antibanCtx ? ' [antiban-v2]' : ''}`);
             
             // Save credentials when updated
             this.socket.ev.on('creds.update', saveCreds);
+
+            const enableAntibanAfterRegistration = async () => {
+                if (!isInitialRegistration || this.antibanCtx || !this.rawSocket) return;
+
+                try {
+                    const postLinkFingerprint = await pickOrLoadFingerprint(path.join(INSTANCES_FOLDER, this.id));
+                    this.antibanCtx = await buildAntibanContext({
+                        instanceId: this.id,
+                        instanceFolder: path.join(INSTANCES_FOLDER, this.id),
+                        v2config: this.antibanV2,
+                        onLog: (msg, level) => this._log(`[v2] ${msg}`, level),
+                        onRiskChange: (change) => this._onRiskChange(change),
+                    });
+                    this.socket = this.antibanCtx.wrap(this.rawSocket);
+                    this._log(`Anti-ban v2 enabled after link (fingerprint ready: ${postLinkFingerprint.browser.join('/')})`, 'success');
+                } catch (err) {
+                    this._log(`Failed to enable anti-ban v2 after link: ${err.message}`, 'warning');
+                    this.socket = this.rawSocket;
+                }
+            };
+            
+            // If using pairing code and not yet registered, request the code
+            if (usePairingCode && !state.creds.registered) {
+                const cleanNumber = options.pairingPhone.replace(/[^\d]/g, '');
+                console.log(`[Instance ${this.id}] Requesting pairing code for: ${cleanNumber}`);
+                
+                // Small delay to let socket establish WebSocket connection
+                await delay(2000);
+                
+                const code = await this.socket.requestPairingCode(cleanNumber);
+                this.pairingCode = code;
+                console.log(`[Instance ${this.id}] Pairing code: ${code}`);
+                this._log(`Pairing code: ${code} - Enter in WhatsApp > Linked Devices > Link a Device`, 'info');
+                this._emitStatusChange();
+            }
             
             // Handle connection updates
             this.socket.ev.on('connection.update', async (update) => {
                 const { connection, qr, lastDisconnect } = update;
                 
-                // QR Code received
-                if (qr) {
+                // QR Code received (only show if NOT in pairing code mode)
+                if (qr && !usePairingCode) {
                     console.log(`[Instance ${this.id}] QR code received`);
                     try {
                         this.qrCode = await QRCode.toDataURL(qr);
@@ -241,261 +534,210 @@ class WhatsAppInstance {
                     }
                 }
                 
-                // Connection closed
                 if (connection === 'close') {
                     const statusCode = lastDisconnect?.error?.output?.statusCode;
-                    const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-                    
-                    console.log(`[Instance ${this.id}] Connection closed. Status:`, statusCode);
+                    // Use the anti-ban pipeline's typed disconnect classifier for backoff
+                    const reconnectPlan = planReconnect(statusCode, 5000);
+                    // Honor our existing "loggedOut means stop" rule on top of the classifier
+                    const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+                    const shouldReconnect = !isLoggedOut && reconnectPlan.shouldReconnect !== false;
+
+                    console.log(`[Instance ${this.id}] Connection closed. Status:`, statusCode, '→', reconnectPlan.message);
                     this.status = 'disconnected';
                     this.qrCode = null;
+                    this.pairingCode = null;
                     this.connectedPhone = null;
                     this.connectedAt = null;
                     this._emitStatusChange();
-                    
+
+                    // Cancel any pending stealth presence ramp
+                    if (this.presenceRampAbort) {
+                        try { this.presenceRampAbort.abort(); } catch (_) {}
+                        this.presenceRampAbort = null;
+                    }
+
+                    // Tear down the v2 context (flushes state + stops timers)
+                    if (this.antibanCtx) {
+                        const ctx = this.antibanCtx;
+                        this.antibanCtx = null;
+                        ctx.destroy().catch((err) => console.warn(`[Instance ${this.id}] antiban ctx destroy failed:`, err.message));
+                    }
+
                     if (shouldReconnect) {
-                        this._log('Connection lost - reconnecting in 5 seconds...', 'warning');
-                        setTimeout(() => this.connect(), 5000);
+                        const backoffMs = Math.max(2000, reconnectPlan.backoffMs || 5000);
+                        this._log(`Connection lost (${reconnectPlan.category}: ${reconnectPlan.message}) — reconnecting in ${Math.round(backoffMs / 1000)}s`, 'warning');
+                        setTimeout(() => this.connect(), backoffMs);
                     } else {
-                        this._log('Logged out - scan QR code to reconnect', 'error');
+                        this._log(`Disconnect is fatal (${reconnectPlan.message}) — manual re-pair required`, 'error');
                     }
                 }
-                
-                // Connected successfully
+
                 if (connection === 'open') {
                     console.log(`[Instance ${this.id}] Connected!`);
+                    await enableAntibanAfterRegistration();
                     this.status = 'connected';
                     this.qrCode = null;
+                    this.pairingCode = null;
                     this.connectedPhone = this.socket.user?.id?.split(':')[0] || 'Unknown';
                     this.connectedAt = new Date().toISOString();
                     this._emitStatusChange();
                     this._log(`Connected as ${this.connectedPhone}`, 'success');
-                    
-                    // ========================================
-                    // ANTI-BAN: Start presence cycling
-                    // Avoids "always online" pattern which looks suspicious
-                    // ========================================
-                    this._startPresenceCycling();
+
+                    const phoneNotifsOn = this._preservesPhoneNotifications();
+
+                    if (phoneNotifsOn) {
+                        // Force the linked-device presence to 'unavailable' so WhatsApp's
+                        // server keeps delivering push notifications to the phone.
+                        try {
+                            await this.socket.sendPresenceUpdate('unavailable');
+                            this._log('Phone notifications mode: forced presence=unavailable on connect', 'info');
+                        } catch (err) {
+                            this._log(`Failed to force unavailable presence: ${err.message}`, 'warning');
+                        }
+                    } else {
+                        // Stealth presence ramp: wait 45-120s before broadcasting `available`.
+                        // Bots that snap online instantly look suspicious to WhatsApp's classifier.
+                        if (this.antibanV2?.modules?.stealthConnect?.enabled !== false) {
+                            this.presenceRampAbort = new AbortController();
+                            const minMs = this.antibanV2?.modules?.stealthConnect?.presenceRampMinMs || 45_000;
+                            const maxMs = this.antibanV2?.modules?.stealthConnect?.presenceRampMaxMs || 120_000;
+                            rampPresence(this.socket, this.presenceRampAbort.signal, { minDelayMs: minMs, maxDelayMs: maxMs })
+                                .then((res) => {
+                                    if (!res?.aborted) {
+                                        this._log(`Stealth presence ramp completed at ${res?.rampedAt}`, 'info');
+                                    }
+                                })
+                                .catch((err) => this._log(`Presence ramp error: ${err.message}`, 'warning'));
+                        }
+
+                        // Continue our existing background presence cycling (now ON TOP of v2's
+                        // PresenceChoreographer which fires per-message). The cycling here keeps
+                        // the global online/offline rhythm; the choreographer adjusts per-message.
+                        this._startPresenceCycling();
+                    }
                 }
             });
             
             // Handle incoming messages
             this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
-                // Only process real-time notifications, not history sync
-                if (type !== 'notify') {
-                    console.log(`[Instance ${this.id}] Ignoring messages.upsert type: ${type}`);
-                    return;
-                }
+                if (type !== 'notify') return;
                 
                 for (const msg of messages) {
-                    // Skip old messages (more than 60 seconds old) - likely from history sync
                     const msgTimestamp = msg.messageTimestamp;
                     const now = Math.floor(Date.now() / 1000);
-                    const age = now - msgTimestamp;
-                    
-                    if (age > 60) {
-                        console.log(`[Instance ${this.id}] Skipping old message (${age}s old): ${msg.key.id}`);
-                        continue;
-                    }
-                    
+                    if (now - msgTimestamp > 60) continue;
                     await this._handleMessage(msg);
                 }
             });
             
-            // Listen for LID-PN mapping updates (Baileys 7.x)
-            this.socket.ev.on('lid-mapping.update', async (mappings) => {
-                console.log(`[Instance ${this.id}] Received LID-PN mappings:`, Object.keys(mappings).length);
-                // Store mappings in our persistent cache too
-                for (const [lid, pn] of Object.entries(mappings)) {
-                    await this._storeLidMapping(lid, pn);
-                }
-            });
-            
-            // ========================================
-            // ANTI-BAN: Group metadata cache updates
-            // Prevents rate limits when sending to groups
-            // ========================================
-            this.socket.ev.on('groups.update', (updates) => {
-                for (const update of updates) {
-                    if (update.id) {
-                        // Merge with existing cache entry
-                        const existing = this.groupMetadataCache.get(update.id) || {};
-                        this.groupMetadataCache.set(update.id, { ...existing, ...update });
-                        console.log(`[Instance ${this.id}] Group cache updated: ${update.id}`);
-                    }
-                }
-            });
-            
-            this.socket.ev.on('groups.upsert', (groups) => {
-                for (const group of groups) {
-                    if (group.id) {
-                        this.groupMetadataCache.set(group.id, group);
-                        console.log(`[Instance ${this.id}] Group cache added: ${group.id}`);
-                    }
-                }
-            });
-            
-            // ========================================
-            // ANTI-BAN: Store messages for retry handling
-            // Prevents "this message can take a while" errors
-            // ========================================
+            // Store messages for retry handling
             this.socket.ev.on('messages.upsert', ({ messages }) => {
                 for (const msg of messages) {
-                    if (msg.key?.id && msg.message) {
-                        this.messageStore.set(msg.key.id, {
-                            message: msg.message,
-                            timestamp: Date.now()
-                        });
-                        
-                        // Cleanup old messages to prevent memory leak
+                    if (msg.key.id) {
+                        this.messageStore.set(msg.key.id, msg);
                         if (this.messageStore.size > this.maxStoredMessages) {
-                            const entries = Array.from(this.messageStore.entries());
-                            const toDelete = entries
-                                .sort((a, b) => a[1].timestamp - b[1].timestamp)
-                                .slice(0, 100);
-                            for (const [key] of toDelete) {
-                                this.messageStore.delete(key);
-                            }
+                            const firstKey = this.messageStore.keys().next().value;
+                            this.messageStore.delete(firstKey);
                         }
                     }
                 }
             });
             
+            // Cache group metadata on updates
+            this.socket.ev.on('groups.update', (updates) => {
+                for (const update of updates) {
+                    if (update.id) {
+                        const existing = this.groupMetadataCache.get(update.id);
+                        if (existing) {
+                            this.groupMetadataCache.set(update.id, { ...existing, ...update });
+                        }
+                    }
+                }
+            });
+            
+            // Listen for LID–PN mapping updates (current transport)
+            this.socket.ev.on('lid-mapping.update', async (mappings) => {
+                console.log(`[Instance ${this.id}] Received LID-PN mappings:`, Object.keys(mappings).length);
+                for (const [lid, pn] of Object.entries(mappings)) {
+                    await this._storeLidMapping(lid, pn);
+                }
+            });
+            
         } catch (error) {
             console.error(`[Instance ${this.id}] Connection error:`, error);
-            console.error(`[Instance ${this.id}] Error stack:`, error.stack);
             this.status = 'disconnected';
             this._emitStatusChange();
             this._log(`Connection error: ${error.message}`, 'error');
             throw error;
         }
     }
-    
-    /**
-     * Start WhatsApp connection using pairing code (alternative to QR)
-     * @param {string} phoneNumber - Phone number with country code (e.g. "447393002183")
-     * @returns {Promise<string>} The 8-digit pairing code to enter on WhatsApp
-     */
-    async connectWithPairingCode(phoneNumber) {
-        console.log(`[Instance ${this.id}] connectWithPairingCode() called for: ${phoneNumber}`);
-        
-        if (this.status === 'connected') {
-            throw new Error('Already connected');
-        }
-        
-        if (this.socket) {
-            try {
-                this.socket.ev.removeAllListeners();
-                this.socket.end();
-            } catch (e) {}
-            this.socket = null;
-        }
-        
-        this.status = 'connecting';
-        this._emitStatusChange();
-        this._log('Starting pairing code connection...', 'info');
-        
-        try {
-            await fs.mkdir(this.authFolder, { recursive: true });
-            const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
-            
-            this.socket = makeWASocket({
-                auth: state,
-                printQRInTerminal: false
-            });
-            
-            this.socket.ev.on('creds.update', saveCreds);
-            
-            this.socket.ev.on('connection.update', async (update) => {
-                const { connection, lastDisconnect } = update;
-                
-                if (connection === 'close') {
-                    const statusCode = lastDisconnect?.error?.output?.statusCode;
-                    const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-                    
-                    this.status = 'disconnected';
-                    this.qrCode = null;
-                    this.pairingCode = null;
-                    this.connectedPhone = null;
-                    this.connectedAt = null;
-                    this._emitStatusChange();
-                    
-                    if (shouldReconnect) {
-                        this._log('Connection lost - reconnecting in 5 seconds...', 'warning');
-                        setTimeout(() => this.connect(), 5000);
-                    } else {
-                        this._log('Logged out - pair again to reconnect', 'error');
-                    }
-                }
-                
-                if (connection === 'open') {
-                    this.status = 'connected';
-                    this.qrCode = null;
-                    this.pairingCode = null;
-                    this.connectedPhone = this.socket.user?.id?.split(':')[0] || 'Unknown';
-                    this.connectedAt = new Date().toISOString();
-                    this._emitStatusChange();
-                    this._log(`Connected as ${this.connectedPhone} (via pairing code)`, 'success');
-                    this._startPresenceCycling();
-                }
-            });
-            
-            this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
-                if (type !== 'notify') return;
-                for (const msg of messages) {
-                    const now = Math.floor(Date.now() / 1000);
-                    if (now - msg.messageTimestamp > 60) continue;
-                    await this._handleMessage(msg);
-                }
-            });
-            
-            this.socket.ev.on('lid-mapping.update', async (mappings) => {
-                for (const [lid, pn] of Object.entries(mappings)) {
-                    await this._storeLidMapping(lid, pn);
-                }
-            });
-            
-            if (!this.socket.authState.creds.registered) {
-                const cleanNumber = phoneNumber.replace(/[^\d]/g, '');
-                const code = await this.socket.requestPairingCode(cleanNumber);
-                this.pairingCode = code;
-                this._log(`Pairing code generated: ${code}`, 'info');
-                return code;
-            } else {
-                this._log('Already registered, reconnecting...', 'info');
-                return null;
-            }
-            
-        } catch (error) {
-            console.error(`[Instance ${this.id}] Pairing code error:`, error);
-            this.status = 'disconnected';
-            this._emitStatusChange();
-            this._log(`Pairing code error: ${error.message}`, 'error');
-            throw error;
-        }
-    }
 
     /**
-     * Disconnect WhatsApp
+     * Disconnect WhatsApp socket.
+     * @param {{ revokeSession?: boolean }} [options]
+     *   revokeSession=false (default) — close the transport only; credentials on disk stay valid (PM2 restarts, “Disconnect” in UI).
+     *   revokeSession=true — full server-side logout (same as clearing session remotely); prefer clear-auth for wiping local files too.
      */
-    async disconnect() {
+    async disconnect(options = {}) {
+        const revokeSession = !!options.revokeSession;
         // Stop presence cycling
         this._stopPresenceCycling();
         
         if (this.socket) {
             try {
-                await this.socket.logout();
-                this._log('Disconnected from WhatsApp', 'info');
+                if (revokeSession) {
+                    await this.socket.logout();
+                    this._log('Disconnected (session revoked on server)', 'info');
+                } else if (typeof this.socket.end === 'function') {
+                    this.socket.end(undefined);
+                    this._log('Disconnected (socket closed; auth preserved on disk)', 'info');
+                } else {
+                    await this.socket.logout();
+                    this._log('Disconnected from WhatsApp', 'info');
+                }
             } catch (error) {
-                console.error(`[Instance ${this.id}] Logout error:`, error);
+                console.error(`[Instance ${this.id}] Disconnect error:`, error);
             }
             this.socket = null;
+            this.rawSocket = null;
         }
         this.status = 'disconnected';
         this.qrCode = null;
+        this.pairingCode = null;
         this.connectedPhone = null;
         this.connectedAt = null;
         this._emitStatusChange();
+    }
+
+    _behaviorProfile() {
+        return normalizeBehaviorProfile(this.behaviorSettings || {});
+    }
+
+    _preservesPhoneNotifications() {
+        const profile = this._behaviorProfile();
+        return profile === BEHAVIOR_PROFILES.NOTIFICATION_BALANCED
+            || profile === BEHAVIOR_PROFILES.NOTIFICATION_MAX
+            || !!this.behaviorSettings?.phoneNotificationsEnabled;
+    }
+
+    _isNotificationMaxProfile() {
+        return this._behaviorProfile() === BEHAVIOR_PROFILES.NOTIFICATION_MAX;
+    }
+
+    _notificationGraceMs() {
+        return this._preservesPhoneNotifications()
+            ? clampNotificationGraceMs(this.behaviorSettings?.notificationGraceMs)
+            : 0;
+    }
+
+    async _waitForNotificationGrace(startedAtMs) {
+        const graceMs = this._notificationGraceMs();
+        if (!graceMs) return;
+        const elapsedMs = Date.now() - (startedAtMs || Date.now());
+        const remainingMs = graceMs - elapsedMs;
+        if (remainingMs > 0) {
+            await delay(remainingMs);
+        }
     }
     
     /**
@@ -505,10 +747,15 @@ class WhatsAppInstance {
     _startPresenceCycling() {
         // Clear any existing interval
         this._stopPresenceCycling();
+
+        // Phone-notifications mode never cycles presence: any 'available' nudge
+        // suppresses the phone's push notification for ~10s. Bail out early.
+        if (this._preservesPhoneNotifications()) return;
         
         // Cycle presence every 3-7 minutes
         const cyclePresence = async () => {
             if (!this.socket || this.status !== 'connected') return;
+            if (this._preservesPhoneNotifications()) return;
             
             try {
                 const random = Math.random();
@@ -550,6 +797,48 @@ class WhatsAppInstance {
             this.presenceCycleInterval = null;
         }
     }
+
+    /**
+     * Called by antiban-v2 when the instance's risk level changes.
+     * Logs locally and (optionally) fires a webhook alert.
+     */
+    _onRiskChange(change) {
+        const { from, to, status } = change;
+        const dirUp = ['low', 'medium', 'high', 'critical'].indexOf(to) > ['low', 'medium', 'high', 'critical'].indexOf(from);
+        const level = to === 'critical' ? 'error' : to === 'high' ? 'warning' : to === 'medium' ? 'warning' : 'info';
+        this._log(`Anti-ban risk: ${from || '?'} → ${to} (score ${status?.score ?? '?'}). ${status?.recommendation || ''}`, level);
+
+        // Per-instance webhook alert (only on upward transitions to avoid flapping spam)
+        if (dirUp && this.antibanV2?.alertsWebhook) {
+            this._fireAlertWebhook(this.antibanV2.alertsWebhook, change).catch((err) => {
+                this._log(`Alert webhook failed: ${err.message}`, 'warning');
+            });
+        }
+
+        // Global deployment-level alert (env var) — also only on upward transitions ≥ medium
+        if (dirUp && (to === 'medium' || to === 'high' || to === 'critical') && process.env.ALERT_WEBHOOK_URL) {
+            this._fireAlertWebhook(process.env.ALERT_WEBHOOK_URL, change).catch((err) => {
+                console.warn(`[Instance ${this.id}] Global alert webhook failed: ${err.message}`);
+            });
+        }
+    }
+
+    async _fireAlertWebhook(url, change) {
+        const axios = (await import('axios')).default;
+        await axios.post(url, {
+            event: 'antiban_risk_change',
+            instanceId: this.id,
+            instanceName: this.name,
+            region: process.env.REGION_CODE || null,
+            phone: this.connectedPhone,
+            old_risk: change.from,
+            new_risk: change.to,
+            score: change.status?.score,
+            recommendation: change.status?.recommendation,
+            reasons: change.status?.reasons,
+            timestamp: new Date().toISOString(),
+        }, { timeout: 8000, headers: { 'Content-Type': 'application/json' } });
+    }
     
     /**
      * Clear auth data (logout + delete credentials)
@@ -586,14 +875,220 @@ class WhatsAppInstance {
     }
     
     /**
-     * Send a message
+     * Update the WhatsApp profile display name (push name visible to everyone)
+     * @param {string} name - The display name
+     */
+    async updateProfileName(name) {
+        if (this.status !== 'connected' || !this.socket) {
+            throw new Error('Instance not connected');
+        }
+        await this.socket.updateProfileName(name);
+        this._log(`Profile name updated to "${name}"`, 'success');
+    }
+    
+    /**
+     * Update the WhatsApp profile picture
+     * @param {string} imageUrl - URL or local path to the image
+     */
+    async updateProfilePicture(imageUrl) {
+        if (this.status !== 'connected' || !this.socket) {
+            throw new Error('Instance not connected');
+        }
+        await this.socket.updateProfilePicture(this.socket.user.id, { url: imageUrl });
+        this._log('Profile picture updated', 'success');
+    }
+    
+    /**
+     * Remove the WhatsApp profile picture
+     */
+    async removeProfilePicture() {
+        if (this.status !== 'connected' || !this.socket) {
+            throw new Error('Instance not connected');
+        }
+        await this.socket.removeProfilePicture(this.socket.user.id);
+        this._log('Profile picture removed', 'success');
+    }
+    
+    /**
+     * Update the WhatsApp profile "About" / status text
+     * @param {string} status - The about text
+     */
+    async updateProfileStatus(status) {
+        if (this.status !== 'connected' || !this.socket) {
+            throw new Error('Instance not connected');
+        }
+        await this.socket.updateProfileStatus(status);
+        this._log(`Profile status updated to "${status}"`, 'success');
+    }
+    
+    /**
+     * Build a transport-native message object from rich message parameters.
+     * @param {Object} params - Message parameters
+     * @param {string} params.messageType - text|image|video|document|audio|buttons|list|location|contact
+     * @param {string} params.text - Text body / caption
+     * @param {string} params.mediaUrl - URL for image/video/document/audio
+     * @param {string} params.mimeType - MIME type for document/audio
+     * @param {string} params.fileName - File name for documents
+     * @param {boolean} params.ptt - Push-to-talk (voice note) flag for audio
+     * @param {string} params.footer - Footer text for buttons/lists
+     * @param {Array} params.buttons - Array of { id, text } for button messages
+     * @param {string} params.buttonText - Button label for list messages (e.g. "Menu")
+     * @param {string} params.title - Title for list messages
+     * @param {Array} params.sections - Array of { title, rows: [{ title, id, description }] }
+     * @param {number} params.latitude - Latitude for location messages
+     * @param {number} params.longitude - Longitude for location messages
+     * @param {string} params.locationName - Name of the location
+     * @param {string} params.locationAddress - Address of the location
+     * @param {Object} params.contactCard - { displayName, phoneNumber } for contact messages
+     * @returns {Object} Outbound message object for sendMessage
+     */
+    _buildMessageObject(params) {
+        const type = (params.messageType || 'text').toLowerCase();
+
+        switch (type) {
+            case 'image':
+                return {
+                    image: { url: params.mediaUrl },
+                    caption: params.text || ''
+                };
+
+            case 'video':
+                return {
+                    video: { url: params.mediaUrl },
+                    caption: params.text || ''
+                };
+
+            case 'document':
+                return {
+                    document: { url: params.mediaUrl },
+                    mimetype: params.mimeType || 'application/octet-stream',
+                    fileName: params.fileName || 'document'
+                };
+
+            case 'audio':
+                return {
+                    audio: { url: params.mediaUrl },
+                    mimetype: params.mimeType || 'audio/mp4',
+                    ptt: params.ptt !== false
+                };
+
+            // Buttons & lists use the interactive helper to inject the required binary
+            // nodes (biz, interactive, native_flow, bot) so they render on iOS/Android
+            case 'buttons':
+            case 'list':
+                return { _useHelper: true, _params: params, _type: type };
+
+            case 'location':
+                return {
+                    location: {
+                        degreesLatitude: params.latitude || 0,
+                        degreesLongitude: params.longitude || 0,
+                        name: params.locationName || '',
+                        address: params.locationAddress || ''
+                    }
+                };
+
+            case 'contact': {
+                const c = params.contactCard || {};
+                const name = c.displayName || 'Unknown';
+                const phone = c.phoneNumber || '';
+                const vcard = [
+                    'BEGIN:VCARD',
+                    'VERSION:3.0',
+                    `FN:${name}`,
+                    `TEL;type=CELL;type=VOICE;waid=${phone.replace(/[^\d]/g, '')}:${phone}`,
+                    'END:VCARD'
+                ].join('\n');
+                return {
+                    contacts: {
+                        displayName: name,
+                        contacts: [{ vcard }]
+                    }
+                };
+            }
+
+            case 'text':
+            default:
+                return { text: params.text || '' };
+        }
+    }
+
+    /**
+     * Send interactive buttons/list via helper (injects biz/bot binary nodes)
+     */
+    async _sendWithHelper(jid, params, type) {
+        if (type === 'buttons') {
+            const helperButtons = (params.buttons || []).map(b => ({
+                id: b.id || `btn_${Math.random().toString(36).slice(2, 6)}`,
+                text: b.text || 'Button'
+            }));
+            await sendButtons(this.socket, jid, {
+                text: params.text || '',
+                footer: params.footer || '',
+                buttons: helperButtons
+            });
+        } else if (type === 'list') {
+            const listButton = {
+                name: 'single_select',
+                buttonParamsJson: JSON.stringify({
+                    title: params.buttonText || 'Menu',
+                    sections: (params.sections || []).map(s => ({
+                        title: s.title || 'Options',
+                        rows: (s.rows || []).map((r, i) => ({
+                            title: r.title || `Option ${i + 1}`,
+                            id: r.id || `row_${i}`,
+                            description: r.description || ''
+                        }))
+                    }))
+                })
+            };
+            await sendInteractiveMessage(this.socket, jid, {
+                text: params.text || '',
+                footer: params.footer || '',
+                interactiveButtons: [listButton]
+            });
+        }
+        this.antiBanManager.recordMessage(jid);
+        return { sent: true };
+    }
+
+    /**
+     * Send an emoji reaction to a message
+     * @param {string} to - Phone number or JID of the chat
+     * @param {string} messageId - ID of the message to react to
+     * @param {string} emoji - Emoji to react with (empty string to remove)
+     * @param {boolean} fromMe - Whether the target message was sent by us
+     */
+    async sendReaction(to, messageId, emoji, fromMe = false) {
+        if (this.status !== 'connected' || !this.socket) {
+            throw new Error('Instance not connected');
+        }
+        const normalizedTo = to.includes('@') ? to : to.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
+        const jid = normalizedTo.includes('@') ? normalizedTo : `${normalizedTo}@s.whatsapp.net`;
+
+        await this.socket.sendMessage(jid, {
+            react: {
+                text: emoji || '',
+                key: {
+                    remoteJid: jid,
+                    id: messageId,
+                    fromMe: !!fromMe
+                }
+            }
+        });
+        this._log(`Reacted ${emoji || '(removed)'} to message ${messageId}`, 'success');
+        return { sent: true, emoji, messageId };
+    }
+
+    /**
+     * Send a message (text, media, buttons, list, location, contact)
      * @param {string} to - Phone number or JID
-     * @param {string} text - Message text
+     * @param {string|Object} textOrParams - Plain text string OR rich message params object
      * @param {Object} options - Override behavior settings for this message
      * @param {string} options.contactName - Optional name for saving the contact
      * @param {boolean} options.skipContactSave - Skip saving contact (default: false)
      */
-    async sendMessage(to, text, options = {}) {
+    async sendMessage(to, textOrParams, options = {}) {
         if (this.status !== 'connected' || !this.socket) {
             throw new Error('Instance not connected');
         }
@@ -615,23 +1110,85 @@ class WhatsAppInstance {
             await this._saveContactBeforeMessage(jid, options.contactName);
         }
         
-        // Merge instance behavior settings with per-message overrides
+        // Build the outbound message object
+        let messageObj;
+        let logText;
+        if (typeof textOrParams === 'string') {
+            messageObj = { text: textOrParams };
+            logText = textOrParams;
+        } else if (typeof textOrParams === 'object' && textOrParams !== null) {
+            messageObj = this._buildMessageObject(textOrParams);
+            logText = textOrParams.text || `[${textOrParams.messageType || 'rich'}]`;
+        } else {
+            messageObj = { text: String(textOrParams) };
+            logText = String(textOrParams);
+        }
+        
+        // Merge instance behavior settings with per-message overrides.
+        const phoneNotifsOn = this._preservesPhoneNotifications();
         const behaviorOptions = {
-            typingSimulation: options.typingSimulation !== undefined 
-                ? options.typingSimulation 
-                : this.behaviorSettings.typingSimulation,
+            typingSimulation: options.typingSimulation !== undefined
+                ? options.typingSimulation
+                : (this._isNotificationMaxProfile() ? false : this.behaviorSettings.typingSimulation),
             delayEnabled: options.delayEnabled !== undefined 
                 ? options.delayEnabled 
                 : this.behaviorSettings.delayEnabled
         };
         
-        // Send with anti-ban protections
-        const result = await safeSendMessage(this.socket, jid, text, '', this.antiBanManager, behaviorOptions);
-        
-        if (result.sent) {
-            this._log(`Sent to ${to}: ${text.substring(0, 50)}...`, 'success');
+        let result;
+
+        // Interactive messages (buttons/lists) go through the interactive helper
+        if (messageObj._useHelper) {
+            if (behaviorOptions.typingSimulation) {
+                try { await this.socket.sendPresenceUpdate('composing', jid); } catch (_) {}
+                await delay(1000 + Math.random() * 2000);
+                try { await this.socket.sendPresenceUpdate('paused', jid); } catch (_) {}
+            }
+            result = await this._sendWithHelper(jid, messageObj._params, messageObj._type);
+        } else if (this.antibanCtx) {
+            // Anti-ban v2 path: the wrapped socket already runs the full pipeline
+            // (rate limiting, warmup, presence choreographer, JID canonicalization,
+            // post-reconnect throttle, etc.). We just call sendMessage directly.
+            try {
+                const sentMsg = await this.socket.sendMessage(jid, messageObj);
+                this.antiBanManager.recordMessage(jid); // also tick legacy stats
+                result = { sent: true, key: sentMsg?.key, via: 'antiban-v2' };
+            } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                if (isAntibanTransportGuardMessage(errMsg)) {
+                    result = { sent: false, reason: errMsg, via: 'antiban-v2-blocked' };
+                } else {
+                    throw err;
+                }
+            }
+        } else {
+            // Legacy path (v2 disabled or not yet built)
+            result = await safeSendMessage(this.socket, jid, messageObj, '', this.antiBanManager, behaviorOptions);
         }
         
+        if (result.sent) {
+            // Track this message ID as bot-sent (for human handoff detection)
+            if (result.key?.id) this.botSentMessageIds.add(result.key.id);
+            if (this.botSentMessageIds.size > 2000) {
+                const arr = Array.from(this.botSentMessageIds);
+                this.botSentMessageIds = new Set(arr.slice(-1000));
+            }
+            
+            this._log(`Sent to ${to}: ${logText.substring(0, 50)}...`, 'success');
+            this._logMessage('outbound', this.connectedPhone || this.id, normalizedTo, logText, result.key?.id);
+
+            // Re-assert 'unavailable' so the phone keeps receiving notifications
+            // for the next inbound message. Without this, the underlying socket
+            // can drift back to 'available' after a send and silence the phone.
+            if (phoneNotifsOn) {
+                try { await this.socket.sendPresenceUpdate('unavailable'); } catch (_) {}
+            }
+        }
+
+        if (result?.reason) {
+            result = { ...result, reason: sanitizeClientReason(result.reason) };
+        }
+
         return result;
     }
     
@@ -715,7 +1272,7 @@ class WhatsAppInstance {
             
             console.log(`[Instance ${this.id}] Saving contact before message: ${phoneNumber} as "${name}"`);
             
-            // Use Baileys addOrEditContact method
+            // Use addOrEditContact on the socket when available
             await this.socket.addOrEditContact(jid, {
                 fullName: name,
                 firstName: name,
@@ -774,7 +1331,7 @@ class WhatsAppInstance {
         const lidId = jid.replace('@lid', '');
         console.log(`[Instance ${this.id}] Detected LID: ${lidId}`);
         
-        // 1. Try to get PN from message's alternate JID fields (Baileys 7.x)
+        // 1. Try to get PN from message alternate JID fields
         // remoteJidAlt is for DMs, participantAlt is for groups
         const altJid = msg.key.remoteJidAlt || msg.key.participantAlt;
         if (altJid && !altJid.includes('@lid')) {
@@ -785,12 +1342,12 @@ class WhatsAppInstance {
             return pn;
         }
         
-        // 2. Try to get PN from Baileys' internal LID mapping store
+        // 2. Try to get PN from the transport LID mapping store
         if (this.socket?.signalRepository?.lidMapping) {
             try {
                 const pn = await this.socket.signalRepository.lidMapping.getPNForLID(lidId);
                 if (pn) {
-                    console.log(`[Instance ${this.id}] Resolved LID via Baileys: ${pn}`);
+                    console.log(`[Instance ${this.id}] Resolved LID via transport store: ${pn}`);
                     await this._storeLidMapping(lidId, pn);
                     return pn;
                 }
@@ -812,25 +1369,103 @@ class WhatsAppInstance {
     }
 
     /**
-     * Send read receipt for a message (blue ticks) with human-like delay
+     * Simulate reading a message before replying (sends read receipt with human-like delay).
+     * This is a key anti-ban measure: real humans read before they reply.
+     * Uses sock.readMessages() which sends the blue tick read receipt.
      */
-    async _sendReadReceipt(msgKey) {
+    async _simulateReadReceipt(msg, messageText, options = {}) {
+        const { force = false, showAvailable = true, waitAfterRead = true, socket = this.socket } = options;
+        // Notification profiles keep handset alerts intact for an initial grace
+        // window. Balanced mode may force a delayed read near reply time; max
+        // mode never sends an automated read receipt.
+        if (!force && this._preservesPhoneNotifications()) {
+            return;
+        }
         try {
-            const readDelay = 500 + Math.random() * 1500;
-            await new Promise(r => setTimeout(r, readDelay));
-            await this.socket.readMessages([msgKey]);
-            console.log(`[Instance ${this.id}] Read receipt sent for ${msgKey.id}`);
+            const wordCount = (messageText || '').split(/\s+/).length;
+            // ~200-300ms per word reading speed, min 1s, max 5s
+            const readingDelay = Math.min(5000, Math.max(1000, wordCount * 250 + Math.random() * 500));
+            
+            if (showAvailable) {
+                await socket.sendPresenceUpdate('available', msg.key.remoteJid);
+            }
+            
+            // Wait a moment (simulating opening the chat)
+            await delay(showAvailable ? (300 + Math.random() * 700) : (150 + Math.random() * 350));
+            
+            // Send read receipt (blue ticks)
+            await socket.readMessages([msg.key]);
+            
+            // Wait the reading duration (simulating actually reading the message)
+            if (waitAfterRead) {
+                await delay(readingDelay);
+            }
+            
+            console.log(`[Instance ${this.id}] Read receipt sent after ${Math.round(readingDelay)}ms`);
         } catch (error) {
             console.error(`[Instance ${this.id}] Read receipt error:`, error.message);
         }
     }
-
+    
     /**
      * Handle incoming message
      */
     async _handleMessage(msg) {
         try {
-            if (msg.key.fromMe) return;
+            const receivedAtMs = Date.now();
+            const from = msg.key.remoteJid;
+            if (from === 'status@broadcast') return;
+            
+            // ============================
+            // HUMAN HANDOFF DETECTION
+            // ============================
+            // If this is a message FROM US (fromMe), check if it was sent
+            // manually from the phone (not via the bot API)
+            if (msg.key.fromMe) {
+                const msgId = msg.key.id;
+                if (this.botSentMessageIds.has(msgId)) return; // Bot sent this, ignore
+                
+                const messageContent = this._extractMessageContent(msg.message);
+                if (!messageContent.text) return;
+                
+                const text = messageContent.text.trim();
+                
+                const keywords = this.handoffSettings.resumeKeywords || ['#ai', '#assistant', '#bot', '#resume'];
+                const matched = keywords.find(kw => text.toLowerCase().startsWith(kw.toLowerCase()));
+                if (matched) {
+                    if (this.humanModeChats.has(from)) {
+                        this.humanModeChats.delete(from);
+                        this._log(`Human handoff ENDED for ${from} (keyword: ${matched})`, 'success');
+                        this._emitStatusChange();
+
+                        if (this.handoffSettings.resumeMessage) {
+                            try {
+                                await this.sendMessage(from, this.handoffSettings.resumeMessage, { delayEnabled: false });
+                            } catch (e) {
+                                this._log(`Failed to send resume message: ${e.message}`, 'error');
+                            }
+                        }
+                    }
+                    return;
+                }
+                
+                // Manual send detected -> tag this chat for human mode
+                if (!this.humanModeChats.has(from)) {
+                    this._log(`Human handoff ACTIVATED for ${from} (manual message detected)`, 'warning');
+                }
+                this.humanModeChats.set(from, {
+                    taggedAt: new Date().toISOString(),
+                    taggedBy: 'manual_send',
+                    lastActivity: new Date().toISOString()
+                });
+                this._logMessage('outbound', this.connectedPhone || this.id, from.split('@')[0], text, msg.key.id);
+                this._emitStatusChange();
+                return;
+            }
+            
+            // ============================
+            // INBOUND MESSAGE HANDLING
+            // ============================
             
             // Deduplication: Skip if we've already processed this message
             const msgId = msg.key.id;
@@ -848,18 +1483,60 @@ class WhatsAppInstance {
                 this.processedMessages = new Set(idsArray.slice(-500));
             }
             
-            const from = msg.key.remoteJid;
             const messageContent = this._extractMessageContent(msg.message);
             
-            if (!messageContent.text || from === 'status@broadcast') return;
+            if (!messageContent.text && !messageContent.hasMedia) return;
             
             // Handle LID (Local Identifier) to PN (Phone Number) mapping
             let phoneNumber = await this._resolvePhoneNumber(msg, from);
             
-            this._log(`Received from ${phoneNumber}: ${messageContent.text.substring(0, 50)}...`, 'info');
+            this._log(`Received from ${phoneNumber}: ${(messageContent.text || '[media]').substring(0, 50)}...`, 'info');
             
-            // Anti-ban: Send read receipt before replying (blue ticks)
-            await this._sendReadReceipt(msg.key);
+            // Download + upload media to Azure Blob Storage (non-blocking on failure)
+            let mediaUrl = null;
+            if (messageContent.hasMedia) {
+                const upload = await this._downloadAndUploadMedia(msg, messageContent);
+                if (upload) mediaUrl = upload.url;
+            }
+            
+            this._logMessage('inbound', phoneNumber, this.connectedPhone || this.id, messageContent.text, msg.key.id, {
+                mediaUrl: mediaUrl || undefined,
+                mediaType: messageContent.hasMedia ? messageContent.messageType : undefined,
+                mimeType: messageContent.mimeType || undefined,
+                fileName: messageContent.fileName || undefined
+            });
+            
+            // Bot-native mode behaves like an active linked device. Notification
+            // profiles defer any read/typing/reply until after the grace window.
+            if (!this._preservesPhoneNotifications()) {
+                await this._simulateReadReceipt(msg, messageContent.text || '[media]');
+            }
+            
+            // HUMAN HANDOFF CHECK: If this chat is tagged for human mode, skip bot processing
+            if (this.humanModeChats.has(from)) {
+                const handoff = this.humanModeChats.get(from);
+                handoff.lastActivity = new Date().toISOString();
+                this._log(`[Handoff] Skipping bot for ${phoneNumber} - human mode active since ${handoff.taggedAt}`, 'warning');
+                
+                if (this.onMessage) {
+                    this.onMessage({
+                        instanceId: this.id,
+                        from: phoneNumber,
+                        fromJid: from,
+                        message: messageContent.text,
+                        messageType: messageContent.messageType,
+                        isReply: messageContent.isReply,
+                        quotedMessage: messageContent.quotedText,
+                        mediaUrl,
+                        mimeType: messageContent.mimeType,
+                        fileName: messageContent.fileName,
+                        timestamp: new Date().toISOString(),
+                        messageId: msg.key.id,
+                        humanMode: true
+                    });
+                }
+                return;
+            }
             
             // Check rate limits
             const canSend = this.antiBanManager.canSendMessage(from);
@@ -878,8 +1555,12 @@ class WhatsAppInstance {
                     messageType: messageContent.messageType,
                     isReply: messageContent.isReply,
                     quotedMessage: messageContent.quotedText,
+                    mediaUrl,
+                    mimeType: messageContent.mimeType,
+                    fileName: messageContent.fileName,
                     timestamp: new Date().toISOString(),
-                    messageId: msg.key.id
+                    messageId: msg.key.id,
+                    humanMode: false
                 });
             }
             
@@ -889,7 +1570,7 @@ class WhatsAppInstance {
             // Only forward if this instance has its own webhook configured
             if (this.webhookUrl) {
                 this._log(`Forwarding to webhook: ${this.webhookUrl.substring(0, 50)}...`, 'info');
-                await this._forwardToWebhook(msg, messageContent, from, phoneNumber, this.webhookUrl);
+                await this._forwardToWebhook(msg, messageContent, from, phoneNumber, this.webhookUrl, mediaUrl, receivedAtMs);
             } else {
                 this._log('No instance webhook configured - message logged only', 'info');
             }
@@ -908,16 +1589,23 @@ class WhatsAppInstance {
      * @param {string} phoneNumber - Sender phone number
      * @param {string} webhookUrl - Webhook URL to forward to
      */
-    async _forwardToWebhook(msg, messageContent, from, phoneNumber, webhookUrl) {
+    async _forwardToWebhook(msg, messageContent, from, phoneNumber, webhookUrl, mediaUrl = null, receivedAtMs = Date.now()) {
         const axios = (await import('axios')).default;
+        const phoneNotifsOn = this._preservesPhoneNotifications();
+        const notificationMax = this._isNotificationMaxProfile();
+        const typingOn = this.behaviorSettings?.typingSimulation !== false && !notificationMax;
+        const behaviorSocket = phoneNotifsOn ? (this.rawSocket || this.socket) : this.socket;
         
         console.log(`[Instance ${this.id}] Calling webhook: ${webhookUrl}`);
         
         try {
-            // Show typing indicator
-            try {
-                await this.socket.sendPresenceUpdate('composing', from);
-            } catch (e) {}
+            // While the webhook runs, show typing only on the v2 path — legacy
+            // safeSendMessage already runs its own typing/read pipeline after the reply.
+            if (!phoneNotifsOn && typingOn && this.antibanCtx) {
+                try {
+                    await this.socket.sendPresenceUpdate('composing', from);
+                } catch (e) {}
+            }
             
             // Map messageType to media_type
             const mediaTypeMap = {
@@ -939,6 +1627,9 @@ class WhatsAppInstance {
                 to_phone: normalizePhone(this.connectedPhone),
                 message: messageContent.text,
                 media_type: mediaTypeMap[messageContent.messageType] || 'text',
+                media_url: mediaUrl || null,
+                mime_type: messageContent.mimeType || null,
+                file_name: messageContent.fileName || null,
                 status: 'received',
                 webhook_id: this.id,
                 event: 'message',
@@ -954,34 +1645,101 @@ class WhatsAppInstance {
             // Handle response
             if (response.data?.skip) {
                 this._log(`Human handoff active for ${phoneNumber}`, 'info');
-                try {
-                    await this.socket.sendPresenceUpdate('paused', from);
-                } catch (e) {}
+                if (!phoneNotifsOn) {
+                    try {
+                        await this.socket.sendPresenceUpdate('paused', from);
+                    } catch (e) {}
+                } else {
+                    try { await this.socket.sendPresenceUpdate('unavailable'); } catch (e) {}
+                }
                 return;
             }
             
             const reply = response.data?.reply || response.data?.message || response.data?.text;
             
             if (reply) {
-                const result = await safeSendMessage(
-                    this.socket, 
-                    from, 
-                    reply, 
-                    messageContent.text, 
-                    this.antiBanManager,
-                    {
-                        ...this.behaviorSettings,
-                        messageKey: msg.key,  // Pass message key for read receipt simulation
-                        simulateReading: true
+                if (phoneNotifsOn) {
+                    await this._waitForNotificationGrace(receivedAtMs);
+                    if (!notificationMax) {
+                        await this._simulateReadReceipt(msg, messageContent.text || '[media]', {
+                            force: true,
+                            showAvailable: false,
+                            waitAfterRead: false,
+                            socket: behaviorSocket,
+                        });
                     }
-                );
+                }
+
+                let result;
+                if (this.antibanCtx && !phoneNotifsOn) {
+                    // v2 path: wrapped socket runs the full pipeline
+                    try {
+                        if (typingOn) {
+                            try { await this.socket.sendPresenceUpdate('paused', from); } catch (_) {}
+                            await delay(400 + Math.random() * 600);
+                            try { await this.socket.sendPresenceUpdate('composing', from); } catch (_) {}
+                            await delay(1000 + Math.random() * 1500);
+                            try { await this.socket.sendPresenceUpdate('paused', from); } catch (_) {}
+                        }
+                        const sent = await this.socket.sendMessage(from, { text: reply });
+                        this.antiBanManager.recordMessage(from);
+                        result = { sent: true, key: sent?.key, via: 'antiban-v2' };
+                    } catch (err) {
+                        const m = err instanceof Error ? err.message : String(err);
+                        result = isAntibanTransportGuardMessage(m)
+                            ? { sent: false, reason: m, via: 'antiban-v2-blocked' }
+                            : { sent: false, reason: m };
+                        if (!isAntibanTransportGuardMessage(m)) throw err;
+                    }
+                } else if (this.antibanCtx && phoneNotifsOn) {
+                    // Notification profiles bypass the wrapped v2 sender for replies
+                    // so no hidden typing/presence choreographer runs before the phone
+                    // has had its notification window.
+                    try {
+                        if (typingOn) {
+                            try { await behaviorSocket.sendPresenceUpdate('composing', from); } catch (_) {}
+                            await delay(1000 + Math.random() * 1500);
+                            try { await behaviorSocket.sendPresenceUpdate('paused', from); } catch (_) {}
+                        }
+                        const sent = await behaviorSocket.sendMessage(from, { text: reply });
+                        this.antiBanManager.recordMessage(from);
+                        result = { sent: true, key: sent?.key, via: 'notification-profile' };
+                    } catch (err) {
+                        const m = err instanceof Error ? err.message : String(err);
+                        result = { sent: false, reason: m };
+                        throw err;
+                    }
+                } else {
+                    // Legacy path
+                    result = await safeSendMessage(
+                        behaviorSocket,
+                        from,
+                        reply,
+                        messageContent.text,
+                        this.antiBanManager,
+                        {
+                            ...this.behaviorSettings,
+                            messageKey: msg.key,
+                            simulateReading: !phoneNotifsOn,
+                        }
+                    );
+                }
                 if (result.sent) {
                     this._log(`Replied to ${phoneNumber}: ${reply.substring(0, 50)}...`, 'success');
+                    if (phoneNotifsOn) {
+                        // Re-assert unavailable after reply so the next inbound
+                        // message still wakes the phone.
+                        try { await this.socket.sendPresenceUpdate('unavailable'); } catch (_) {}
+                    }
+                } else if (result.reason) {
+                    this._log(`Reply blocked: ${sanitizeClientReason(result.reason)}`, 'warning');
                 }
-            } else {
+            } else if (!phoneNotifsOn) {
                 try {
                     await this.socket.sendPresenceUpdate('paused', from);
                 } catch (e) {}
+            } else {
+                try { await this.socket.sendPresenceUpdate('unavailable'); } catch (e) {}
             }
             
         } catch (error) {
@@ -991,7 +1749,11 @@ class WhatsAppInstance {
             }
             this._log(`Webhook error: ${error.message}`, 'error');
             try {
-                await this.socket.sendPresenceUpdate('paused', from);
+                if (phoneNotifsOn) {
+                    await this.socket.sendPresenceUpdate('unavailable');
+                } else {
+                    await this.socket.sendPresenceUpdate('paused', from);
+                }
             } catch (e) {}
         }
     }
@@ -1001,12 +1763,15 @@ class WhatsAppInstance {
      */
     _extractMessageContent(message) {
         if (!message) {
-            return { text: '', quotedText: null, isReply: false, messageType: 'unknown' };
+            return { text: '', quotedText: null, isReply: false, messageType: 'unknown', hasMedia: false, mimeType: null, fileName: null };
         }
 
         let text = '';
         let quotedText = null;
         let messageType = 'unknown';
+        let hasMedia = false;
+        let mimeType = null;
+        let fileName = null;
 
         if (message.conversation) {
             text = message.conversation;
@@ -1024,18 +1789,29 @@ class WhatsAppInstance {
         } else if (message.imageMessage) {
             text = message.imageMessage.caption || '[Image]';
             messageType = 'image';
+            hasMedia = true;
+            mimeType = message.imageMessage.mimetype;
         } else if (message.videoMessage) {
             text = message.videoMessage.caption || '[Video]';
             messageType = 'video';
+            hasMedia = true;
+            mimeType = message.videoMessage.mimetype;
         } else if (message.documentMessage) {
             text = message.documentMessage.caption || message.documentMessage.fileName || '[Document]';
             messageType = 'document';
+            hasMedia = true;
+            mimeType = message.documentMessage.mimetype;
+            fileName = message.documentMessage.fileName;
         } else if (message.audioMessage) {
             text = '[Voice Note]';
             messageType = 'audio';
+            hasMedia = true;
+            mimeType = message.audioMessage.mimetype;
         } else if (message.stickerMessage) {
             text = '[Sticker]';
             messageType = 'sticker';
+            hasMedia = true;
+            mimeType = message.stickerMessage.mimetype;
         } else if (message.buttonsResponseMessage) {
             text = message.buttonsResponseMessage.selectedDisplayText || '';
             messageType = 'buttonResponse';
@@ -1048,30 +1824,135 @@ class WhatsAppInstance {
             text: text.trim(),
             quotedText,
             isReply: !!quotedText,
-            messageType
+            messageType,
+            hasMedia,
+            mimeType,
+            fileName
         };
     }
     
     /**
-     * Update anti-ban settings
+     * Download media from a WhatsApp message and upload to Azure Blob Storage.
+     * Returns the public URL or null if storage is disabled / download fails.
+     */
+    async _downloadAndUploadMedia(msg, messageContent) {
+        if (!messageContent.hasMedia || !isStorageEnabled()) return null;
+
+        try {
+            const buffer = await downloadMediaMessage(msg, 'buffer', {});
+            if (!buffer || buffer.length === 0) return null;
+
+            let ext;
+            try { ext = extensionForMediaMessage(msg.message); } catch (_) {}
+            if (!ext) {
+                const mimeMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'video/mp4': 'mp4', 'audio/ogg; codecs=opus': 'ogg', 'audio/mpeg': 'mp3', 'application/pdf': 'pdf' };
+                ext = mimeMap[messageContent.mimeType] || messageContent.mimeType?.split('/')[1]?.split(';')[0] || 'bin';
+            }
+
+            const result = await uploadMedia(buffer, {
+                extension: ext,
+                mimeType: messageContent.mimeType || 'application/octet-stream',
+                instanceId: this.id,
+                folder: messageContent.messageType
+            });
+
+            if (result) {
+                this._log(`Media uploaded: ${messageContent.messageType} → ${result.url.substring(0, 80)}...`, 'success');
+            }
+            return result;
+        } catch (err) {
+            this._log(`Media download/upload failed: ${err.message}`, 'error');
+            return null;
+        }
+    }
+
+    /**
+     * Update legacy anti-ban settings. Mirrors the change into v2 overrides
+     * so the new pipeline picks up the same caps on next reconnect.
      */
     updateAntiBanSettings(settings) {
         this.antiBanSettings = { ...this.antiBanSettings, ...settings };
         this.antiBanManager.updateLimits(this.antiBanSettings);
+
+        // Mirror to v2 if active
+        if (this.antibanV2) {
+            const v2overrides = { ...(this.antibanV2.overrides || {}) };
+            if (settings.messagesPerHour) v2overrides.maxPerHour = settings.messagesPerHour;
+            if (settings.messagesPerDay) v2overrides.maxPerDay = settings.messagesPerDay;
+            this.antibanV2 = { ...this.antibanV2, overrides: v2overrides };
+            // Hot-reload if running
+            if (this.antibanCtx?.antiban?.rateLimiter?.updateConfig) {
+                try {
+                    this.antibanCtx.antiban.rateLimiter.updateConfig({
+                        maxPerHour: v2overrides.maxPerHour,
+                        maxPerDay: v2overrides.maxPerDay,
+                    });
+                } catch (_) { /* falls through to next reconnect */ }
+            }
+        }
     }
     
     /**
-     * Update behavior settings (typing simulation, delays)
+     * Update behavior settings (profile, typing simulation, delays)
      */
     updateBehaviorSettings(settings) {
-        if (settings.typingSimulation !== undefined) {
-            this.behaviorSettings.typingSimulation = !!settings.typingSimulation;
-        }
-        if (settings.delayEnabled !== undefined) {
-            this.behaviorSettings.delayEnabled = !!settings.delayEnabled;
+        const previousPreservesNotifications = this._preservesPhoneNotifications();
+        this.behaviorSettings = normalizeBehaviorSettings(settings || {}, this.behaviorSettings || {});
+        const nextPreservesNotifications = this._preservesPhoneNotifications();
+
+        if (nextPreservesNotifications !== previousPreservesNotifications && this.socket && this.status === 'connected') {
+            if (nextPreservesNotifications) {
+                // Stop the cycler that randomly flips presence to 'available'
+                // and cancel any pending stealth-presence ramp.
+                try { this._stopPresenceCycling(); } catch (_) {}
+                if (this.presenceRampAbort) {
+                    try { this.presenceRampAbort.abort(); } catch (_) {}
+                    this.presenceRampAbort = null;
+                }
+                this.socket.sendPresenceUpdate('unavailable')
+                    .then(() => this._log('Notification profile: presence forced unavailable', 'success'))
+                    .catch((e) => this._log(`Failed to push unavailable: ${e.message}`, 'warning'));
+            } else {
+                // Returning to bot-native behaviour - resume background cycling.
+                try { this._startPresenceCycling(); } catch (_) {}
+                this._log('Bot-native behaviour enabled - resumed presence cycling', 'info');
+            }
+        } else if (nextPreservesNotifications && this.socket && this.status === 'connected') {
+            this.socket.sendPresenceUpdate('unavailable')
+                .catch((e) => this._log(`Failed to push unavailable: ${e.message}`, 'warning'));
         }
     }
     
+    /**
+     * Get all chats currently in human handoff mode
+     */
+    getHandoffChats() {
+        const chats = [];
+        for (const [jid, data] of this.humanModeChats) {
+            chats.push({ jid, phone: jid.split('@')[0], ...data });
+        }
+        return chats;
+    }
+
+    /**
+     * Manually tag a chat for human handoff (skip bot responses)
+     */
+    setHandoff(jid, active) {
+        const normalizedJid = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
+        if (active) {
+            this.humanModeChats.set(normalizedJid, {
+                taggedAt: new Date().toISOString(),
+                taggedBy: 'api',
+                lastActivity: new Date().toISOString()
+            });
+            this._log(`Human handoff ACTIVATED for ${normalizedJid} (via API)`, 'warning');
+        } else {
+            this.humanModeChats.delete(normalizedJid);
+            this._log(`Human handoff ENDED for ${normalizedJid} (via API)`, 'success');
+        }
+        this._emitStatusChange();
+    }
+
     /**
      * Get instance status
      */
@@ -1081,17 +1962,375 @@ class WhatsAppInstance {
             name: this.name,
             status: this.status,
             qrCode: this.qrCode,
-            pairingCode: this.pairingCode || null,
+            pairingCode: this.pairingCode,
             connectedPhone: this.connectedPhone,
             connectedAt: this.connectedAt,
             webhookUrl: this.webhookUrl || null,
             behaviorSettings: this.behaviorSettings,
             antiBanSettings: this.antiBanSettings,
             antiBanHealth: this.antiBanManager.getHealth(),
+            antibanV2: this.getAntibanV2Status(),
+            handoffSettings: this.handoffSettings,
+            humanModeChats: this.getHandoffChats(),
+            proxy: this.getProxyStatus(),
             createdAt: this.createdAt
         };
     }
-    
+
+    /**
+     * Compact v2 status block surfaced in instance status responses.
+     * Returns null if v2 isn't running on this instance.
+     */
+    getAntibanV2Status() {
+        if (!this.antibanV2) return null;
+        const ctx = this.antibanCtx;
+        if (!ctx) {
+            // Configured but not currently running (instance disconnected)
+            return {
+                enabled: !!this.antibanV2.enabled,
+                running: false,
+                preset: this.antibanV2.preset,
+                modules: Object.fromEntries(
+                    Object.entries(this.antibanV2.modules || {}).map(([k, v]) => [k, v?.enabled !== false])
+                ),
+            };
+        }
+        let stats = {};
+        try { stats = ctx.antiban.getStats(); } catch (_) {}
+        return {
+            enabled: !!this.antibanV2.enabled,
+            running: true,
+            preset: this.antibanV2.preset,
+            modules: Object.fromEntries(
+                Object.entries(this.antibanV2.modules || {}).map(([k, v]) => [k, v?.enabled !== false])
+            ),
+            health: stats.health ? {
+                risk: stats.health.risk,
+                score: stats.health.score,
+                recommendation: stats.health.recommendation,
+                reasons: stats.health.reasons,
+                isPaused: !!stats.health.isPaused,
+            } : null,
+            warmup: stats.warmUp ? {
+                phase: stats.warmUp.phase,
+                day: stats.warmUp.day,
+                totalDays: stats.warmUp.totalDays,
+                todayLimit: stats.warmUp.todayLimit,
+                todaySent: stats.warmUp.todaySent,
+                progress: stats.warmUp.progress,
+                // Warmup state uses 'graduated' for completed warmup
+                complete: stats.warmUp.phase === 'graduated' || stats.warmUp.phase === 'complete' || stats.warmUp.progress >= 100,
+            } : null,
+            rateLimiter: stats.rateLimiter ? {
+                lastMinute: stats.rateLimiter.lastMinute,
+                lastHour: stats.rateLimiter.lastHour,
+                lastDay: stats.rateLimiter.lastDay,
+                limits: stats.rateLimiter.limits,
+            } : null,
+            retryTracker: stats.retryTracker ? {
+                totalRetries: stats.retryTracker.totalRetries,
+                spiralsDetected: stats.retryTracker.spiralsDetected,
+                activeRetries: stats.retryTracker.activeRetries,
+            } : null,
+            sessionStability: stats.sessionStability ? {
+                badMacCount: stats.sessionStability.badMacCount,
+                isDegraded: stats.sessionStability.isDegraded,
+            } : null,
+            messagesAllowed: stats.messagesAllowed ?? 0,
+            messagesBlocked: stats.messagesBlocked ?? 0,
+            totalDelayMs: stats.totalDelayMs ?? 0,
+        };
+    }
+
+    /**
+     * Get the full v2 stats blob (for the dedicated /antiban-v2 endpoint).
+     * Returns null if v2 isn't running.
+     */
+    getAntibanV2Full() {
+        if (!this.antibanV2) return null;
+        const compact = this.getAntibanV2Status();
+        let fullStats = null;
+        if (this.antibanCtx?.antiban?.getStats) {
+            try { fullStats = this.antibanCtx.antiban.getStats(); } catch (_) {}
+        }
+        return {
+            ...compact,
+            config: this.antibanV2,
+            stats: fullStats,
+        };
+    }
+
+    /**
+     * Update v2 anti-ban config. Most fields take effect on next reconnect; for
+     * "live" fields like rate limits we hot-update the running RateLimiter.
+     */
+    async updateAntibanV2(updates) {
+        if (!updates || typeof updates !== 'object') {
+            throw new Error('updates must be an object');
+        }
+        const before = this.antibanV2 || legacyToV2Config(this.antiBanSettings);
+        const next = {
+            ...before,
+            ...updates,
+            modules: { ...(before.modules || {}), ...(updates.modules || {}) },
+            overrides: { ...(before.overrides || {}), ...(updates.overrides || {}) },
+        };
+        this.antibanV2 = next;
+        this._log('Anti-ban v2 config updated (full effect on next reconnect)', 'info');
+        return this.getAntibanV2Status();
+    }
+
+    /**
+     * Manual emergency pause of the v2 pipeline.
+     */
+    pauseAntibanV2() {
+        if (!this.antibanCtx?.antiban) throw new Error('Anti-ban v2 not running');
+        this.antibanCtx.antiban.pause();
+        this._log('Anti-ban v2 PAUSED (no messages will be sent)', 'warning');
+        return this.getAntibanV2Status();
+    }
+
+    /**
+     * Resume after a manual pause.
+     */
+    resumeAntibanV2() {
+        if (!this.antibanCtx?.antiban) throw new Error('Anti-ban v2 not running');
+        this.antibanCtx.antiban.resume();
+        this._log('Anti-ban v2 RESUMED', 'success');
+        return this.getAntibanV2Status();
+    }
+
+    /**
+     * Nuclear reset — clears warmup, rate-limiter, and health state.
+     * Use after serving a real ban period.
+     */
+    async resetAntibanV2() {
+        if (this.antibanCtx?.antiban) {
+            this.antibanCtx.antiban.reset();
+        }
+        // Wipe persisted state too
+        try {
+            const stateDir = path.join(INSTANCES_FOLDER, this.id, 'antiban');
+            if (fsSync.existsSync(stateDir)) {
+                const files = await fs.readdir(stateDir);
+                for (const f of files) {
+                    if (f === 'fingerprint.json') continue; // keep fingerprint sticky
+                    await fs.unlink(path.join(stateDir, f)).catch(() => {});
+                }
+            }
+        } catch (_) { /* ignore */ }
+        this._log('Anti-ban v2 RESET (state wiped, fingerprint kept)', 'warning');
+        return this.getAntibanV2Status();
+    }
+
+    /**
+     * Lid mappings cache (for diagnostics).
+     */
+    getLidMappings() {
+        if (!this.antibanCtx?.lidResolver) return { enabled: false, count: 0, sample: [] };
+        try {
+            const stats = this.antibanCtx.lidResolver.getStats?.();
+            return { enabled: true, ...stats };
+        } catch (_) {
+            return { enabled: true, count: 0, sample: [] };
+        }
+    }
+
+    /**
+     * Get the proxy state for API responses (password redacted, includes source).
+     *
+     * Fields:
+     *   override  - raw instance-level config (null = inheriting deployment default or using pool)
+     *   effective - what would be used on next connect (same shape as override.config)
+     *   source    - which tier produced `effective`: api|pool|deployment|disabled|none
+     *   active    - snapshot of what the CURRENTLY OPEN socket is tunneling through
+     *               (null if the instance is disconnected). Useful for polling to
+     *               confirm the live connection matches the configured proxy.
+     */
+    getProxyStatus() {
+        const resolved = resolveEffectiveProxy(this.proxy);
+        let override = null;
+        if (this.proxy) {
+            if (this.proxy.enabled === false) {
+                override = { enabled: false };
+            } else {
+                override = {
+                    enabled: true,
+                    origin: this.proxy.source || 'api', // 'api' | 'pool'
+                    ...redactProxy(this.proxy),
+                };
+            }
+        }
+
+        let active = null;
+        if (this._activeProxy && (this.status === 'connected' || this.status === 'connecting')) {
+            active = {
+                source: this._activeProxy.source,
+                proxy: redactProxy(this._activeProxy.config),
+                boundAt: this._activeProxyAt,
+            };
+        }
+
+        return {
+            override,
+            effective: redactProxy(resolved.config),
+            source: resolved.source,
+            active,
+        };
+    }
+
+    /**
+     * Probe the outbound egress IP of this instance by sending an HTTPS request
+     * through the same agent as the WhatsApp socket. If the proxy is working,
+     * the echoed IP should be one of the pool proxies' upstream IPs, NOT the
+     * Azure App Service outbound IP.
+     *
+     * This is the definitive confirmation that traffic is actually flowing
+     * through the configured proxy.
+     */
+    async verifyProxy(target = 'https://api.ipify.org?format=json') {
+        const axios = (await import('axios')).default;
+        const resolved = resolveEffectiveProxy(this.proxy);
+        const agent = resolved.config ? createProxyAgent(resolved.config) : null;
+
+        const start = Date.now();
+        try {
+            const response = await axios.get(target, {
+                httpAgent: agent || undefined,
+                httpsAgent: agent || undefined,
+                timeout: 15000,
+                validateStatus: () => true,
+            });
+            const elapsedMs = Date.now() - start;
+            let egressIp = null;
+            if (response.data && typeof response.data === 'object' && response.data.ip) {
+                egressIp = response.data.ip;
+            } else if (typeof response.data === 'string') {
+                egressIp = response.data.trim();
+            }
+            return {
+                success: response.status >= 200 && response.status < 300,
+                target,
+                elapsedMs,
+                httpStatus: response.status,
+                egressIp,
+                proxySource: resolved.source,
+                proxy: redactProxy(resolved.config),
+                // Live socket snapshot so callers can compare configured vs bound
+                active: (this._activeProxy && (this.status === 'connected' || this.status === 'connecting'))
+                    ? {
+                        source: this._activeProxy.source,
+                        proxy: redactProxy(this._activeProxy.config),
+                        boundAt: this._activeProxyAt,
+                    }
+                    : null,
+            };
+        } catch (error) {
+            return {
+                success: false,
+                target,
+                elapsedMs: Date.now() - start,
+                error: error.message,
+                code: error.code || null,
+                proxySource: resolved.source,
+                proxy: redactProxy(resolved.config),
+            };
+        }
+    }
+
+    /**
+     * Normalize any accepted proxy input shape into the canonical persisted form.
+     * Returns null if no config (inherit deployment default).
+     *
+     * @param {Object|string|null} input
+     * @param {string} [defaultSource] - source tag to stamp when input doesn't already have one
+     */
+    _normalizeProxy(input, defaultSource = 'api') {
+        if (!input) return null;
+        if (input.enabled === false) return { enabled: false };
+        try {
+            const cfg = parseProxyConfig(input.url || input);
+            if (!cfg) return null;
+            return {
+                enabled: true,
+                source: input.source || defaultSource, // 'api' | 'pool'
+                type: cfg.type,
+                host: cfg.host,
+                port: cfg.port,
+                username: cfg.username,
+                password: cfg.password,
+            };
+        } catch (err) {
+            console.warn(`[Instance ${this.id}] Dropping invalid persisted proxy config: ${err.message}`);
+            return null;
+        }
+    }
+
+    /**
+     * Update the per-instance proxy override.
+     *
+     * @param {Object|null} newProxy
+     *   null                                 -> clear override, fall back to deployment default
+     *   { enabled: false }                   -> explicitly disable proxy for this instance
+     *   { enabled: true, url: "http://..." } -> use this URL
+     *   { enabled: true, type, host, port, username?, password? } -> structured form
+     */
+    async updateProxy(newProxy, opts = {}) {
+        const source = opts.source || 'api'; // 'api' | 'pool'
+
+        if (newProxy === null || newProxy === undefined) {
+            this.proxy = null;
+            this._log('Proxy override cleared (inheriting deployment default or pool)', 'info');
+        } else if (newProxy.enabled === false) {
+            this.proxy = { enabled: false };
+            this._log('Proxy explicitly disabled for this instance', 'info');
+        } else {
+            const cfg = parseProxyConfig(newProxy.url || newProxy);
+            if (!cfg) {
+                throw new Error('Invalid proxy config: need url or {type,host,port}');
+            }
+            this.proxy = {
+                enabled: true,
+                source,
+                type: cfg.type,
+                host: cfg.host,
+                port: cfg.port,
+                username: cfg.username,
+                password: cfg.password,
+            };
+            const originLabel = source === 'pool' ? 'pool-assigned' : 'override';
+            this._log(
+                `Proxy ${originLabel}: ${cfg.type}://${cfg.username ? cfg.username + '@' : ''}${cfg.host}:${cfg.port}`,
+                'info'
+            );
+        }
+
+        // If connected/connecting, bounce the socket so the new agent is applied
+        if (opts.skipReconnect) return this.getProxyStatus();
+        if (this.status === 'connected' || this.status === 'connecting') {
+            this._log('Reconnecting to apply new proxy config...', 'warning');
+            try {
+                if (this.socket) {
+                    try { this.socket.ev.removeAllListeners(); } catch (_) {}
+                    try { this.socket.end(); } catch (_) {}
+                    this.socket = null;
+                }
+                this.status = 'disconnected';
+                this._emitStatusChange();
+                // Reconnect in the background so the API call returns quickly
+                setTimeout(() => {
+                    this.connect().catch(err => {
+                        this._log(`Reconnect after proxy change failed: ${err.message}`, 'error');
+                    });
+                }, 500);
+            } catch (err) {
+                this._log(`Failed to bounce socket for proxy change: ${err.message}`, 'error');
+            }
+        }
+
+        return this.getProxyStatus();
+    }
+
     /**
      * Get serializable config (for persistence)
      */
@@ -1102,6 +2341,9 @@ class WhatsAppInstance {
             webhookUrl: this.webhookUrl,
             behaviorSettings: this.behaviorSettings,
             antiBanSettings: this.antiBanSettings,
+            antibanV2: this.antibanV2,
+            handoffSettings: this.handoffSettings,
+            proxy: this.proxy,
             createdAt: this.createdAt
         };
     }
@@ -1130,6 +2372,42 @@ class WhatsAppInstance {
         console.log(`${emoji[level] || ''} [${this.id}] ${message}`);
     }
     
+    _logMessage(direction, from, to, text, messageId, extra = {}) {
+        const entry = {
+            id: messageId || Date.now().toString(),
+            direction,
+            from,
+            to,
+            text: text || '',
+            timestamp: new Date().toISOString(),
+            status: 'delivered',
+            ...extra
+        };
+        
+        this.messageHistory.unshift(entry);
+        if (this.messageHistory.length > this.maxMessageHistory) {
+            this.messageHistory = this.messageHistory.slice(0, this.maxMessageHistory);
+        }
+        
+        return entry;
+    }
+    
+    getMessages(filters = {}) {
+        let messages = this.messageHistory;
+        
+        if (filters.direction) {
+            messages = messages.filter(m => m.direction === filters.direction);
+        }
+        
+        if (filters.since) {
+            const sinceDate = new Date(filters.since);
+            messages = messages.filter(m => new Date(m.timestamp) >= sinceDate);
+        }
+        
+        const limit = Math.min(filters.limit || 50, 200);
+        return messages.slice(0, limit);
+    }
+    
     /**
      * Emit status change
      */
@@ -1149,20 +2427,181 @@ class InstanceManager {
         this.onStatusChange = null;
         this.onMessage = null;
         this.onLog = null;
+
+        // Proxy pool is constructed empty here; actual entries are loaded from
+        // instances/proxy-pool.json (source of truth) or bootstrapped from the
+        // PROXY_POOL env var on first boot. See init().
+        this.proxyPool = new ProxyPoolManager(null);
     }
-    
+
     /**
      * Initialize the manager
      */
     async init() {
         // Ensure instances folder exists
         await fs.mkdir(INSTANCES_FOLDER, { recursive: true });
-        
+
+        // Load pool: prefer the JSON file (source of truth, runtime-mutable)
+        // over the PROXY_POOL env var (bootstrap seed). If the file is missing
+        // and the env is set, seed the file from env and use that henceforth.
+        await this._loadOrSeedProxyPool();
+
         // Load existing instances from DB
         await this._loadInstances();
-        
+
+        // Reconcile pool assignments against the loaded instances.
+        if (this.proxyPool.isEnabled()) {
+            await this._reconcileProxyPool({ emit: false });
+            console.log(
+                `[InstanceManager] Proxy pool ready: ${this.proxyPool.getStatus().used}/${this.proxyPool.size()} slots in use`
+            );
+        }
+
         console.log(`[InstanceManager] Initialized with ${this.instances.size} instances`);
         return this;
+    }
+
+    /**
+     * Load the proxy pool from instances/proxy-pool.json.
+     * If the file doesn't exist but the PROXY_POOL env var is set, seed the
+     * file from it so subsequent edits can be made via the API without losing
+     * the original bootstrap on restart.
+     */
+    async _loadOrSeedProxyPool() {
+        try {
+            if (fsSync.existsSync(PROXY_POOL_FILE)) {
+                const raw = await fs.readFile(PROXY_POOL_FILE, 'utf8');
+                const data = JSON.parse(raw);
+                const entries = Array.isArray(data) ? data : (data.entries || []);
+                this.proxyPool = new ProxyPoolManager(entries);
+                console.log(`[InstanceManager] Loaded ${this.proxyPool.size()} proxy-pool entries from disk`);
+                return;
+            }
+        } catch (err) {
+            console.warn(`[InstanceManager] Failed to read proxy-pool.json: ${err.message}`);
+        }
+
+        const envValue = process.env.PROXY_POOL || '';
+        if (envValue) {
+            this.proxyPool = new ProxyPoolManager(envValue);
+            if (this.proxyPool.size() > 0) {
+                await this._saveProxyPool();
+                console.log(`[InstanceManager] Seeded proxy-pool.json from PROXY_POOL env (${this.proxyPool.size()} entries)`);
+            }
+        }
+    }
+
+    /**
+     * Persist the current pool to disk atomically.
+     */
+    async _saveProxyPool() {
+        try {
+            const data = { entries: this.proxyPool.serialize(), savedAt: new Date().toISOString() };
+            await fs.writeFile(PROXY_POOL_FILE, JSON.stringify(data, null, 2));
+        } catch (err) {
+            console.error('[InstanceManager] Failed to save proxy-pool.json:', err);
+            throw err;
+        }
+    }
+
+    /**
+     * Runtime: add a proxy to the pool (live, no restart).
+     * Accepts URL string, webshare shorthand "host:port:user:pass", or an object.
+     *
+     * Returns { added, slot, pool }. If the pool had empty slots and there are
+     * direct-connection instances that could use the new slot, the caller can
+     * follow up with reconcileProxyPool() to hand it out retroactively.
+     */
+    async addProxyToPool(input) {
+        const result = this.proxyPool.addEntry(input);
+        if (result.added) {
+            await this._saveProxyPool();
+            console.log(`[InstanceManager] Added pool slot: ${result.slot.id}`);
+        }
+        return {
+            ...result,
+            pool: this.proxyPool.getStatus(),
+        };
+    }
+
+    /**
+     * Runtime: remove a proxy from the pool (live, no restart).
+     * If the slot was assigned to an instance, that instance's proxy is
+     * orphaned — we clear it and, via reconcile, try to give the instance a
+     * different free slot or let it fall through to direct. The instance will
+     * bounce its socket to apply the change.
+     */
+    async removeProxyFromPool(slotId) {
+        const result = this.proxyPool.removeEntry(slotId);
+        if (!result.removed) {
+            return { removed: false, pool: this.proxyPool.getStatus() };
+        }
+        await this._saveProxyPool();
+        console.log(`[InstanceManager] Removed pool slot: ${slotId}` +
+            (result.wasAssignedTo ? ` (was held by ${result.wasAssignedTo})` : ''));
+
+        // If an instance was holding this slot, clear + reconcile so it
+        // picks up a new one or falls through to direct.
+        if (result.wasAssignedTo) {
+            await this._reconcileProxyPool({ emit: true });
+        }
+
+        return {
+            removed: true,
+            wasAssignedTo: result.wasAssignedTo,
+            pool: this.proxyPool.getStatus(),
+        };
+    }
+
+    /**
+     * Rebuild pool assignments from current instances. Any retroactively
+     * assigned instance gets its proxy field updated (and bounced if online).
+     *
+     * @param {{emit?: boolean}} [opts]
+     */
+    async _reconcileProxyPool({ emit = true } = {}) {
+        const instanceList = Array.from(this.instances.values()).map(i => ({
+            id: i.id,
+            proxy: i.proxy,
+            createdAt: i.createdAt,
+        }));
+
+        const { reassigned, orphaned } = this.proxyPool.reconcile(instanceList);
+
+        // Clear proxies on orphaned instances (their pool slot no longer exists)
+        for (const orphanId of orphaned) {
+            const inst = this.instances.get(orphanId);
+            if (!inst) continue;
+            inst._log('Proxy slot no longer in pool — clearing', 'warning');
+            await inst.updateProxy(null, { skipReconnect: false });
+        }
+
+        // Apply new pool assignments to instances that got one
+        for (const { instanceId, slot } of reassigned) {
+            const inst = this.instances.get(instanceId);
+            if (!inst) continue;
+            await inst.updateProxy(
+                {
+                    enabled: true,
+                    type: slot.type,
+                    host: slot.host,
+                    port: slot.port,
+                    username: slot.username,
+                    password: slot.password,
+                },
+                { source: 'pool' }
+            );
+        }
+
+        if (orphaned.length || reassigned.length) {
+            await this._saveInstances();
+        }
+
+        return {
+            reassigned: reassigned.map(r => r.instanceId),
+            orphaned,
+            pool: this.proxyPool.getStatus(),
+        };
     }
     
     /**
@@ -1170,18 +2609,43 @@ class InstanceManager {
      */
     async createInstance(config = {}) {
         const id = config.id || this._generateId();
-        
+
         console.log(`[InstanceManager] Creating instance: ${id}`);
-        
+
         if (this.instances.has(id)) {
             throw new Error(`Instance ${id} already exists`);
         }
-        
+
+        // Auto-assign a proxy from the pool if (a) no explicit proxy was passed,
+        // and (b) the pool has a free slot. Tagged with source:'pool' so it can
+        // be distinguished from an API-set override.
+        let proxyConfig = config.proxy || null;
+        if (!proxyConfig && this.proxyPool.isEnabled()) {
+            const slot = this.proxyPool.claimSlot(id);
+            if (slot) {
+                proxyConfig = {
+                    enabled: true,
+                    source: 'pool',
+                    type: slot.type,
+                    host: slot.host,
+                    port: slot.port,
+                    username: slot.username,
+                    password: slot.password,
+                };
+                console.log(`[InstanceManager] Assigned pool slot ${slot.host}:${slot.port} to ${id}`);
+            } else {
+                console.log(`[InstanceManager] Pool exhausted — ${id} will connect direct`);
+            }
+        }
+
         const instance = new WhatsAppInstance({
             id,
             name: config.name || `Instance ${id}`,
             webhookUrl: config.webhookUrl || '',
-            antiBanSettings: config.antiBanSettings
+            behaviorSettings: config.behaviorSettings,
+            antiBanSettings: config.antiBanSettings,
+            antibanV2: config.antibanV2 || null,
+            proxy: proxyConfig,
         });
         
         console.log(`[InstanceManager] Instance object created, auth folder: ${instance.authFolder}`);
@@ -1235,20 +2699,26 @@ class InstanceManager {
         if (!instance) {
             throw new Error(`Instance ${id} not found`);
         }
-        
+
+        // Release any held pool slot BEFORE we forget about the instance
+        const released = this.proxyPool.releaseSlot(id);
+        if (released) {
+            console.log(`[InstanceManager] Returned pool slot held by ${id} to the pool`);
+        }
+
         // Disconnect first
         await instance.disconnect();
-        
+
         // Delete instance folder
         const instanceFolder = path.join(INSTANCES_FOLDER, id);
         await fs.rm(instanceFolder, { recursive: true, force: true });
-        
+
         // Remove from map
         this.instances.delete(id);
         await this._saveInstances();
-        
+
         console.log(`[InstanceManager] Deleted instance: ${id}`);
-        return { success: true, id };
+        return { success: true, id, poolSlotReleased: released };
     }
     
     /**
@@ -1268,16 +2738,150 @@ class InstanceManager {
         if (updates.antiBanSettings) {
             instance.updateAntiBanSettings(updates.antiBanSettings);
         }
-        
+        if (updates.handoffSettings) {
+            instance.handoffSettings = Object.assign(instance.handoffSettings, updates.handoffSettings);
+        }
+        if (updates.proxy !== undefined) {
+            await instance.updateProxy(updates.proxy);
+        }
+        if (updates.antibanV2 !== undefined) {
+            await instance.updateAntibanV2(updates.antibanV2);
+        }
+
         await this._saveInstances();
         return instance.getStatus();
+    }
+
+    /**
+     * Set/update per-instance proxy via API.
+     *
+     *   proxy === null          -> clear override. If the pool has a free slot,
+     *                              auto-claim it; otherwise fall through.
+     *   proxy.enabled === false -> explicit disable (releases any pool slot).
+     *   otherwise               -> user-supplied override with source='api'
+     *                              (releases any held pool slot).
+     */
+    async setInstanceProxy(id, proxy) {
+        const instance = this.instances.get(id);
+        if (!instance) {
+            throw new Error(`Instance ${id} not found`);
+        }
+
+        if (proxy === null || proxy === undefined) {
+            // Clearing an override: give up any held pool slot, then try to
+            // claim a fresh one (same slot will usually be available since we
+            // just released it — pool is FIFO by free-slot order).
+            this.proxyPool.releaseSlot(id);
+            const slot = this.proxyPool.isEnabled() ? this.proxyPool.claimSlot(id) : null;
+            if (slot) {
+                const result = await instance.updateProxy(
+                    {
+                        enabled: true,
+                        type: slot.type,
+                        host: slot.host,
+                        port: slot.port,
+                        username: slot.username,
+                        password: slot.password,
+                    },
+                    { source: 'pool' }
+                );
+                await this._saveInstances();
+                return result;
+            }
+            const result = await instance.updateProxy(null);
+            await this._saveInstances();
+            return result;
+        }
+
+        if (proxy.enabled === false) {
+            this.proxyPool.releaseSlot(id);
+            const result = await instance.updateProxy({ enabled: false });
+            await this._saveInstances();
+            return result;
+        }
+
+        // API-set override: free the pool slot so another instance can use it,
+        // then apply the custom proxy with source='api'.
+        this.proxyPool.releaseSlot(id);
+        const result = await instance.updateProxy(proxy, { source: 'api' });
+        await this._saveInstances();
+        return result;
+    }
+
+    /**
+     * Public hook: rebuild pool assignments (useful after changing PROXY_POOL
+     * at runtime or if you want to retroactively hand slots to existing
+     * direct-connection instances).
+     */
+    async reconcileProxyPool() {
+        return this._reconcileProxyPool({ emit: true });
+    }
+
+    /**
+     * Public: get the current pool status.
+     */
+    getProxyPoolStatus() {
+        return this.proxyPool.getStatus();
+    }
+
+    /**
+     * Verify the egress IP for an instance by probing through its effective
+     * proxy agent. Returns { egressIp, proxy, active, ... }.
+     */
+    async verifyInstanceProxy(id, target) {
+        const instance = this.instances.get(id);
+        if (!instance) throw new Error(`Instance ${id} not found`);
+        return await instance.verifyProxy(target);
+    }
+
+    // ─── Anti-ban v2 manager-level helpers ────────────────────────────────
+
+    getAntibanV2(id) {
+        const instance = this.instances.get(id);
+        if (!instance) throw new Error(`Instance ${id} not found`);
+        return instance.getAntibanV2Full();
+    }
+
+    async updateAntibanV2(id, updates) {
+        const instance = this.instances.get(id);
+        if (!instance) throw new Error(`Instance ${id} not found`);
+        const result = await instance.updateAntibanV2(updates);
+        await this._saveInstances();
+        return result;
+    }
+
+    pauseAntibanV2(id) {
+        const instance = this.instances.get(id);
+        if (!instance) throw new Error(`Instance ${id} not found`);
+        return instance.pauseAntibanV2();
+    }
+
+    resumeAntibanV2(id) {
+        const instance = this.instances.get(id);
+        if (!instance) throw new Error(`Instance ${id} not found`);
+        return instance.resumeAntibanV2();
+    }
+
+    async resetAntibanV2(id) {
+        const instance = this.instances.get(id);
+        if (!instance) throw new Error(`Instance ${id} not found`);
+        return await instance.resetAntibanV2();
+    }
+
+    getLidMappings(id) {
+        const instance = this.instances.get(id);
+        if (!instance) throw new Error(`Instance ${id} not found`);
+        return instance.getLidMappings();
     }
     
     /**
      * Connect an instance
+     * @param {string} id - Instance ID
+     * @param {Object} options - Connection options
+     * @param {string} options.pairingPhone - Phone number for pairing code login
      */
-    async connectInstance(id) {
-        console.log(`[InstanceManager] Connecting instance: ${id}`);
+    async connectInstance(id, options = {}) {
+        console.log(`[InstanceManager] Connecting instance: ${id}, options:`, options);
         console.log(`[InstanceManager] Available instances:`, Array.from(this.instances.keys()));
         
         const instance = this.instances.get(id);
@@ -1287,34 +2891,58 @@ class InstanceManager {
         }
         
         console.log(`[InstanceManager] Instance found, current status: ${instance.status}`);
-        console.log(`[InstanceManager] Auth folder: ${instance.authFolder}`);
         
-        await instance.connect();
+        await instance.connect(options);
         return instance.getStatus();
     }
     
     /**
-     * Connect an instance using pairing code
+     * Disconnect an instance
      */
-    async connectInstanceWithPairingCode(id, phoneNumber) {
+    async disconnectInstance(id, disconnectOptions = {}) {
         const instance = this.instances.get(id);
         if (!instance) {
             throw new Error(`Instance ${id} not found`);
         }
-        const code = await instance.connectWithPairingCode(phoneNumber);
-        return { code, instance: instance.getStatus() };
+        await instance.disconnect(disconnectOptions);
+        return instance.getStatus();
     }
 
     /**
-     * Disconnect an instance
+     * Re-apply behaviorSettings from instances.json onto already-loaded instances
+     * without restarting the process (no code reload). Use after hand-editing the
+     * file on disk or rsync from another writer. Unknown instance ids in the file are skipped.
      */
-    async disconnectInstance(id) {
-        const instance = this.instances.get(id);
-        if (!instance) {
-            throw new Error(`Instance ${id} not found`);
+    async reloadBehaviorSettingsFromDisk() {
+        if (!fsSync.existsSync(INSTANCES_DB_FILE)) {
+            return { success: false, error: 'instances.json not found', results: [] };
         }
-        await instance.disconnect();
-        return instance.getStatus();
+        const raw = await fs.readFile(INSTANCES_DB_FILE, 'utf8');
+        const rows = JSON.parse(raw);
+        if (!Array.isArray(rows)) {
+            return { success: false, error: 'instances.json must be a JSON array', results: [] };
+        }
+        const results = [];
+        for (const row of rows) {
+            if (!row || typeof row.id !== 'string') continue;
+            const inst = this.instances.get(row.id);
+            if (!inst) {
+                results.push({ id: row.id, ok: false, reason: 'not_loaded_in_memory' });
+                continue;
+            }
+            if (row.behaviorSettings && typeof row.behaviorSettings === 'object') {
+                inst.updateBehaviorSettings(row.behaviorSettings);
+                results.push({
+                    id: row.id,
+                    ok: true,
+                    appliedKeys: Object.keys(row.behaviorSettings),
+                    behaviorSettings: { ...inst.behaviorSettings },
+                });
+            } else {
+                results.push({ id: row.id, ok: true, appliedKeys: [], note: 'no behaviorSettings in file row' });
+            }
+        }
+        return { success: true, count: results.length, results };
     }
     
     /**
@@ -1333,15 +2961,23 @@ class InstanceManager {
      * Send message via instance
      * @param {string} instanceId - Instance ID
      * @param {string} to - Phone number or JID
-     * @param {string} text - Message text
+     * @param {string|Object} textOrParams - Plain text or rich message params
      * @param {Object} options - Behavior options (typingSimulation, delayEnabled)
      */
-    async sendMessage(instanceId, to, text, options = {}) {
+    async sendMessage(instanceId, to, textOrParams, options = {}) {
         const instance = this.instances.get(instanceId);
         if (!instance) {
             throw new Error(`Instance ${instanceId} not found`);
         }
-        return await instance.sendMessage(to, text, options);
+        return await instance.sendMessage(to, textOrParams, options);
+    }
+
+    async sendReaction(instanceId, to, messageId, emoji, fromMe = false) {
+        const instance = this.instances.get(instanceId);
+        if (!instance) {
+            throw new Error(`Instance ${instanceId} not found`);
+        }
+        return await instance.sendReaction(to, messageId, emoji, fromMe);
     }
     
     /**

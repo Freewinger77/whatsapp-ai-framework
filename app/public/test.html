@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp API Tester</title>
+    <title>Wasup API Tester</title>
     <style>
         * {
             box-sizing: border-box;
@@ -94,10 +94,27 @@
             grid-template-columns: 1fr 1fr;
             gap: 16px;
         }
+
+        .inline-actions {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+            margin-bottom: 16px;
+        }
+
+        .inline-actions .form-group {
+            flex: 1;
+            margin-bottom: 0;
+        }
         
         @media (max-width: 600px) {
             .row {
                 grid-template-columns: 1fr;
+            }
+
+            .inline-actions {
+                flex-direction: column;
+                align-items: stretch;
             }
         }
         
@@ -291,10 +308,13 @@
 </head>
 <body>
     <div class="container">
-        <a href="/" class="back-link">← Back to Dashboard</a>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+            <a href="/" class="back-link" style="margin:0;">← Dashboard</a>
+            <a href="/docs" class="back-link" style="margin:0; color:#25d366;">API Docs →</a>
+        </div>
         
-        <h1>📱 WhatsApp API Tester</h1>
-        <p class="subtitle">Test the /api/send endpoint with custom parameters</p>
+        <h1>📱 Wasup API Tester</h1>
+        <p class="subtitle">Test Wasup messaging, reactions, rich media, and instance routes</p>
         
         <!-- Configuration Card -->
         <div class="card">
@@ -315,6 +335,17 @@
         <!-- Message Card -->
         <div class="card">
             <div class="card-title">📨 Send Message</div>
+
+            <div class="inline-actions">
+                <div class="form-group">
+                    <label>Connected Instance</label>
+                    <select id="connectedInstance">
+                        <option value="">Manual / first connected instance</option>
+                    </select>
+                    <div class="hint">Choose a live connected instance to auto-fill the sender number</div>
+                </div>
+                <button class="btn btn-secondary" type="button" onclick="loadConnectedInstances()" style="white-space: nowrap;">Refresh Instances</button>
+            </div>
             
             <div class="row">
                 <div class="form-group">
@@ -330,8 +361,136 @@
             </div>
             
             <div class="form-group">
-                <label>Message *</label>
+                <label>Message Type</label>
+                <select id="messageType" onchange="toggleMessageFields()">
+                    <option value="text">Text</option>
+                    <option value="image">Image</option>
+                    <option value="video">Video</option>
+                    <option value="document">Document</option>
+                    <option value="audio">Audio / Voice Note</option>
+                    <option value="buttons">Reply Buttons</option>
+                    <option value="list">List Menu</option>
+                    <option value="location">Location</option>
+                    <option value="contact">Contact Card</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Message / Caption</label>
                 <textarea id="message" placeholder="Type your message here...">Hello! This is a test message.</textarea>
+            </div>
+            
+            <!-- Media fields (image, video, document, audio) -->
+            <div id="mediaFields" style="display:none;">
+                <div class="form-group">
+                    <label>Media URL *</label>
+                    <input type="text" id="mediaUrl" placeholder="https://example.com/image.jpg">
+                    <div class="hint">Direct link to the image, video, document, or audio file</div>
+                </div>
+                <div class="row" id="docFields" style="display:none;">
+                    <div class="form-group">
+                        <label>File Name</label>
+                        <input type="text" id="fileName" placeholder="report.pdf">
+                    </div>
+                    <div class="form-group">
+                        <label>MIME Type</label>
+                        <input type="text" id="mimeType" placeholder="application/pdf">
+                        <div class="hint">e.g. application/pdf, audio/mp4, audio/ogg</div>
+                    </div>
+                </div>
+                <div class="form-group" id="pttField" style="display:none;">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="ptt" checked>
+                        <label for="ptt" style="margin: 0;">Voice Note (push-to-talk)</label>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Button fields -->
+            <div id="buttonFields" style="display:none;">
+                <div class="form-group">
+                    <label>Footer Text</label>
+                    <input type="text" id="footer" placeholder="Powered by WhatsApp AI">
+                </div>
+                <div class="form-group">
+                    <label>Buttons (max 3)</label>
+                    <div id="buttonsContainer">
+                        <div class="row" style="margin-bottom:8px;">
+                            <input type="text" class="btn-id" placeholder="Button ID (e.g. yes)">
+                            <input type="text" class="btn-text" placeholder="Button Text (e.g. Yes)">
+                        </div>
+                        <div class="row" style="margin-bottom:8px;">
+                            <input type="text" class="btn-id" placeholder="Button ID">
+                            <input type="text" class="btn-text" placeholder="Button Text">
+                        </div>
+                        <div class="row" style="margin-bottom:8px;">
+                            <input type="text" class="btn-id" placeholder="Button ID">
+                            <input type="text" class="btn-text" placeholder="Button Text">
+                        </div>
+                    </div>
+                    <div class="hint">Uses Wasup interactive helper for native buttons (iOS + Android)</div>
+                </div>
+            </div>
+            
+            <!-- List fields -->
+            <div id="listFields" style="display:none;">
+                <div class="row">
+                    <div class="form-group">
+                        <label>List Title</label>
+                        <input type="text" id="listTitle" placeholder="Our Services">
+                    </div>
+                    <div class="form-group">
+                        <label>Button Label</label>
+                        <input type="text" id="listButtonText" placeholder="Menu" value="Menu">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Footer Text</label>
+                    <input type="text" id="listFooter" placeholder="Choose an option">
+                </div>
+                <div class="form-group">
+                    <label>List Items (JSON)</label>
+                    <textarea id="listSections" style="min-height:120px; font-family:monospace; font-size:12px;" placeholder='[{"title":"Section 1","rows":[{"title":"Option A","id":"a","description":"First option"},{"title":"Option B","id":"b","description":"Second option"}]}]'>[{"title":"Options","rows":[{"title":"Option A","id":"opt_a","description":"First option"},{"title":"Option B","id":"opt_b","description":"Second option"}]}]</textarea>
+                    <div class="hint">Array of sections with rows. Each row: { title, id, description }</div>
+                </div>
+            </div>
+            
+            <!-- Location fields -->
+            <div id="locationFields" style="display:none;">
+                <div class="row">
+                    <div class="form-group">
+                        <label>Latitude *</label>
+                        <input type="number" id="latitude" placeholder="3.1390" step="any">
+                    </div>
+                    <div class="form-group">
+                        <label>Longitude *</label>
+                        <input type="number" id="longitude" placeholder="101.6869" step="any">
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="form-group">
+                        <label>Location Name</label>
+                        <input type="text" id="locationName" placeholder="KLCC">
+                    </div>
+                    <div class="form-group">
+                        <label>Address</label>
+                        <input type="text" id="locationAddress" placeholder="Kuala Lumpur, Malaysia">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Contact card fields -->
+            <div id="contactFields" style="display:none;">
+                <div class="row">
+                    <div class="form-group">
+                        <label>Contact Display Name *</label>
+                        <input type="text" id="contactDisplayName" placeholder="John Doe">
+                    </div>
+                    <div class="form-group">
+                        <label>Contact Phone *</label>
+                        <input type="text" id="contactPhone" placeholder="+60123456789">
+                    </div>
+                </div>
             </div>
             
             <div class="divider"></div>
@@ -377,7 +536,47 @@
                 <button class="quick-btn" onclick="setMessage('Hi, how are you?')">How are you?</button>
                 <button class="quick-btn" onclick="setMessage('Testing 1-2-3')">Test 123</button>
                 <button class="quick-btn" onclick="setMessage('👋')">Wave</button>
+                <button class="quick-btn" onclick="prefillButtons()">Sample Buttons</button>
+                <button class="quick-btn" onclick="prefillImage()">Sample Image</button>
+                <button class="quick-btn" onclick="prefillList()">Sample List</button>
+                <button class="quick-btn" onclick="prefillLocation()">Sample Location</button>
             </div>
+        </div>
+        
+        <!-- Reaction Card -->
+        <div class="card">
+            <div class="card-title">😍 Send Reaction</div>
+            <p style="font-size:12px; color:#9ca3af; margin-bottom:12px;">React to a message with an emoji. You need the message ID (returned when sending or from message history).</p>
+            <div class="row">
+                <div class="form-group">
+                    <label>To Phone *</label>
+                    <input type="text" id="reactToPhone" placeholder="60198765432">
+                    <div class="hint">The chat where the message lives</div>
+                </div>
+                <div class="form-group">
+                    <label>Message ID *</label>
+                    <input type="text" id="reactMessageId" placeholder="3EB0XXXX...">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Emoji</label>
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <input type="text" id="reactEmoji" value="👍" style="width:60px; text-align:center; font-size:20px;">
+                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='👍'">👍</button>
+                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='❤️'">❤️</button>
+                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='😂'">😂</button>
+                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='😮'">😮</button>
+                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='😢'">😢</button>
+                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='🙏'">🙏</button>
+                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='🔥'">🔥</button>
+                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='🎉'">🎉</button>
+                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value=''">Remove</button>
+                </div>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="sendReaction()">😍 Send Reaction</button>
+            </div>
+            <div class="response-box" id="reactResponseBox" style="margin-top:12px; min-height:40px;">Ready</div>
         </div>
         
         <!-- Response Card -->
@@ -403,41 +602,184 @@
     </div>
     
     <script>
+        function getBaseUrl() {
+            return document.getElementById('baseUrl').value || window.location.origin;
+        }
+
+        function getApiHeaders() {
+            const headers = { 'Content-Type': 'application/json' };
+            const apiKey = document.getElementById('apiKey').value;
+            if (apiKey) headers['X-API-Key'] = apiKey;
+            return headers;
+        }
+
+        async function loadConnectedInstances() {
+            const select = document.getElementById('connectedInstance');
+            const fromPhoneInput = document.getElementById('fromPhone');
+            const currentSelected = localStorage.getItem('wa_test_connectedInstance') || select.value || fromPhoneInput.value;
+
+            select.innerHTML = '<option value="">Loading connected instances...</option>';
+
+            try {
+                const response = await fetch(`${getBaseUrl()}/api/instances`, {
+                    headers: getApiHeaders()
+                });
+                const data = await response.json();
+                const instances = Array.isArray(data.instances) ? data.instances : [];
+                const connectedInstances = instances.filter(instance => instance.status === 'connected' && instance.connectedPhone);
+
+                select.innerHTML = '<option value="">Manual / first connected instance</option>';
+
+                connectedInstances.forEach(instance => {
+                    const option = document.createElement('option');
+                    option.value = instance.connectedPhone;
+                    option.textContent = `${instance.name} (+${instance.connectedPhone})`;
+                    select.appendChild(option);
+                });
+
+                const hasMatch = [...select.options].some(option => option.value === currentSelected);
+                if (hasMatch) {
+                    select.value = currentSelected;
+                    fromPhoneInput.value = currentSelected;
+                } else if (!connectedInstances.length) {
+                    select.innerHTML = '<option value="">No connected instances found</option>';
+                }
+            } catch (error) {
+                select.innerHTML = '<option value="">Failed to load instances</option>';
+            }
+        }
+
         // Load saved settings on page load
         document.addEventListener('DOMContentLoaded', () => {
             const savedBaseUrl = localStorage.getItem('wa_test_baseUrl');
             const savedApiKey = localStorage.getItem('wa_test_apiKey');
             const savedFromPhone = localStorage.getItem('wa_test_fromPhone');
+            const savedConnectedInstance = localStorage.getItem('wa_test_connectedInstance');
             
             if (savedBaseUrl) document.getElementById('baseUrl').value = savedBaseUrl;
             if (savedApiKey) document.getElementById('apiKey').value = savedApiKey;
             if (savedFromPhone) document.getElementById('fromPhone').value = savedFromPhone;
+            if (savedConnectedInstance) document.getElementById('connectedInstance').value = savedConnectedInstance;
             
             loadHistory();
+            toggleMessageFields();
+            loadConnectedInstances();
         });
         
         // Save settings when changed
         document.getElementById('baseUrl').addEventListener('change', (e) => {
             localStorage.setItem('wa_test_baseUrl', e.target.value);
+            loadConnectedInstances();
         });
         document.getElementById('apiKey').addEventListener('change', (e) => {
             localStorage.setItem('wa_test_apiKey', e.target.value);
+            loadConnectedInstances();
         });
         document.getElementById('fromPhone').addEventListener('change', (e) => {
             localStorage.setItem('wa_test_fromPhone', e.target.value);
+            const select = document.getElementById('connectedInstance');
+            const matchingOption = [...select.options].find(option => option.value === e.target.value);
+            select.value = matchingOption ? matchingOption.value : '';
+            localStorage.setItem('wa_test_connectedInstance', select.value);
         });
+        document.getElementById('connectedInstance').addEventListener('change', (e) => {
+            const value = e.target.value;
+            if (value) {
+                document.getElementById('fromPhone').value = value;
+                localStorage.setItem('wa_test_fromPhone', value);
+            }
+            localStorage.setItem('wa_test_connectedInstance', value);
+        });
+        
+        function toggleMessageFields() {
+            const type = document.getElementById('messageType').value;
+            const mediaTypes = ['image', 'video', 'document', 'audio'];
+            
+            document.getElementById('mediaFields').style.display = mediaTypes.includes(type) ? 'block' : 'none';
+            document.getElementById('docFields').style.display = ['document', 'audio'].includes(type) ? 'grid' : 'none';
+            document.getElementById('pttField').style.display = type === 'audio' ? 'block' : 'none';
+            document.getElementById('buttonFields').style.display = type === 'buttons' ? 'block' : 'none';
+            document.getElementById('listFields').style.display = type === 'list' ? 'block' : 'none';
+            document.getElementById('locationFields').style.display = type === 'location' ? 'block' : 'none';
+            document.getElementById('contactFields').style.display = type === 'contact' ? 'block' : 'none';
+        }
         
         function setMessage(msg) {
             document.getElementById('message').value = msg;
         }
         
+        function prefillButtons() {
+            document.getElementById('messageType').value = 'buttons';
+            toggleMessageFields();
+            document.getElementById('message').value = 'Would you like to proceed?';
+            document.getElementById('footer').value = 'Tap a button to reply';
+            const ids = document.querySelectorAll('.btn-id');
+            const texts = document.querySelectorAll('.btn-text');
+            ids[0].value = 'yes'; texts[0].value = 'Yes';
+            ids[1].value = 'no'; texts[1].value = 'No';
+            ids[2].value = 'maybe'; texts[2].value = 'Maybe Later';
+        }
+        
+        function prefillImage() {
+            document.getElementById('messageType').value = 'image';
+            toggleMessageFields();
+            document.getElementById('message').value = 'Check this out!';
+            document.getElementById('mediaUrl').value = 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/6d/Good_Food_Display_-_NCI_Visuals_Online.jpg/800px-Good_Food_Display_-_NCI_Visuals_Online.jpg';
+        }
+        
+        function prefillList() {
+            document.getElementById('messageType').value = 'list';
+            toggleMessageFields();
+            document.getElementById('message').value = 'Please choose a service:';
+            document.getElementById('listTitle').value = 'Our Services';
+            document.getElementById('listButtonText').value = 'View Menu';
+            document.getElementById('listFooter').value = 'Tap to select';
+            document.getElementById('listSections').value = JSON.stringify([{
+                title: 'Services',
+                rows: [
+                    { title: 'Consulting', id: 'consulting', description: 'Expert advice' },
+                    { title: 'Development', id: 'dev', description: 'Custom software' },
+                    { title: 'Support', id: 'support', description: '24/7 assistance' }
+                ]
+            }], null, 2);
+        }
+        
+        function prefillLocation() {
+            document.getElementById('messageType').value = 'location';
+            toggleMessageFields();
+            document.getElementById('message').value = '';
+            document.getElementById('latitude').value = '3.1577';
+            document.getElementById('longitude').value = '101.7117';
+            document.getElementById('locationName').value = 'Petronas Twin Towers';
+            document.getElementById('locationAddress').value = 'KLCC, Kuala Lumpur, Malaysia';
+        }
+        
         function clearForm() {
             document.getElementById('toPhone').value = '';
+            document.getElementById('messageType').value = 'text';
             document.getElementById('message').value = 'Hello! This is a test message.';
             document.getElementById('contactName').value = '';
             document.getElementById('typingSimulation').checked = true;
             document.getElementById('delayEnabled').checked = true;
             document.getElementById('skipContactSave').checked = false;
+            document.getElementById('mediaUrl').value = '';
+            document.getElementById('fileName').value = '';
+            document.getElementById('mimeType').value = '';
+            document.getElementById('footer').value = '';
+            document.querySelectorAll('.btn-id').forEach(el => el.value = '');
+            document.querySelectorAll('.btn-text').forEach(el => el.value = '');
+            document.getElementById('listTitle').value = '';
+            document.getElementById('listButtonText').value = 'Menu';
+            document.getElementById('listFooter').value = '';
+            document.getElementById('listSections').value = '[{"title":"Options","rows":[{"title":"Option A","id":"opt_a","description":"First option"},{"title":"Option B","id":"opt_b","description":"Second option"}]}]';
+            document.getElementById('latitude').value = '';
+            document.getElementById('longitude').value = '';
+            document.getElementById('locationName').value = '';
+            document.getElementById('locationAddress').value = '';
+            document.getElementById('contactDisplayName').value = '';
+            document.getElementById('contactPhone').value = '';
+            document.getElementById('connectedInstance').value = '';
+            toggleMessageFields();
         }
         
         function setStatus(status, text) {
@@ -450,20 +792,101 @@
             responseBox.className = 'response-box ' + (status === 'error' ? 'error' : status === 'success' ? 'success' : '');
         }
         
-        async function sendMessage() {
-            const baseUrl = document.getElementById('baseUrl').value || window.location.origin;
-            const apiKey = document.getElementById('apiKey').value;
-            const fromPhone = document.getElementById('fromPhone').value;
+        function buildPayload() {
             const toPhone = document.getElementById('toPhone').value;
+            const fromPhone = document.getElementById('fromPhone').value;
             const message = document.getElementById('message').value;
-            const contactName = document.getElementById('contactName').value;
+            const msgType = document.getElementById('messageType').value;
+            const contactNameVal = document.getElementById('contactName').value;
             const typingSimulation = document.getElementById('typingSimulation').checked;
             const delayEnabled = document.getElementById('delayEnabled').checked;
             const skipContactSave = document.getElementById('skipContactSave').checked;
             
-            if (!toPhone || !message) {
+            const payload = {
+                to_phone: toPhone,
+                message: message,
+                messageType: msgType,
+                typingSimulation,
+                delayEnabled,
+                skipContactSave
+            };
+            
+            if (fromPhone) payload.from_phone = fromPhone;
+            if (contactNameVal) payload.contactName = contactNameVal;
+            
+            if (['image', 'video', 'document', 'audio'].includes(msgType)) {
+                payload.mediaUrl = document.getElementById('mediaUrl').value;
+                if (['document', 'audio'].includes(msgType)) {
+                    const fn = document.getElementById('fileName').value;
+                    const mt = document.getElementById('mimeType').value;
+                    if (fn) payload.fileName = fn;
+                    if (mt) payload.mimeType = mt;
+                }
+                if (msgType === 'audio') {
+                    payload.ptt = document.getElementById('ptt').checked;
+                }
+            }
+            
+            if (msgType === 'buttons') {
+                payload.footer = document.getElementById('footer').value;
+                const ids = document.querySelectorAll('.btn-id');
+                const texts = document.querySelectorAll('.btn-text');
+                const btns = [];
+                for (let i = 0; i < ids.length; i++) {
+                    if (texts[i].value.trim()) {
+                        btns.push({ id: ids[i].value.trim() || `btn_${i}`, text: texts[i].value.trim() });
+                    }
+                }
+                payload.buttons = btns;
+            }
+            
+            if (msgType === 'list') {
+                payload.title = document.getElementById('listTitle').value;
+                payload.buttonText = document.getElementById('listButtonText').value;
+                payload.footer = document.getElementById('listFooter').value;
+                try {
+                    payload.sections = JSON.parse(document.getElementById('listSections').value);
+                } catch (e) {
+                    throw new Error('Invalid JSON in List Items field');
+                }
+            }
+            
+            if (msgType === 'location') {
+                payload.latitude = parseFloat(document.getElementById('latitude').value) || 0;
+                payload.longitude = parseFloat(document.getElementById('longitude').value) || 0;
+                payload.locationName = document.getElementById('locationName').value;
+                payload.locationAddress = document.getElementById('locationAddress').value;
+            }
+            
+            if (msgType === 'contact') {
+                payload.contactCard = {
+                    displayName: document.getElementById('contactDisplayName').value,
+                    phoneNumber: document.getElementById('contactPhone').value
+                };
+            }
+            
+            return payload;
+        }
+        
+        async function sendMessage() {
+            const baseUrl = getBaseUrl();
+            const toPhone = document.getElementById('toPhone').value;
+            const message = document.getElementById('message').value;
+            const msgType = document.getElementById('messageType').value;
+            
+            if (!toPhone) {
                 setStatus('error', 'Missing required fields');
-                document.getElementById('responseBox').textContent = 'Error: Please fill in To Phone and Message fields';
+                document.getElementById('responseBox').textContent = 'Error: Please fill in the To Phone field';
+                return;
+            }
+            if (msgType === 'text' && !message) {
+                setStatus('error', 'Missing required fields');
+                document.getElementById('responseBox').textContent = 'Error: Message text is required for text messages';
+                return;
+            }
+            if (['image', 'video', 'document', 'audio'].includes(msgType) && !document.getElementById('mediaUrl').value) {
+                setStatus('error', 'Missing required fields');
+                document.getElementById('responseBox').textContent = 'Error: Media URL is required for ' + msgType + ' messages';
                 return;
             }
             
@@ -471,26 +894,20 @@
             const sendBtnText = document.getElementById('sendBtnText');
             sendBtn.disabled = true;
             sendBtnText.textContent = '⏳ Sending...';
-            setStatus('loading', 'Sending message...');
+            setStatus('loading', `Sending ${msgType} message...`);
             
-            const payload = {
-                to_phone: toPhone,
-                message: message,
-                typingSimulation,
-                delayEnabled,
-                skipContactSave
-            };
-            
-            if (fromPhone) payload.from_phone = fromPhone;
-            if (contactName) payload.contactName = contactName;
-            
-            const headers = {
-                'Content-Type': 'application/json'
-            };
-            
-            if (apiKey) {
-                headers['X-API-Key'] = apiKey;
+            let payload;
+            try {
+                payload = buildPayload();
+            } catch (e) {
+                setStatus('error', 'Payload error');
+                document.getElementById('responseBox').textContent = 'Error: ' + e.message;
+                sendBtn.disabled = false;
+                sendBtnText.textContent = '🚀 Send Message';
+                return;
             }
+            
+            const headers = getApiHeaders();
             
             const startTime = Date.now();
             
@@ -507,17 +924,17 @@
                 if (response.ok) {
                     setStatus('success', `Success (${elapsed}ms)`);
                     document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
-                    addToHistory(toPhone, message, true, elapsed);
+                    addToHistory(toPhone, `[${msgType}] ${message || ''}`.trim(), true, elapsed);
                 } else {
                     setStatus('error', `Error ${response.status} (${elapsed}ms)`);
                     document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
-                    addToHistory(toPhone, message, false, elapsed, data.error);
+                    addToHistory(toPhone, `[${msgType}] ${message || ''}`.trim(), false, elapsed, data.error);
                 }
             } catch (error) {
                 const elapsed = Date.now() - startTime;
                 setStatus('error', 'Request failed');
                 document.getElementById('responseBox').textContent = `Error: ${error.message}\n\nMake sure the API server is running at: ${baseUrl}`;
-                addToHistory(toPhone, message, false, elapsed, error.message);
+                addToHistory(toPhone, `[${msgType}] ${message || ''}`.trim(), false, elapsed, error.message);
             } finally {
                 sendBtn.disabled = false;
                 sendBtnText.textContent = '🚀 Send Message';
@@ -528,14 +945,13 @@
             const history = JSON.parse(localStorage.getItem('wa_test_history') || '[]');
             history.unshift({
                 to,
-                message: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
+                message: message.substring(0, 60) + (message.length > 60 ? '...' : ''),
                 success,
                 elapsed,
                 error,
                 time: new Date().toLocaleTimeString()
             });
             
-            // Keep only last 10 items
             if (history.length > 10) history.pop();
             
             localStorage.setItem('wa_test_history', JSON.stringify(history));
@@ -575,6 +991,42 @@
                 sendMessage();
             }
         });
+        
+        async function sendReaction() {
+            const baseUrl = getBaseUrl();
+            const fromPhone = document.getElementById('fromPhone').value;
+            const toPhone = document.getElementById('reactToPhone').value;
+            const messageId = document.getElementById('reactMessageId').value;
+            const emoji = document.getElementById('reactEmoji').value;
+            const box = document.getElementById('reactResponseBox');
+            
+            if (!toPhone || !messageId) {
+                box.textContent = 'Error: To Phone and Message ID are required';
+                box.className = 'response-box error';
+                return;
+            }
+            
+            box.textContent = 'Sending reaction...';
+            box.className = 'response-box';
+            
+            const payload = { to_phone: toPhone, messageId, emoji };
+            if (fromPhone) payload.from_phone = fromPhone;
+            
+            const headers = getApiHeaders();
+            
+            try {
+                const response = await fetch(`${baseUrl}/api/react`, {
+                    method: 'POST', headers,
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                box.textContent = JSON.stringify(data, null, 2);
+                box.className = 'response-box ' + (response.ok ? 'success' : 'error');
+            } catch (error) {
+                box.textContent = 'Error: ' + error.message;
+                box.className = 'response-box error';
+            }
+        }
     </script>
 </body>
 </html>
