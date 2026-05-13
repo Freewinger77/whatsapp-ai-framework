@@ -12,7 +12,7 @@
 import 'dotenv/config';
 import express from 'express';
 import http from 'http';
-import { WebSocketServer } from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs/promises';
@@ -35,6 +35,7 @@ const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.API_KEY || ''; // Optional API key for external access
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const DEFAULT_WEBHOOK_URL = process.env.DEFAULT_WEBHOOK_URL || process.env.N8N_WEBHOOK_URL || '';
+const VALID_BEHAVIOR_PROFILES = new Set(['bot-native', 'notification-balanced', 'notification-max']);
 
 // ========================================
 // STATE MANAGEMENT
@@ -57,6 +58,11 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/openapi.yaml', (req, res) => {
+    res.type('application/yaml');
+    res.sendFile(path.join(__dirname, 'openapi.yaml'));
+});
 
 // CORS for API access
 app.use((req, res, next) => {
@@ -262,10 +268,11 @@ app.post('/api/instances/:id/connect', async (req, res) => {
  */
 app.post('/api/instances/:id/disconnect', async (req, res) => {
     try {
-        const instance = await instanceManager.disconnectInstance(req.params.id);
+        const revoke = req.body?.revoke === true;
+        const instance = await instanceManager.disconnectInstance(req.params.id, { revoke });
         res.json({ 
             success: true, 
-            message: 'Disconnected',
+            message: revoke ? 'Logged out and session revoked' : 'Disconnected',
             instance 
         });
     } catch (error) {
@@ -378,16 +385,35 @@ app.get('/api/instances/:id/qr', (req, res) => {
  */
 app.post('/api/instances/:id/send', async (req, res) => {
     try {
-        const { to, message, typingSimulation, delayEnabled, contactName, skipContactSave } = req.body;
+        const {
+            to,
+            message,
+            behaviorProfile,
+            typingSimulation,
+            delayEnabled,
+            phoneNotificationsEnabled,
+            notificationGraceMs,
+            contactName,
+            skipContactSave
+        } = req.body;
         
         if (!to || !message) {
             return res.status(400).json({ error: 'Missing required fields: to, message' });
         }
+        if (behaviorProfile !== undefined && !VALID_BEHAVIOR_PROFILES.has(behaviorProfile)) {
+            return res.status(400).json({
+                error: 'Invalid behaviorProfile',
+                allowedProfiles: Array.from(VALID_BEHAVIOR_PROFILES)
+            });
+        }
         
         // Build options for per-message behavior override
         const options = {};
+        if (behaviorProfile !== undefined) options.behaviorProfile = behaviorProfile;
         if (typingSimulation !== undefined) options.typingSimulation = typingSimulation;
         if (delayEnabled !== undefined) options.delayEnabled = delayEnabled;
+        if (phoneNotificationsEnabled !== undefined) options.phoneNotificationsEnabled = phoneNotificationsEnabled;
+        if (notificationGraceMs !== undefined) options.notificationGraceMs = notificationGraceMs;
         if (contactName !== undefined) options.contactName = contactName;
         if (skipContactSave !== undefined) options.skipContactSave = skipContactSave;
         
@@ -428,16 +454,34 @@ app.post('/api/send', async (req, res) => {
         // Support both new format (from_phone, to_phone) and legacy format (from, to)
         const fromPhone = req.body.from_phone || req.body.from;
         const toPhone = req.body.to_phone || req.body.to;
-        const { message, typingSimulation, delayEnabled, contactName, skipContactSave } = req.body;
+        const {
+            message,
+            behaviorProfile,
+            typingSimulation,
+            delayEnabled,
+            phoneNotificationsEnabled,
+            notificationGraceMs,
+            contactName,
+            skipContactSave
+        } = req.body;
         
         if (!toPhone || !message) {
             return res.status(400).json({ error: 'Missing required fields: to_phone, message' });
         }
+        if (behaviorProfile !== undefined && !VALID_BEHAVIOR_PROFILES.has(behaviorProfile)) {
+            return res.status(400).json({
+                error: 'Invalid behaviorProfile',
+                allowedProfiles: Array.from(VALID_BEHAVIOR_PROFILES)
+            });
+        }
         
         // Build options for per-message behavior override
         const options = {};
+        if (behaviorProfile !== undefined) options.behaviorProfile = behaviorProfile;
         if (typingSimulation !== undefined) options.typingSimulation = typingSimulation;
         if (delayEnabled !== undefined) options.delayEnabled = delayEnabled;
+        if (phoneNotificationsEnabled !== undefined) options.phoneNotificationsEnabled = phoneNotificationsEnabled;
+        if (notificationGraceMs !== undefined) options.notificationGraceMs = notificationGraceMs;
         if (contactName !== undefined) options.contactName = contactName;
         if (skipContactSave !== undefined) options.skipContactSave = skipContactSave;
         
@@ -612,14 +656,33 @@ app.get('/api/instances/:id/behavior', (req, res) => {
 /**
  * PUT /api/instances/:id/behavior
  * Update behavior settings for instance
- * Body: { typingSimulation?: boolean, delayEnabled?: boolean }
+ * Body: { behaviorProfile?, typingSimulation?, delayEnabled?, phoneNotificationsEnabled?, notificationGraceMs? }
  */
 app.put('/api/instances/:id/behavior', async (req, res) => {
     try {
-        const { typingSimulation, delayEnabled } = req.body;
+        const {
+            behaviorProfile,
+            typingSimulation,
+            delayEnabled,
+            phoneNotificationsEnabled,
+            notificationGraceMs
+        } = req.body;
+
+        if (behaviorProfile !== undefined && !VALID_BEHAVIOR_PROFILES.has(behaviorProfile)) {
+            return res.status(400).json({
+                error: 'Invalid behaviorProfile',
+                allowedProfiles: Array.from(VALID_BEHAVIOR_PROFILES)
+            });
+        }
         
         const instance = await instanceManager.updateInstance(req.params.id, { 
-            behaviorSettings: { typingSimulation, delayEnabled } 
+            behaviorSettings: {
+                behaviorProfile,
+                typingSimulation,
+                delayEnabled,
+                phoneNotificationsEnabled,
+                notificationGraceMs
+            } 
         });
         
         broadcastToAll({

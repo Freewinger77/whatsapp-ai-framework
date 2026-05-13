@@ -16,13 +16,20 @@ import crypto from 'crypto';
 import QRCode from 'qrcode';
 import NodeCache from 'node-cache';
 import pino from 'pino';
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from 'baileys';
+import WebSocket from 'ws';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from 'baileys';
 import { AntiBanManager, safeSendMessage, delay } from './anti-ban.js';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// Some Node builds do not expose WHATWG WebSocket globally. Baileys rc builds
+// expect it during socket creation, so provide the already-declared ws runtime.
+if (typeof globalThis.WebSocket === 'undefined') {
+    globalThis.WebSocket = WebSocket;
+}
 
 // Create a silent logger for Baileys (reduces noise, improves stealth)
 const logger = pino({ level: 'silent' });
@@ -48,6 +55,76 @@ const INSTANCES_DB_FILE = path.join(INSTANCES_FOLDER, 'instances.json');
 
 // Global default webhook URL (from environment)
 const DEFAULT_WEBHOOK_URL = process.env.DEFAULT_WEBHOOK_URL || process.env.N8N_WEBHOOK_URL || '';
+const WA_VERSION_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+let cachedWaSocketVersion = null;
+let cachedWaSocketVersionAt = 0;
+
+const BEHAVIOR_PROFILE_DEFAULTS = {
+    'bot-native': {
+        typingSimulation: true,
+        delayEnabled: true,
+        phoneNotificationsEnabled: false,
+        notificationGraceMs: 0,
+        behaviorProfile: 'bot-native'
+    },
+    'notification-balanced': {
+        typingSimulation: true,
+        delayEnabled: true,
+        phoneNotificationsEnabled: true,
+        notificationGraceMs: 2500,
+        behaviorProfile: 'notification-balanced'
+    },
+    'notification-max': {
+        typingSimulation: false,
+        delayEnabled: true,
+        phoneNotificationsEnabled: true,
+        notificationGraceMs: 5000,
+        behaviorProfile: 'notification-max'
+    }
+};
+
+function normalizeBehaviorSettings(settings = {}) {
+    const requestedProfile = settings.behaviorProfile || 'bot-native';
+    const profile = BEHAVIOR_PROFILE_DEFAULTS[requestedProfile]
+        ? requestedProfile
+        : 'bot-native';
+
+    return {
+        ...BEHAVIOR_PROFILE_DEFAULTS[profile],
+        ...settings,
+        behaviorProfile: profile,
+        typingSimulation: settings.typingSimulation !== undefined
+            ? !!settings.typingSimulation
+            : BEHAVIOR_PROFILE_DEFAULTS[profile].typingSimulation,
+        delayEnabled: settings.delayEnabled !== undefined
+            ? !!settings.delayEnabled
+            : BEHAVIOR_PROFILE_DEFAULTS[profile].delayEnabled,
+        phoneNotificationsEnabled: settings.phoneNotificationsEnabled !== undefined
+            ? !!settings.phoneNotificationsEnabled
+            : BEHAVIOR_PROFILE_DEFAULTS[profile].phoneNotificationsEnabled,
+        notificationGraceMs: Number.isFinite(Number(settings.notificationGraceMs))
+            ? Math.max(0, Number(settings.notificationGraceMs))
+            : BEHAVIOR_PROFILE_DEFAULTS[profile].notificationGraceMs
+    };
+}
+
+async function getLatestWaSocketVersion(instanceId) {
+    const now = Date.now();
+    if (cachedWaSocketVersion && now - cachedWaSocketVersionAt < WA_VERSION_CACHE_TTL_MS) {
+        return cachedWaSocketVersion;
+    }
+
+    try {
+        const { version, isLatest } = await fetchLatestBaileysVersion();
+        cachedWaSocketVersion = version;
+        cachedWaSocketVersionAt = now;
+        console.log(`[Instance ${instanceId}] WhatsApp Web version: ${version.join('.')} (latest: ${isLatest})`);
+        return version;
+    } catch (error) {
+        console.log(`[Instance ${instanceId}] Could not fetch latest WhatsApp Web version: ${error.message}`);
+        return cachedWaSocketVersion;
+    }
+}
 
 /**
  * Single WhatsApp Instance
@@ -65,6 +142,8 @@ class WhatsAppInstance {
         this.qrCode = null;
         this.connectedPhone = null;
         this.connectedAt = null;
+        this.reconnectTimer = null;
+        this.intentionalDisconnect = false;
         
         // Message deduplication (prevent processing same message multiple times)
         this.processedMessages = new Set();
@@ -76,11 +155,8 @@ class WhatsAppInstance {
         // Saved contacts cache (to avoid re-saving contacts we've already saved)
         this.savedContacts = new Set();
         
-        // Behavior settings (typing simulation, delays)
-        this.behaviorSettings = config.behaviorSettings || {
-            typingSimulation: true,   // Show "typing..." indicator
-            delayEnabled: true,       // Human-like response delays
-        };
+        // Behavior settings (typing simulation, delays, phone notification profiles)
+        this.behaviorSettings = normalizeBehaviorSettings(config.behaviorSettings);
         
         // Anti-ban settings
         this.antiBanSettings = config.antiBanSettings || {
@@ -168,6 +244,8 @@ class WhatsAppInstance {
             }
             this.socket = null;
         }
+        this._clearReconnectTimer();
+        this.intentionalDisconnect = false;
         
         this.status = 'connecting';
         this._emitStatusChange();
@@ -180,14 +258,16 @@ class WhatsAppInstance {
             
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
             console.log(`[Instance ${this.id}] Auth state loaded`);
+            const waSocketVersion = await getLatestWaSocketVersion(this.id);
             
             // ========================================
             // ANTI-BAN: Baileys-recommended socket configuration
             // Based on https://baileys.wiki/docs/socket/configuration/
             // ========================================
-            this.socket = makeWASocket({
+            const socket = makeWASocket({
                 auth: state,
                 logger: logger,
+                ...(waSocketVersion ? { version: waSocketVersion } : {}),
                 
                 // CRITICAL: Group metadata cache prevents rate limits and bans
                 // "This is a problem and causes a ratelimit and potential bans from WhatsApp"
@@ -219,13 +299,15 @@ class WhatsAppInstance {
                 // Don't print QR in terminal (we handle it via API)
                 printQRInTerminal: false
             });
+            this.socket = socket;
             console.log(`[Instance ${this.id}] Socket created with anti-ban config`);
             
             // Save credentials when updated
-            this.socket.ev.on('creds.update', saveCreds);
+            socket.ev.on('creds.update', saveCreds);
             
             // Handle connection updates
-            this.socket.ev.on('connection.update', async (update) => {
+            socket.ev.on('connection.update', async (update) => {
+                if (this.socket !== socket) return;
                 const { connection, qr, lastDisconnect } = update;
                 
                 // QR Code received
@@ -244,18 +326,23 @@ class WhatsAppInstance {
                 // Connection closed
                 if (connection === 'close') {
                     const statusCode = lastDisconnect?.error?.output?.statusCode;
-                    const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+                    const shouldReconnect = !this.intentionalDisconnect && statusCode !== DisconnectReason.loggedOut;
                     
                     console.log(`[Instance ${this.id}] Connection closed. Status:`, statusCode);
                     this.status = 'disconnected';
                     this.qrCode = null;
                     this.connectedPhone = null;
                     this.connectedAt = null;
+                    this._stopPresenceCycling();
                     this._emitStatusChange();
                     
                     if (shouldReconnect) {
-                        this._log('Connection lost - reconnecting in 5 seconds...', 'warning');
-                        setTimeout(() => this.connect(), 5000);
+                        const reason = statusCode === DisconnectReason.restartRequired
+                            ? 'WhatsApp requested a socket restart'
+                            : 'Connection lost';
+                        this._scheduleReconnect(`${reason} - reconnecting in 5 seconds...`);
+                    } else if (this.intentionalDisconnect) {
+                        this._log('Disconnected from WhatsApp (credentials kept)', 'info');
                     } else {
                         this._log('Logged out - scan QR code to reconnect', 'error');
                     }
@@ -280,7 +367,7 @@ class WhatsAppInstance {
             });
             
             // Handle incoming messages
-            this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
+            socket.ev.on('messages.upsert', async ({ messages, type }) => {
                 // Only process real-time notifications, not history sync
                 if (type !== 'notify') {
                     console.log(`[Instance ${this.id}] Ignoring messages.upsert type: ${type}`);
@@ -303,7 +390,7 @@ class WhatsAppInstance {
             });
             
             // Listen for LID-PN mapping updates (Baileys 7.x)
-            this.socket.ev.on('lid-mapping.update', async (mappings) => {
+            socket.ev.on('lid-mapping.update', async (mappings) => {
                 console.log(`[Instance ${this.id}] Received LID-PN mappings:`, Object.keys(mappings).length);
                 // Store mappings in our persistent cache too
                 for (const [lid, pn] of Object.entries(mappings)) {
@@ -315,7 +402,7 @@ class WhatsAppInstance {
             // ANTI-BAN: Group metadata cache updates
             // Prevents rate limits when sending to groups
             // ========================================
-            this.socket.ev.on('groups.update', (updates) => {
+            socket.ev.on('groups.update', (updates) => {
                 for (const update of updates) {
                     if (update.id) {
                         // Merge with existing cache entry
@@ -326,7 +413,7 @@ class WhatsAppInstance {
                 }
             });
             
-            this.socket.ev.on('groups.upsert', (groups) => {
+            socket.ev.on('groups.upsert', (groups) => {
                 for (const group of groups) {
                     if (group.id) {
                         this.groupMetadataCache.set(group.id, group);
@@ -339,7 +426,7 @@ class WhatsAppInstance {
             // ANTI-BAN: Store messages for retry handling
             // Prevents "this message can take a while" errors
             // ========================================
-            this.socket.ev.on('messages.upsert', ({ messages }) => {
+            socket.ev.on('messages.upsert', ({ messages }) => {
                 for (const msg of messages) {
                     if (msg.key?.id && msg.message) {
                         this.messageStore.set(msg.key.id, {
@@ -378,11 +465,14 @@ class WhatsAppInstance {
      */
     async connectWithPairingCode(phoneNumber) {
         console.log(`[Instance ${this.id}] connectWithPairingCode() called for: ${phoneNumber}`);
-        
+
         if (this.status === 'connected') {
             throw new Error('Already connected');
         }
-        
+
+        this._clearReconnectTimer();
+        this.intentionalDisconnect = false;
+
         if (this.socket) {
             try {
                 this.socket.ev.removeAllListeners();
@@ -398,31 +488,40 @@ class WhatsAppInstance {
         try {
             await fs.mkdir(this.authFolder, { recursive: true });
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
+            const waSocketVersion = await getLatestWaSocketVersion(this.id);
             
-            this.socket = makeWASocket({
+            const socket = makeWASocket({
                 auth: state,
+                ...(waSocketVersion ? { version: waSocketVersion } : {}),
                 printQRInTerminal: false
             });
+            this.socket = socket;
             
-            this.socket.ev.on('creds.update', saveCreds);
+            socket.ev.on('creds.update', saveCreds);
             
-            this.socket.ev.on('connection.update', async (update) => {
+            socket.ev.on('connection.update', async (update) => {
+                if (this.socket !== socket) return;
                 const { connection, lastDisconnect } = update;
                 
                 if (connection === 'close') {
                     const statusCode = lastDisconnect?.error?.output?.statusCode;
-                    const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+                    const shouldReconnect = !this.intentionalDisconnect && statusCode !== DisconnectReason.loggedOut;
                     
                     this.status = 'disconnected';
                     this.qrCode = null;
                     this.pairingCode = null;
                     this.connectedPhone = null;
                     this.connectedAt = null;
+                    this._stopPresenceCycling();
                     this._emitStatusChange();
                     
                     if (shouldReconnect) {
-                        this._log('Connection lost - reconnecting in 5 seconds...', 'warning');
-                        setTimeout(() => this.connect(), 5000);
+                        const reason = statusCode === DisconnectReason.restartRequired
+                            ? 'WhatsApp requested a socket restart'
+                            : 'Connection lost';
+                        this._scheduleReconnect(`${reason} - reconnecting in 5 seconds...`);
+                    } else if (this.intentionalDisconnect) {
+                        this._log('Disconnected from WhatsApp (credentials kept)', 'info');
                     } else {
                         this._log('Logged out - pair again to reconnect', 'error');
                     }
@@ -440,7 +539,7 @@ class WhatsAppInstance {
                 }
             });
             
-            this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
+            socket.ev.on('messages.upsert', async ({ messages, type }) => {
                 if (type !== 'notify') return;
                 for (const msg of messages) {
                     const now = Math.floor(Date.now() / 1000);
@@ -449,7 +548,7 @@ class WhatsAppInstance {
                 }
             });
             
-            this.socket.ev.on('lid-mapping.update', async (mappings) => {
+            socket.ev.on('lid-mapping.update', async (mappings) => {
                 for (const [lid, pn] of Object.entries(mappings)) {
                     await this._storeLidMapping(lid, pn);
                 }
@@ -478,24 +577,57 @@ class WhatsAppInstance {
     /**
      * Disconnect WhatsApp
      */
-    async disconnect() {
+    async disconnect(options = {}) {
+        const { revoke = false } = options;
+
+        this._clearReconnectTimer();
+        this.intentionalDisconnect = true;
+
         // Stop presence cycling
         this._stopPresenceCycling();
         
         if (this.socket) {
-            try {
-                await this.socket.logout();
-                this._log('Disconnected from WhatsApp', 'info');
-            } catch (error) {
-                console.error(`[Instance ${this.id}] Logout error:`, error);
-            }
+            const socket = this.socket;
             this.socket = null;
+            try {
+                socket.ev.removeAllListeners();
+                if (revoke) {
+                    await socket.logout();
+                    this._log('Logged out from WhatsApp (session revoked)', 'info');
+                } else {
+                    socket.end();
+                    this._log('Disconnected from WhatsApp (credentials kept)', 'info');
+                }
+            } catch (error) {
+                console.error(`[Instance ${this.id}] Disconnect error:`, error);
+            }
         }
         this.status = 'disconnected';
         this.qrCode = null;
         this.connectedPhone = null;
         this.connectedAt = null;
         this._emitStatusChange();
+        this.intentionalDisconnect = false;
+    }
+
+    _clearReconnectTimer() {
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+    }
+
+    _scheduleReconnect(message) {
+        this._clearReconnectTimer();
+        this._log(message, 'warning');
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            if (this.status !== 'connected' && !this.intentionalDisconnect) {
+                this.connect().catch(err => {
+                    this._log(`Reconnect failed: ${err.message}`, 'error');
+                });
+            }
+        }, 5000);
     }
     
     /**
@@ -552,19 +684,24 @@ class WhatsAppInstance {
     }
     
     /**
-     * Clear auth data (logout + delete credentials)
+     * Clear local auth data and stop any active connection attempt.
      */
     async clearAuth() {
         console.log(`[Instance ${this.id}] Clearing auth...`);
+        this._clearReconnectTimer();
+        this.intentionalDisconnect = true;
+        this._stopPresenceCycling();
         
         // Disconnect first if connected
         if (this.socket) {
-            try {
-                await this.socket.logout();
-            } catch (e) {
-                console.log(`[Instance ${this.id}] Logout during clear auth:`, e.message);
-            }
+            const socket = this.socket;
             this.socket = null;
+            try {
+                socket.ev.removeAllListeners();
+                socket.end();
+            } catch (e) {
+                console.log(`[Instance ${this.id}] Socket close during clear auth:`, e.message);
+            }
         }
         
         this.status = 'disconnected';
@@ -582,6 +719,8 @@ class WhatsAppInstance {
         } catch (error) {
             console.error(`[Instance ${this.id}] Clear auth error:`, error);
             throw error;
+        } finally {
+            this.intentionalDisconnect = false;
         }
     }
     
@@ -616,14 +755,22 @@ class WhatsAppInstance {
         }
         
         // Merge instance behavior settings with per-message overrides
-        const behaviorOptions = {
+        const behaviorOptions = normalizeBehaviorSettings({
+            ...this.behaviorSettings,
+            behaviorProfile: options.behaviorProfile || this.behaviorSettings.behaviorProfile,
             typingSimulation: options.typingSimulation !== undefined 
                 ? options.typingSimulation 
                 : this.behaviorSettings.typingSimulation,
             delayEnabled: options.delayEnabled !== undefined 
                 ? options.delayEnabled 
-                : this.behaviorSettings.delayEnabled
-        };
+                : this.behaviorSettings.delayEnabled,
+            phoneNotificationsEnabled: options.phoneNotificationsEnabled !== undefined
+                ? options.phoneNotificationsEnabled
+                : this.behaviorSettings.phoneNotificationsEnabled,
+            notificationGraceMs: options.notificationGraceMs !== undefined
+                ? options.notificationGraceMs
+                : this.behaviorSettings.notificationGraceMs,
+        });
         
         // Send with anti-ban protections
         const result = await safeSendMessage(this.socket, jid, text, '', this.antiBanManager, behaviorOptions);
@@ -914,9 +1061,20 @@ class WhatsAppInstance {
         console.log(`[Instance ${this.id}] Calling webhook: ${webhookUrl}`);
         
         try {
-            // Show typing indicator
+            const behavior = normalizeBehaviorSettings(this.behaviorSettings);
+            const phoneNotificationsOn = behavior.phoneNotificationsEnabled;
+
+            // In notification profiles, stay unavailable briefly so phones have
+            // time to receive the push before any read/typing activity.
             try {
-                await this.socket.sendPresenceUpdate('composing', from);
+                if (phoneNotificationsOn) {
+                    await this.socket.sendPresenceUpdate('unavailable', from);
+                    if (behavior.notificationGraceMs > 0) {
+                        await delay(behavior.notificationGraceMs);
+                    }
+                } else if (behavior.typingSimulation) {
+                    await this.socket.sendPresenceUpdate('composing', from);
+                }
             } catch (e) {}
             
             // Map messageType to media_type
@@ -970,9 +1128,9 @@ class WhatsAppInstance {
                     messageContent.text, 
                     this.antiBanManager,
                     {
-                        ...this.behaviorSettings,
+                        ...behavior,
                         messageKey: msg.key,  // Pass message key for read receipt simulation
-                        simulateReading: true
+                        simulateReading: !phoneNotificationsOn
                     }
                 );
                 if (result.sent) {
@@ -1061,15 +1219,13 @@ class WhatsAppInstance {
     }
     
     /**
-     * Update behavior settings (typing simulation, delays)
+     * Update behavior settings (typing simulation, delays, notification profiles)
      */
     updateBehaviorSettings(settings) {
-        if (settings.typingSimulation !== undefined) {
-            this.behaviorSettings.typingSimulation = !!settings.typingSimulation;
-        }
-        if (settings.delayEnabled !== undefined) {
-            this.behaviorSettings.delayEnabled = !!settings.delayEnabled;
-        }
+        this.behaviorSettings = normalizeBehaviorSettings({
+            ...this.behaviorSettings,
+            ...settings
+        });
     }
     
     /**
@@ -1181,6 +1337,7 @@ class InstanceManager {
             id,
             name: config.name || `Instance ${id}`,
             webhookUrl: config.webhookUrl || '',
+            behaviorSettings: config.behaviorSettings,
             antiBanSettings: config.antiBanSettings
         });
         
@@ -1272,7 +1429,7 @@ class InstanceManager {
         await this._saveInstances();
         return instance.getStatus();
     }
-    
+
     /**
      * Connect an instance
      */
@@ -1308,12 +1465,12 @@ class InstanceManager {
     /**
      * Disconnect an instance
      */
-    async disconnectInstance(id) {
+    async disconnectInstance(id, options = {}) {
         const instance = this.instances.get(id);
         if (!instance) {
             throw new Error(`Instance ${id} not found`);
         }
-        await instance.disconnect();
+        await instance.disconnect(options);
         return instance.getStatus();
     }
     

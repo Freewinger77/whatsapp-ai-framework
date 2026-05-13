@@ -23,15 +23,12 @@ if (!fs.existsSync(filePath)) {
 
 let content = fs.readFileSync(filePath, 'utf8');
 
-if (content.includes('Platform.MACOS')) {
-    console.log('[patch-baileys] Already patched');
-    process.exit(0);
-}
-
 if (content.includes('Platform.WEB')) {
-    content = content.replace('Platform.WEB', 'Platform.MACOS');
+    content = content.replaceAll('Platform.WEB', 'Platform.MACOS');
     fs.writeFileSync(filePath, content);
     console.log('[patch-baileys] Patched Platform.WEB -> Platform.MACOS');
+} else if (content.includes('Platform.MACOS')) {
+    console.log('[patch-baileys] Already patched');
 } else {
     console.log('[patch-baileys] Could not find Platform.WEB to patch');
 }

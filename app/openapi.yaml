@@ -35,7 +35,7 @@ tags:
   - name: Webhook
     description: Inbound webhook configuration
   - name: Behavior
-    description: Typing simulation and delay settings
+    description: Behavior profiles, typing simulation, delays, and phone notification preferences
   - name: Anti-Ban
     description: Rate limiting and anti-ban settings
   - name: Logs
@@ -239,7 +239,18 @@ paths:
     post:
       tags: [Connection]
       summary: Disconnect instance
-      description: Disconnect WhatsApp (keeps credentials)
+      description: Disconnect WhatsApp locally and keep credentials by default. Pass `revoke: true` to log out from WhatsApp and invalidate the linked session.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                revoke:
+                  type: boolean
+                  default: false
+                  description: Log out from WhatsApp and revoke the linked device session. Reconnecting will require QR scan or pairing again.
       responses:
         '200':
           description: Disconnected
@@ -265,7 +276,7 @@ paths:
     post:
       tags: [Connection]
       summary: Clear auth
-      description: Logout and delete saved credentials. Requires new QR scan.
+      description: Stop any active connection attempt and delete local saved credentials. Requires a new QR scan or pairing code.
       responses:
         '200':
           description: Auth cleared
@@ -348,6 +359,8 @@ paths:
                   type: string
                   description: Message text to send
                   example: Hello! How can I help you today?
+                behaviorProfile:
+                  $ref: '#/components/schemas/BehaviorProfile'
                 typingSimulation:
                   type: boolean
                   description: Override instance setting for this message
@@ -356,6 +369,15 @@ paths:
                   type: boolean
                   description: Override instance setting for this message
                   example: true
+                phoneNotificationsEnabled:
+                  type: boolean
+                  description: Override whether this message should favor phone push notifications before read/typing activity
+                  example: false
+                notificationGraceMs:
+                  type: integer
+                  minimum: 0
+                  description: Override notification-first wait time in milliseconds
+                  example: 2500
       responses:
         '200':
           description: Message sent
@@ -396,12 +418,21 @@ paths:
                 message:
                   type: string
                   example: Hello!
+                behaviorProfile:
+                  $ref: '#/components/schemas/BehaviorProfile'
                 typingSimulation:
                   type: boolean
                   description: Override instance setting for this message
                 delayEnabled:
                   type: boolean
                   description: Override instance setting for this message
+                phoneNotificationsEnabled:
+                  type: boolean
+                  description: Override whether this message should favor phone push notifications before read/typing activity
+                notificationGraceMs:
+                  type: integer
+                  minimum: 0
+                  description: Override notification-first wait time in milliseconds
       responses:
         '200':
           description: Message sent
@@ -432,7 +463,7 @@ paths:
     get:
       tags: [Behavior]
       summary: Get behavior settings
-      description: Get typing simulation and delay settings for instance
+      description: Get behavior profile, typing simulation, delay, and phone notification settings for an instance.
       responses:
         '200':
           description: Behavior settings
@@ -452,7 +483,13 @@ paths:
     put:
       tags: [Behavior]
       summary: Update behavior settings
-      description: Update typing simulation and delay settings
+      description: |
+        Update behavior settings for an instance.
+
+        Profiles:
+        - `bot-native`: full anti-ban behavior with typing, read timing, and natural delays.
+        - `notification-balanced`: lets phone push notifications arrive first, then allows typing.
+        - `notification-max`: prioritizes phone notifications and disables typing simulation.
       requestBody:
         required: true
         content:
@@ -850,12 +887,25 @@ components:
           type: string
           format: date-time
 
+    BehaviorProfile:
+      type: string
+      enum: [bot-native, notification-balanced, notification-max]
+      description: |
+        Behavior profile preset.
+
+        `bot-native` keeps full anti-ban behavior active.
+        `notification-balanced` gives phone notifications a short head start before typing.
+        `notification-max` prioritizes phone notifications and disables typing simulation.
+      example: notification-balanced
+
     BehaviorSettings:
       type: object
       properties:
+        behaviorProfile:
+          $ref: '#/components/schemas/BehaviorProfile'
         typingSimulation:
           type: boolean
-          description: Show "typing..." indicator before sending
+          description: Show "typing..." indicator before sending. Defaults to false for `notification-max`.
           default: true
           example: true
         delayEnabled:
@@ -863,6 +913,17 @@ components:
           description: Add human-like delays before responding
           default: true
           example: true
+        phoneNotificationsEnabled:
+          type: boolean
+          description: Keep the socket unavailable briefly so the user's phone is more likely to receive a push notification before read/typing activity.
+          default: false
+          example: true
+        notificationGraceMs:
+          type: integer
+          minimum: 0
+          description: Milliseconds to wait in notification-first profiles before read/typing/send behavior starts.
+          default: 0
+          example: 2500
 
     AntiBanSettings:
       type: object
