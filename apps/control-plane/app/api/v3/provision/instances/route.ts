@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { releasePaidInstanceSlot, reservePaidInstanceSlot } from '../../../../../lib/billing';
 import { isAuthError, requireWasupPrincipal } from '../../../../../lib/auth';
 import { getSupabaseAdmin } from '../../../../../lib/supabase-admin';
 
@@ -23,12 +24,25 @@ export async function POST(req: Request) {
   }
 
   const body = parsed.data;
+  const targetOrgId = body.orgId || principal.orgId;
   const supabase = getSupabaseAdmin() as any;
+  const reservation = await reservePaidInstanceSlot(targetOrgId);
+
+  if (!reservation.allowed) {
+    return NextResponse.json(
+      {
+        error: 'No paid instance slots available',
+        reason: reservation.reason,
+        entitlement: reservation
+      },
+      { status: 402 }
+    );
+  }
 
   const { data: instance, error } = await supabase
     .from('instances')
     .insert({
-      org_id: body.orgId || principal.orgId,
+      org_id: targetOrgId,
       name: body.name,
       phone: body.phone ?? null,
       region_code: body.regionCode,
@@ -42,15 +56,17 @@ export async function POST(req: Request) {
     .single();
 
   if (error) {
+    await releasePaidInstanceSlot(targetOrgId);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
   await supabase.from('worker_events').insert({
-    org_id: body.orgId || principal.orgId,
+    org_id: targetOrgId,
     instance_id: instance.id,
     event_type: 'instance.desired',
-    summary: 'Instance desired state created; provisioner should allocate proxy and worker.'
+    summary: 'Paid instance slot reserved; provisioner should allocate proxy and worker.',
+    payload: { entitlement: reservation }
   });
 
-  return NextResponse.json({ success: true, instance }, { status: 201 });
+  return NextResponse.json({ success: true, instance, entitlement: reservation }, { status: 201 });
 }

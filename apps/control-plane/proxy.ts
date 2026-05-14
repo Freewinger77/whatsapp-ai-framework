@@ -4,6 +4,7 @@ const isProtectedRoute = createRouteMatcher([
   '/dashboard(.*)',
   '/api/v3/me(.*)',
   '/api/v3/orgs(.*)',
+  '/api/v3/billing(.*)',
   '/api/v3/provision(.*)'
 ]);
 
@@ -18,6 +19,7 @@ export const config = {
     '/dashboard(.*)',
     '/api/v3/me(.*)',
     '/api/v3/orgs(.*)',
+    '/api/v3/billing(.*)',
     '/api/v3/provision(.*)'
   ]
 };

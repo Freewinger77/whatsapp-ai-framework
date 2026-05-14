@@ -20,6 +20,7 @@ export default async function DashboardPage() {
             <button className="primary-btn">Create customer</button>
             <button className="secondary-btn">Provision instance</button>
             <a className="secondary-btn" href="#api">View API docs</a>
+            <a className="secondary-btn" href="/docs">Paid provisioning docs</a>
           </div>
         </div>
         <div className="hero-status">

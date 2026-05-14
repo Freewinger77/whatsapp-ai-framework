@@ -1,0 +1,210 @@
+{
+  "schema_version": "1",
+  "nodes": [
+    {
+      "id": "cn_brb0m00k",
+      "type": "file",
+      "source": "/src/polymet/components/app-sidebar.tsx",
+      "entrypoint": "/src/polymet/examples/components/app-sidebar.render.tsx",
+      "description": "Left sidebar with logo, nav, user footer",
+      "buildId": "c05b687fb739df5c472140493120cf70:cab5d4a81a8fb65f9f0f38212c3df43f31cbf7b5cacb8f1e8b7159e0b5a8aa4d635e9f5d",
+      "buildStatus": "SUCCESS",
+      "position": {
+        "x": 3000,
+        "y": 4000
+      },
+      "size": {
+        "width": 768,
+        "height": 768
+      }
+    },
+    {
+      "id": "cn_m6bpzma3",
+      "type": "file",
+      "source": "/src/polymet/components/app-topbar.tsx",
+      "entrypoint": "/src/polymet/examples/components/app-topbar.render.tsx",
+      "description": "Top breadcrumb-like header bar",
+      "buildId": "9313189a5fec387d1060e298acef0622:7e1c8fac05abd186d52f4c8014fc22a393fc1323882e6ae5ffe9720506b095b4957ab2bb",
+      "buildStatus": "SUCCESS",
+      "position": {
+        "x": 3968,
+        "y": 4000
+      },
+      "size": {
+        "width": 1024,
+        "height": 768
+      }
+    },
+    {
+      "id": "cn_t83atwx0",
+      "type": "file",
+      "source": "/src/polymet/layouts/main-layout.tsx",
+      "entrypoint": "/src/polymet/examples/layouts/main-layout.render.tsx",
+      "description": "Main layout with sidebar + topbar",
+      "buildId": "0ab24520dbbd9bca169d2af7e25e9234:0c032fc5c5cae82e160e7701b9dbbaeb83f5950673599d088e3fd6c2b5eb18511c65097c",
+      "buildStatus": "SUCCESS",
+      "position": {
+        "x": 5192,
+        "y": 4000
+      },
+      "size": {
+        "width": 1024,
+        "height": 768
+      }
+    },
+    {
+      "id": "cn_rzb95j1s",
+      "type": "file",
+      "source": "/src/polymet/components/stat-card.tsx",
+      "entrypoint": "/src/polymet/examples/components/stat-card.render.tsx",
+      "description": "Stat card",
+      "buildId": "8b962de95942e222552d179d1e1765bd:8d2115edece3cf59b847285a8ee7211c3ca0dbe552e4bd9eeaf767a60b81c228272f95f0",
+      "buildStatus": "SUCCESS",
+      "position": {
+        "x": 6416,
+        "y": 4000
+      },
+      "size": {
+        "width": 1024,
+        "height": 768
+      }
+    },
+    {
+      "id": "cn_iplttcv3",
+      "type": "file",
+      "source": "/src/polymet/components/volume-chart.tsx",
+      "entrypoint": "/src/polymet/examples/components/volume-chart.render.tsx",
+      "description": "Volume line chart",
+      "buildId": "bc0bf8db01e70d75f46212e264c708cf:3c7304e934403c525d98b7ac82afbba69733b2e11fc7f81b4b1572e18ac7332d5a8b0db6",
+      "buildStatus": "SUCCESS",
+      "position": {
+        "x": 7640,
+        "y": 4000
+      },
+      "size": {
+        "width": 1024,
+        "height": 768
+      }
+    },
+    {
+      "id": "cn_wlpp1a20",
+      "type": "file",
+      "source": "/src/polymet/pages/home-page.tsx",
+      "entrypoint": "/src/polymet/examples/pages/home-page.render.tsx",
+      "description": "Home page",
+      "buildId": "62e457fcce7342ef17e6dcd083debf92:e5f9f328c932d1c2a99d2e57f7a49414e7cabc3d7bb726635fac1b5a422e77e9e2efe009",
+      "buildStatus": "SUCCESS",
+      "position": {
+        "x": 3000,
+        "y": 5168
+      },
+      "size": {
+        "width": 1024,
+        "height": 768
+      }
+    },
+    {
+      "id": "cn_uadzo6d3",
+      "type": "file",
+      "source": "/src/polymet/pages/instances-page.tsx",
+      "entrypoint": "/src/polymet/examples/pages/instances-page.render.tsx",
+      "description": "Instances page",
+      "buildId": "9e1f4c46d8196f45e336c17d5015c35b:829e251dc8e12deb91c9b4598cfa8534780b208683558065b1f43148bff65e2d10132904",
+      "buildStatus": "SUCCESS",
+      "position": {
+        "x": 4224,
+        "y": 5168
+      },
+      "size": {
+        "width": 1024,
+        "height": 768
+      }
+    },
+    {
+      "id": "cn_n6r99h5p",
+      "type": "file",
+      "source": "/src/polymet/pages/connection-page.tsx",
+      "entrypoint": "/src/polymet/examples/pages/connection-page.render.tsx",
+      "description": "Connection page with API keys",
+      "buildId": "7372205d2b536c3221d9e2b23d01e611:def6f376103c4ad4a82dace6a87f3b2d501821732ae27d39182c653ca27bbfab7769de1a",
+      "buildStatus": "SUCCESS",
+      "position": {
+        "x": 5448,
+        "y": 5168
+      },
+      "size": {
+        "width": 1024,
+        "height": 768
+      }
+    },
+    {
+      "id": "cn_xcbsh5k8",
+      "type": "file",
+      "source": "/src/polymet/pages/docs-page.tsx",
+      "entrypoint": "/src/polymet/examples/pages/docs-page.render.tsx",
+      "description": "Docs page",
+      "buildId": "7948595bfaee13e278e56c71c058a572:79dfd535e47e4b71e99ceb9a9a3b59ed2ad4b5109a79074cccbacd0b26a4ed7ed4db4626",
+      "buildStatus": "SUCCESS",
+      "position": {
+        "x": 6672,
+        "y": 5168
+      },
+      "size": {
+        "width": 1024,
+        "height": 768
+      }
+    },
+    {
+      "id": "cn_mcbttov8",
+      "type": "file",
+      "source": "/src/polymet/pages/settings-page.tsx",
+      "entrypoint": "/src/polymet/examples/pages/settings-page.render.tsx",
+      "description": "Settings page",
+      "buildId": "bae8d302be603472fef14f836ff8ca05:78580e7461bd349f7e123a7b9822a61ded11e0763189b37a8a946557844418926702ae1d",
+      "buildStatus": "SUCCESS",
+      "position": {
+        "x": 7896,
+        "y": 5168
+      },
+      "size": {
+        "width": 1024,
+        "height": 768
+      }
+    },
+    {
+      "id": "cn_2ri1azs7",
+      "type": "file",
+      "source": "/src/polymet/prototypes/wasup-prototype.tsx",
+      "entrypoint": "/src/polymet/examples/prototypes/wasup-prototype.render.tsx",
+      "description": "Wasup dashboard prototype with routing",
+      "slug": "dev-uptight-mocc-a8siqpbf",
+      "buildId": "0709778a22263dc7dc1142dae7a68c12:5b95c2a81d4a05729ee207830d93a407bd78720de9c381cccaca62543a87f919aec8729c",
+      "buildStatus": "SUCCESS",
+      "position": {
+        "x": 9120,
+        "y": 5168
+      },
+      "size": {
+        "width": 1024,
+        "height": 768
+      }
+    },
+    {
+      "id": "cn_oxswz4an",
+      "type": "file",
+      "source": "/src/polymet/pages/instance-detail-page.tsx",
+      "entrypoint": "/src/polymet/examples/pages/instance-detail-page.render.tsx",
+      "description": "Instance detail page",
+      "buildId": "4de4f0987df7d12ab4143528e5c3dbc9:396d3d5bc507cc690b88ae888a2f1ca66c737c92a00cebe92914b76c3f1433c644ca5094",
+      "buildStatus": "SUCCESS",
+      "position": {
+        "x": 10344,
+        "y": 5168
+      },
+      "size": {
+        "width": 1024,
+        "height": 768
+      }
+    }
+  ]
+}

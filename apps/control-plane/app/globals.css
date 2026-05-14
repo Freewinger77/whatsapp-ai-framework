@@ -69,6 +69,12 @@ a {
   gap: 18px;
 }
 
+.docs-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
 .card {
   grid-column: span 4;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015)), var(--panel);
@@ -241,7 +247,9 @@ a {
 .profile-list,
 .proxy-map,
 .webhook-card,
-.code-card {
+.code-card,
+.docs-flow,
+.docs-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -252,7 +260,8 @@ a {
 .profile-card,
 .proxy-row,
 .legacy-card,
-.qr-placeholder {
+.qr-placeholder,
+.docs-item {
   display: flex;
   gap: 12px;
   align-items: center;
@@ -279,10 +288,20 @@ a {
 .legacy-card span,
 .instance-head span,
 .profile-card span,
-.proxy-row em {
+.proxy-row em,
+.docs-item span {
   color: var(--muted);
   font-size: 12px;
   font-style: normal;
+}
+
+.docs-item {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.docs-item strong {
+  display: block;
 }
 
 .row-meta {

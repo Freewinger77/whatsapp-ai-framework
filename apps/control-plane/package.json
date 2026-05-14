@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "stripe:products": "node scripts/create-stripe-products.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "latest",
@@ -16,6 +17,7 @@
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "stripe": "^22.1.1",
     "zod": "latest"
   },
   "devDependencies": {

@@ -8,11 +8,14 @@ export default function HomePage() {
           Manage organizations, isolated WhatsApp workers, sticky regional proxies,
           behaviour profiles, API keys, and fleet health.
         </p>
-        <a className="pill" href="/dashboard">Open dashboard</a>
+        <div className="action-row">
+          <a className="pill" href="/dashboard">Open dashboard</a>
+          <a className="pill" href="/docs">Paid provisioning docs</a>
+        </div>
       </div>
       <div className="card">
         <div className="label">Stack</div>
-        <p>Clerk + Supabase + AKS + Azure Key Vault</p>
+        <p>Clerk + Supabase + Stripe + AKS + Azure Key Vault</p>
       </div>
     </section>
   );
