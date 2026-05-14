@@ -1,7 +1,7 @@
 /**
  * Meta WhatsApp Business API Integration
  *
- * Drop-in replacement for Baileys connection.
+ * Drop-in replacement for the linked-device WhatsApp transport.
  * Provides the same interface but uses official Meta API.
  *
  * Setup required:
@@ -24,7 +24,7 @@ class MetaWhatsAppAPI {
         this.webhookVerifyToken = config.webhookVerifyToken || process.env.META_WEBHOOK_VERIFY_TOKEN;
         this.appSecret = config.appSecret || process.env.META_APP_SECRET;
 
-        // Event handlers (mimics Baileys event structure)
+        // Event handlers (mimics linked-device transport event structure)
         this.eventHandlers = {
             'messages.upsert': [],
             'connection.update': []
@@ -41,7 +41,7 @@ class MetaWhatsAppAPI {
     }
 
     /**
-     * Register event handler (Baileys-compatible interface)
+     * Register event handler (same shape as linked-device transport)
      */
     on(event, handler) {
         if (this.eventHandlers[event]) {
@@ -79,7 +79,7 @@ class MetaWhatsAppAPI {
             console.log(`[Meta API] Phone: ${this.businessInfo.display_phone_number}`);
             console.log(`[Meta API] Business: ${this.businessInfo.verified_name || 'Not verified'}`);
 
-            // Emit connection update (Baileys-compatible)
+            // Emit connection update (linked-device transport shape)
             this.emit('connection.update', {
                 connection: 'open',
                 qr: null
@@ -184,11 +184,11 @@ class MetaWhatsAppAPI {
     /**
      * Send typing indicator (presence update)
      * Note: Meta API doesn't support typing indicators the same way.
-     * This is a no-op for API compatibility with Baileys.
+     * This is a no-op for API compatibility with the linked-device transport.
      */
     async sendPresenceUpdate(presence, to) {
         // Meta API doesn't support typing indicators
-        // This method exists for Baileys compatibility
+        // This method exists for linked-device transport compatibility
         console.log(`[Meta API] Presence update (${presence}) - not supported by Meta API`);
         return { success: true, note: 'Meta API does not support typing indicators' };
     }
@@ -292,8 +292,8 @@ class MetaWhatsAppAPI {
                     const messageId = message.id;
                     const timestamp = message.timestamp;
 
-                    // Convert to Baileys-compatible format
-                    const baileysMessage = {
+                    // Convert to linked-device transport message shape
+                    const socketShapedMessage = {
                         key: {
                             remoteJid: `${from}@s.whatsapp.net`,
                             fromMe: false,
@@ -303,9 +303,9 @@ class MetaWhatsAppAPI {
                         messageTimestamp: timestamp
                     };
 
-                    // Emit in Baileys format
+                    // Emit in linked-device transport shape
                     this.emit('messages.upsert', {
-                        messages: [baileysMessage],
+                        messages: [socketShapedMessage],
                         type: 'notify'
                     });
                 });
@@ -326,7 +326,7 @@ class MetaWhatsAppAPI {
     }
 
     /**
-     * Convert Meta message format to Baileys format
+     * Convert Meta message format to linked-device transport shape
      */
     _convertMessageFormat(metaMessage) {
         const type = metaMessage.type;
@@ -489,7 +489,7 @@ class MetaWhatsAppAPI {
     }
 
     /**
-     * Get user info (Baileys-compatible property)
+     * Get user info (linked-device transport shape)
      */
     get user() {
         if (!this.businessInfo) return null;

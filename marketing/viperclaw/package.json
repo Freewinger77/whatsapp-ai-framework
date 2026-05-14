@@ -1,0 +1,17 @@
+{
+  "name": "viperclaw-marketing",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Viperclaw / Wasup Backend — marketing landing page",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
