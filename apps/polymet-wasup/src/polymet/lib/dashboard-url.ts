@@ -3,6 +3,7 @@ const HASH_ROUTED_PATHS = new Set([
   "/",
   "/sign-in",
   "/sign-up",
+  "/sso-callback",
   "/connection",
   "/accept-invitation",
   "/instances",

@@ -173,6 +173,24 @@ body {
   --clerk-border-radius: 10px;
   --cl-radius: 10px;
   width: 100%;
+  min-height: 320px;
+}
+
+[data-wasup-login] .wasup-login-clerk [class*="cl-rootBox"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-cardBox"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-card"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-main"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-form"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-socialButtons"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-formFieldRow"] {
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0.75rem !important;
+  width: 100% !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  min-height: unset !important;
 }
 
 [data-wasup-login] .wasup-login-clerk :is(button, input, [class*="cl-"]) {
@@ -182,17 +200,6 @@ body {
 [data-wasup-login] .wasup-login-clerk [class*="cl-formFieldInput"] {
   height: 50px !important;
   min-height: 50px !important;
-  width: 100% !important;
-}
-
-[data-wasup-login] .wasup-login-clerk [class*="cl-rootBox"],
-[data-wasup-login] .wasup-login-clerk [class*="cl-card"],
-[data-wasup-login] .wasup-login-clerk [class*="cl-main"],
-[data-wasup-login] .wasup-login-clerk [class*="cl-form"] {
-  position: relative !important;
-  display: flex !important;
-  flex-direction: column !important;
-  gap: 0.75rem !important;
   width: 100% !important;
 }
 

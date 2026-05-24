@@ -1,6 +1,4 @@
 import {
-  SignIn,
-  SignUp,
   SignedIn,
   SignedOut,
   useAuth,
@@ -18,86 +16,9 @@ import {
   isChooseOrganizationTaskDestination,
 } from "@/polymet/lib/dashboard-url";
 import { storeOneTimeApiKeys } from "@/polymet/lib/one-time-api-keys";
+import { WasupAuthForm } from "@/polymet/components/wasup-auth-form";
+import { WasupSsoCallback } from "@/polymet/components/wasup-sso-callback";
 import WasupPrototype from "@/polymet/prototypes/wasup-prototype";
-
-const clerkAppearance = {
-  variables: {
-    colorPrimary: "#00c853",
-    colorBackground: "transparent",
-    colorText: "#f6fff8",
-    colorTextSecondary: "rgba(246, 255, 248, 0.55)",
-    colorInputBackground: "rgba(255, 255, 255, 0.055)",
-    colorInputText: "#f6fff8",
-    colorDanger: "#ff7a7a",
-    colorSuccess: "#00e676",
-    borderRadius: "12px",
-    fontFamily:
-      "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
-  },
-  elements: {
-    rootBox: "w-full",
-    cardBox: "w-full bg-transparent shadow-none",
-    card: "w-full bg-transparent shadow-none border-0 p-0 gap-4",
-    header: "hidden",
-    main: "flex w-full flex-col gap-4",
-    form: "flex w-full flex-col gap-3",
-    formField: "gap-2",
-    socialButtonsBlockButton:
-      "!flex !h-[50px] !w-full !max-w-none !items-center !justify-center !gap-2 !rounded-[10px] !border !border-white/12 !bg-white/[0.055] !px-4 !text-white !shadow-none !transition hover:!border-[#00ff6a]/35 hover:!bg-white/[0.08]",
-    socialButtonsBlockButtonText:
-      "!m-0 !flex-none !text-center text-sm font-medium text-white/85",
-    dividerRow: "my-0",
-    dividerLine: "bg-white/10",
-    dividerText: "px-3 text-xs lowercase text-white/35",
-    formFieldLabel:
-      "text-xs font-medium uppercase tracking-[0.16em] text-white/45",
-    formFieldInput:
-      "!h-[50px] !w-full !max-w-none !rounded-[10px] !border !border-white/12 !bg-[#0b0f0d] !px-4 !text-white !shadow-none placeholder:!text-white/25 focus:!border-[#00ff6a]/70 focus:!ring-[#00ff6a]/20",
-    formFieldInputShowPasswordButton: "text-white/40 hover:text-[#00e676]",
-    formFieldErrorText: "text-[#ff8a8a]",
-    formFieldSuccessText: "text-[#00e676]",
-    formFieldAction: "text-white/45 hover:text-[#00e676]",
-    formButtonPrimary:
-      "!h-[50px] !w-full !max-w-none !rounded-[10px] !bg-[#00c853] !text-black !font-semibold !shadow-[0_10px_26px_rgba(0,200,83,0.18)] !transition hover:!bg-[#00e676] focus:!ring-[#00ff6a]/30",
-    footer: "hidden",
-    footerAction: "hidden",
-    footerActionText: "text-white/45",
-    footerActionLink: "font-semibold text-[#00e676] hover:text-[#7cffaa]",
-    footerPages: "hidden",
-    identityPreview: "!rounded-[10px] !border !border-white/12 !bg-white/[0.055]",
-    identityPreviewText: "text-white/85",
-    identityPreviewEditButton: "text-[#00e676]",
-    alternativeMethodsBlockButton:
-      "!rounded-[10px] !border-white/12 !bg-white/[0.055] !text-white hover:!bg-white/[0.08]",
-    alert: "rounded-2xl border border-white/10 bg-white/[0.05]",
-    alertText: "text-white/70",
-    otpCodeFieldInput:
-      "rounded-2xl border-white/12 bg-black/35 text-white focus:border-[#00ff6a]",
-  },
-} as const;
-
-const loginClerkRadiusOverride = `
-[data-wasup-login] .wasup-login-clerk {
-  --clerk-border-radius: 10px !important;
-  --cl-radius: 10px !important;
-}
-
-[data-wasup-login] .wasup-login-clerk :is(button, input, [class*="cl-"]) {
-  border-radius: 10px !important;
-}
-
-[data-wasup-login] .wasup-login-clerk [class*="cl-formFieldInput"] {
-  height: 50px !important;
-  min-height: 50px !important;
-}
-
-[data-wasup-login] .wasup-login-clerk [class*="cl-formButtonPrimary"],
-[data-wasup-login] .wasup-login-clerk [class*="cl-socialButtonsBlockButton"] {
-  height: 50px !important;
-  min-height: 50px !important;
-  width: 100% !important;
-}
-`;
 
 type InvitationAuthMode = "sign-in" | "sign-up";
 
@@ -168,7 +89,6 @@ function SignedOutDashboard() {
   const [normalizingTaskRoute, setNormalizingTaskRoute] = useState(() =>
     !needsInvitationUrlNormalization() && needsSignedOutAuthUrlNormalization(),
   );
-  const [authUrlVersion, setAuthUrlVersion] = useState(0);
   const invitationContext = getInvitationContextFromUrl();
   const isInvitationFlow = Boolean(invitationContext?.ticket || invitationContext?.isInvitationRoute);
   const redirectAfterAuthUrl = isInvitationFlow
@@ -180,7 +100,6 @@ function SignedOutDashboard() {
     normalizeInvitationUrl();
     rememberPendingInvitation(getInvitationContextFromUrl());
     setAuthMode(getInitialAuthMode());
-    setAuthUrlVersion((version) => version + 1);
     setNormalizingInvitationRoute(false);
   }, [normalizingInvitationRoute]);
 
@@ -188,7 +107,6 @@ function SignedOutDashboard() {
     if (!normalizingTaskRoute) return;
     normalizeSignedOutAuthUrl();
     setAuthMode("sign-up");
-    setAuthUrlVersion((version) => version + 1);
     setNormalizingTaskRoute(false);
   }, [normalizingTaskRoute]);
 
@@ -197,14 +115,12 @@ function SignedOutDashboard() {
       if (normalizeInvitationUrl()) {
         rememberPendingInvitation(getInvitationContextFromUrl());
         setAuthMode(getInitialAuthMode());
-        setAuthUrlVersion((version) => version + 1);
         return;
       }
 
       rememberPendingInvitation(getInvitationContextFromUrl());
       if (normalizeSignedOutAuthUrl()) {
         setAuthMode(getInitialAuthMode());
-        setAuthUrlVersion((version) => version + 1);
         return;
       }
       setAuthMode(getInitialAuthMode());
@@ -227,12 +143,15 @@ function SignedOutDashboard() {
     );
   }
 
+  if (getHashRouteFromWindow() === "/sso-callback") {
+    return <WasupSsoCallback />;
+  }
+
   return (
     <main
       data-wasup-login="premium-phone-ai-v9"
       className="relative flex min-h-svh items-center justify-center overflow-hidden bg-black px-3 py-4 text-white sm:px-6 sm:py-6 lg:px-8"
     >
-      <style>{loginClerkRadiusOverride}</style>
       <div className="absolute left-[-16rem] top-[-14rem] h-[36rem] w-[36rem] rounded-full bg-[#00ff6a]/20 blur-[130px]" />
       <div className="absolute bottom-[-15rem] right-[-12rem] h-[34rem] w-[34rem] rounded-full bg-[#00d5ff]/10 blur-[130px]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(0,255,106,0.10),transparent_36%),linear-gradient(180deg,#070a08_0%,#000_62%)]" />
@@ -260,26 +179,8 @@ function SignedOutDashboard() {
               </p>
             </div>
 
-            <div className="wasup-login-clerk flex w-full min-h-[280px] flex-col gap-4 [&_.cl-rootBox]:relative [&_.cl-rootBox]:w-full [&_.cl-cardBox]:w-full [&_.cl-card]:relative [&_.cl-card]:flex [&_.cl-card]:w-full [&_.cl-card]:flex-col [&_.cl-card]:gap-4" key={`${authMode}-${authUrlVersion}`}>
-              {authMode === "sign-up" ? (
-                <SignUp
-                  routing="hash"
-                  oauthFlow="popup"
-                  appearance={clerkAppearance}
-                  signInUrl={buildDashboardUrl("/sign-in")}
-                  fallbackRedirectUrl={redirectAfterAuthUrl}
-                  forceRedirectUrl={redirectAfterAuthUrl}
-                />
-              ) : (
-                <SignIn
-                  routing="hash"
-                  oauthFlow="popup"
-                  appearance={clerkAppearance}
-                  signUpUrl={buildDashboardUrl("/sign-up")}
-                  fallbackRedirectUrl={redirectAfterAuthUrl}
-                  forceRedirectUrl={redirectAfterAuthUrl}
-                />
-              )}
+            <div className="wasup-login-clerk flex w-full flex-col gap-4" key={authMode}>
+              <WasupAuthForm mode={authMode} redirectUrl={redirectAfterAuthUrl} />
               {isInvitationFlow ? (
                 <div className="mt-5 rounded-xl border border-[#00ff6a]/15 bg-[#00ff6a]/[0.045] px-4 py-3 text-center text-sm text-white/55">
                   This invite stays inside Wasup. Clerk will return you to the dashboard after auth.
@@ -371,7 +272,6 @@ function ThemedInvitationSetup({
       data-wasup-login="premium-phone-ai-v9"
       className="relative flex min-h-svh items-center justify-center overflow-hidden bg-black px-3 py-4 text-white sm:px-6 sm:py-6 lg:px-8"
     >
-      <style>{loginClerkRadiusOverride}</style>
       <div className="absolute left-[-16rem] top-[-14rem] h-[36rem] w-[36rem] rounded-full bg-[#00ff6a]/20 blur-[130px]" />
       <div className="absolute bottom-[-15rem] right-[-12rem] h-[34rem] w-[34rem] rounded-full bg-[#00d5ff]/10 blur-[130px]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(0,255,106,0.10),transparent_36%),linear-gradient(180deg,#070a08_0%,#000_62%)]" />
@@ -486,7 +386,6 @@ function ThemedOrganizationSetup() {
       data-wasup-login="premium-phone-ai-v9"
       className="relative flex min-h-svh items-center justify-center overflow-hidden bg-black px-3 py-4 text-white sm:px-6 sm:py-6 lg:px-8"
     >
-      <style>{loginClerkRadiusOverride}</style>
       <div className="absolute left-[-16rem] top-[-14rem] h-[36rem] w-[36rem] rounded-full bg-[#00ff6a]/20 blur-[130px]" />
       <div className="absolute bottom-[-15rem] right-[-12rem] h-[34rem] w-[34rem] rounded-full bg-[#00d5ff]/10 blur-[130px]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(0,255,106,0.10),transparent_36%),linear-gradient(180deg,#070a08_0%,#000_62%)]" />
@@ -597,6 +496,12 @@ function PhoneAiVisual() {
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.08)_0%,transparent_28%,rgba(0,0,0,0.12)_100%)]" />
     </div>
   );
+}
+
+function getHashRouteFromWindow() {
+  const hash = window.location.hash.replace(/^#/, "");
+  const route = hash.split("?")[0];
+  return route.startsWith("/") ? route : `/${route}`;
 }
 
 function getInitialAuthMode(): InvitationAuthMode {
