@@ -264,6 +264,7 @@ function SignedOutDashboard() {
               {authMode === "sign-up" ? (
                 <SignUp
                   routing="hash"
+                  oauthFlow="popup"
                   appearance={clerkAppearance}
                   signInUrl={buildDashboardUrl("/sign-in")}
                   fallbackRedirectUrl={redirectAfterAuthUrl}
@@ -272,6 +273,7 @@ function SignedOutDashboard() {
               ) : (
                 <SignIn
                   routing="hash"
+                  oauthFlow="popup"
                   appearance={clerkAppearance}
                   signUpUrl={buildDashboardUrl("/sign-up")}
                   fallbackRedirectUrl={redirectAfterAuthUrl}
