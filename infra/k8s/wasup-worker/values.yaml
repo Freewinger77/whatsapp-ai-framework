@@ -1,0 +1,44 @@
+# Placeholder values for a future per-instance Wasup worker.
+# Do not deploy as-is: image, secret names, and app worker-mode support are not implemented yet.
+
+image:
+  repository: ghcr.io/your-org/wasup-app
+  tag: v3-placeholder
+  pullPolicy: IfNotPresent
+
+orgId: "replace-with-org-id"
+instanceId: "replace-with-instance-id"
+regionCode: "replace-with-region"
+
+replicaCount: 1
+
+service:
+  port: 3000
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClassName: ""
+
+secrets:
+  # Expected to contain API_KEY, DEFAULT_WEBHOOK_URL or per-instance webhook config,
+  # INSTANCE_PROXY_URL, and any storage credentials needed by the worker.
+  existingSecret: "wasup-worker-secrets"
+
+env:
+  NODE_ENV: production
+  PORT: "3000"
+  WASUP_WORKER_MODE: single-instance
+  WASUP_DATA_DIR: /data
+  # The control plane writes these when it provisions the worker.
+  WASUP_CONTROL_PLANE_URL: "https://api.wasup.ai"
+  WASUP_ORG_ID: "replace-with-org-id"
+  WASUP_INSTANCE_ID: "replace-with-instance-id"

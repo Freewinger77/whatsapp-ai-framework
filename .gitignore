@@ -1,11 +1,13 @@
 # Dependencies
 node_modules/
 package-lock.json
+!apps/control-plane/package-lock.json
 
 # Environment Variables
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # Credentials & Sessions (CRITICAL)
 app/auth_info/
@@ -37,6 +39,7 @@ build/
 .next/
 out/
 .wrangler/
+*.tsbuildinfo
 
 # Private Docs (Optional - keeping these local only)
 docs/CLAUDE_SESSION_NOTES.md
@@ -45,6 +48,7 @@ docs/BUSINESS_MONETIZATION_RESEARCH.md
 # Azure secrets and proxy credentials (never commit)
 infra/azure/keys.env
 infra/azure/proxies/
+infra/azure/*.log
 infra/azure/.build/
 apps/control-plane/.deploy/
 apps/control-plane/.env.local

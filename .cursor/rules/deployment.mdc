@@ -1,0 +1,51 @@
+---
+description: CRITICAL deployment rules for Azure VM - prevents WhatsApp session loss
+globs:
+  - app/public/**
+  - app/server.js
+  - app/src/**
+  - deploy/**
+alwaysApply: true
+---
+
+# ⚠️ DEPLOYMENT RULES — DO NOT SKIP
+
+The app runs on Azure VM `20.107.202.157` (user: `azureuser`, path: `/opt/whatsapp-ai`).
+
+## NEVER restart PM2 for static/frontend changes
+
+PM2 restart kills the Node.js process which **disconnects all WhatsApp sessions permanently**.
+WhatsApp often invalidates auth credentials on reconnect, forcing users to re-scan QR codes.
+This has caused production incidents multiple times.
+
+**Behaviour-only changes on disk:** use `POST /api/system/reload-behavior-from-disk` (or `WASUP_SIGHUP_BEHAVIOR_RELOAD=1` + `kill -HUP` on the Node pid) — **no PM2 restart**.
+
+**Disconnect vs logout:** `POST .../disconnect` closes the socket and **keeps** on-disk creds by default. Use body `{ "revoke": true }` for server-side revoke, or `clear-auth` to wipe local files + QR again.
+
+**Do not use PM2 `cluster` mode** for this app — a single Node process owns all WhatsApp sockets; clustering would duplicate sessions.
+
+## How to deploy
+
+**Static files** (`public/*.html`, `openapi.yaml`):
+```bash
+scp app/public/index.html azureuser@20.107.202.157:/opt/whatsapp-ai/app/public/index.html
+```
+No PM2 restart needed — Express serves from disk.
+
+**Server code** (`server.js`, `src/utils/*.js`):
+```bash
+scp <files> azureuser@20.107.202.157:/opt/whatsapp-ai/<files>
+ssh azureuser@20.107.202.157 'cd /opt/whatsapp-ai && pm2 reload whatsapp-api'
+```
+Use `reload` (graceful) not `restart` (hard kill).
+
+**New npm dependencies**:
+```bash
+bash deploy/deploy-to-vm.sh 20.107.202.157
+```
+Last resort only — will restart the process.
+
+## Always verify after deploy
+```bash
+curl -s https://wasup.northeurope.cloudapp.azure.com/api/instances | python3 -c "import sys,json; [print(f'{i[\"name\"]}: {i[\"status\"]}') for i in json.load(sys.stdin)['instances']]"
+```

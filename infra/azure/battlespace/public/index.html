@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WASUP // BATTLESPACE</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin="">
+<link rel="stylesheet" href="/style.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@500;700;900&display=swap">
+</head>
+<body>
+
+<div class="scanlines"></div>
+
+<header class="top-bar">
+    <div class="brand">
+        <div class="brand-logo">◆</div>
+        <div class="brand-text">
+            <div class="brand-line-1">WASUP // BATTLESPACE</div>
+            <div class="brand-line-2">COMMAND &amp; CONTROL / WESTERN EU THEATER</div>
+        </div>
+    </div>
+    <div class="top-stats">
+        <div class="stat-block"><div class="stat-label">NODES</div><div class="stat-value" id="stat-nodes">--</div></div>
+        <div class="stat-block"><div class="stat-label">HEALTHY</div><div class="stat-value stat-healthy" id="stat-healthy">--</div></div>
+        <div class="stat-block"><div class="stat-label">OFFLINE</div><div class="stat-value stat-offline" id="stat-offline">--</div></div>
+        <div class="stat-block"><div class="stat-label">INSTANCES</div><div class="stat-value" id="stat-instances">--</div></div>
+        <div class="stat-block"><div class="stat-label">PROXIED</div><div class="stat-value stat-proxied" id="stat-proxied">--</div></div>
+        <div class="stat-block"><div class="stat-label">WARMING</div><div class="stat-value stat-warming" id="stat-warming">--</div></div>
+        <div class="stat-block"><div class="stat-label">AT RISK</div><div class="stat-value stat-atrisk" id="stat-atrisk">--</div></div>
+        <div class="stat-block"><div class="stat-label">LAST POLL</div><div class="stat-value stat-small" id="stat-polled">--</div></div>
+    </div>
+    <form method="POST" action="/logout" class="logout-form">
+        <button type="submit" class="logout-btn">DISENGAGE</button>
+    </form>
+</header>
+
+<main class="layout">
+
+    <aside class="sidebar">
+        <div class="sidebar-section">
+            <div class="sidebar-heading">ACTIVE NODES</div>
+            <div class="region-list" id="region-list">
+                <div class="loading">LOADING FLEET...</div>
+            </div>
+        </div>
+
+        <div class="sidebar-section">
+            <div class="sidebar-heading">EXPANSION SLOTS</div>
+            <div class="expansion-list" id="expansion-list"></div>
+        </div>
+
+        <div class="sidebar-section keys-vault-section">
+            <div class="sidebar-heading">
+                KEYS VAULT
+                <button class="vault-toggle-btn" id="vault-toggle-btn" title="Reveal / hide all keys">REVEAL ALL</button>
+            </div>
+            <div class="vault-list" id="vault-list">
+                <div class="loading">LOADING KEYS...</div>
+            </div>
+            <div class="vault-actions">
+                <button class="vault-bulk-btn" id="vault-copy-bash" title="Copy all keys as bash export statements">COPY BASH ENV</button>
+                <button class="vault-bulk-btn" id="vault-copy-json" title="Copy all keys as JSON">COPY JSON</button>
+            </div>
+            <div class="vault-toast" id="vault-toast" hidden></div>
+        </div>
+
+        <div class="sidebar-section detail-panel" id="detail-panel" hidden>
+            <div class="sidebar-heading">SELECTED NODE</div>
+            <div class="detail-body" id="detail-body"></div>
+        </div>
+    </aside>
+
+    <section class="map-wrap">
+        <div class="map-overlay-tl">
+            <div class="hud-cell">LAT 45.0 / LNG 10.0 / Z 4</div>
+            <div class="hud-cell">PROJECTION: MERCATOR</div>
+        </div>
+        <div class="map-overlay-br">
+            <button class="refresh-btn" id="refresh-btn">FORCE POLL</button>
+        </div>
+        <div id="map"></div>
+    </section>
+
+</main>
+
+<footer class="bottom-bar">
+    <span>BATTLESPACE v1.0.0</span>
+    <span id="foot-clock">--:--:-- UTC</span>
+    <span>STATUS: <span id="foot-link-status">CONNECTING</span></span>
+</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+<script src="/app.js" defer></script>
+</body>
+</html>
