@@ -26,49 +26,64 @@ export function VolumeChart({
 }: {
   data: { date: string; value: number }[];
 }) {
+  const hasData = data.length > 0;
+
   return (
-    <div className="rounded-xl border border-border/60 bg-card p-4">
-      <div className="h-80 w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart
-            data={data}
-            margin={{ top: 30, right: 40, left: 10, bottom: 10 }}
-          >
-            <CartesianGrid
-              stroke="hsl(var(--border))"
-              vertical={false}
-              strokeDasharray="0"
-            />
-            <XAxis
-              dataKey="date"
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
-            />
-            <YAxis hide domain={[0, "dataMax + 400"]} />
-            <Tooltip
-              content={<CustomTooltip />}
-              cursor={{
-                stroke: "hsl(var(--foreground))",
-                strokeDasharray: "3 3",
-                strokeOpacity: 0.5,
-              }}
-            />
-            <Line
-              type="linear"
-              dataKey="value"
-              stroke="hsl(var(--foreground))"
-              strokeWidth={2}
-              dot={false}
-              activeDot={{
-                r: 5,
-                fill: "hsl(var(--foreground))",
-                stroke: "hsl(var(--background))",
-                strokeWidth: 2,
-              }}
-            />
-          </LineChart>
-        </ResponsiveContainer>
+    <div className="overflow-hidden rounded-2xl border border-border/60 bg-card p-3 sm:p-4">
+      <div className="relative h-64 w-full sm:h-80">
+        {hasData ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={data}
+              margin={{ top: 24, right: 16, left: 0, bottom: 8 }}
+            >
+              <CartesianGrid
+                stroke="hsl(var(--border))"
+                vertical={false}
+                strokeDasharray="3 6"
+                strokeLinecap="round"
+              />
+              <XAxis
+                dataKey="date"
+                axisLine={false}
+                tickLine={false}
+                tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
+              />
+              <YAxis hide domain={[0, "dataMax + 400"]} />
+              <Tooltip
+                content={<CustomTooltip />}
+                cursor={{
+                  stroke: "hsl(var(--foreground))",
+                  strokeDasharray: "3 6",
+                  strokeLinecap: "round",
+                  strokeOpacity: 0.35,
+                }}
+              />
+              <Line
+                type="monotone"
+                dataKey="value"
+                stroke="hsl(var(--foreground))"
+                strokeWidth={3}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                dot={false}
+                activeDot={{
+                  r: 5,
+                  fill: "hsl(var(--foreground))",
+                  stroke: "hsl(var(--background))",
+                  strokeWidth: 2,
+                }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 text-center">
+            <div className="text-base font-semibold">No conversation data yet</div>
+            <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+              Connect an instance and start receiving messages to see volume trends here.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

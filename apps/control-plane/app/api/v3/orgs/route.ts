@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { generateApiKey } from '../../../../lib/api-keys';
 import { getWasupPrincipal, isAuthError, requireWasupPrincipal } from '../../../../lib/auth';
+import { getServerEnv } from '../../../../lib/env';
 import { getSupabaseAdmin } from '../../../../lib/supabase-admin';
 
 const CreateOrgSchema = z.object({
@@ -40,6 +41,9 @@ export async function POST(req: Request) {
 
   const body = parsed.data;
   const supabase = getSupabaseAdmin() as any;
+  const env = getServerEnv();
+  const subdomain = body.slug;
+  const apiBaseUrl = `https://${subdomain}.${env.WASUP_BASE_DOMAIN}`;
 
   const { data: org, error } = await supabase
     .from('organizations')
@@ -48,7 +52,8 @@ export async function POST(req: Request) {
       name: body.name,
       plan: body.plan,
       region_preference: body.regionPreference ?? null,
-      api_base_url: `https://api.wasup.ai/v3/orgs/${body.slug}`
+      api_base_url: apiBaseUrl,
+      subdomain
     })
     .select('*')
     .single();
@@ -57,19 +62,36 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  let apiKey: string | null = null;
+  const apiKeys: Array<{ id: string; kind: 'live' | 'test'; publicId: string; key: string }> = [];
   if (body.createApiKey) {
-    const generated = generateApiKey();
-    apiKey = generated.key;
-    await supabase.from('api_keys').insert({
-      org_id: org.id,
-      name: 'Default API key',
-      public_id: generated.publicId,
-      secret_hash: generated.secretHash,
-      salt: generated.salt,
-      scopes: ['instances:read', 'instances:write', 'messages:send', 'webhooks:manage'],
-      created_by: principal.actorId
-    });
+    for (const kind of ['live', 'test'] as const) {
+      const generated = generateApiKey(kind);
+      const { data: keyRow, error: keyError } = await supabase
+        .from('api_keys')
+        .insert({
+          org_id: org.id,
+          name: kind === 'live' ? 'Live API key' : 'Test API key',
+          public_id: generated.publicId,
+          secret_hash: generated.secretHash,
+          salt: generated.salt,
+          key_kind: kind,
+          scopes: defaultOrgApiKeyScopes(kind),
+          created_by: principal.actorId
+        })
+        .select('id, public_id')
+        .single();
+
+      if (keyError) {
+        return NextResponse.json({ error: keyError.message }, { status: 500 });
+      }
+
+      apiKeys.push({
+        id: keyRow.id,
+        kind,
+        publicId: keyRow.public_id,
+        key: generated.key
+      });
+    }
   }
 
   await supabase.from('audit_events').insert({
@@ -81,5 +103,10 @@ export async function POST(req: Request) {
     metadata: { placeholderAuth: true }
   });
 
-  return NextResponse.json({ success: true, organization: org, apiKey }, { status: 201 });
+  return NextResponse.json({ success: true, organization: org, apiKeys }, { status: 201 });
+}
+
+function defaultOrgApiKeyScopes(keyKind: 'live' | 'test') {
+  const sharedScopes = ['instances:read', 'instances:write', 'messages:send'];
+  return keyKind === 'live' ? [...sharedScopes, 'webhooks:manage'] : sharedScopes;
 }

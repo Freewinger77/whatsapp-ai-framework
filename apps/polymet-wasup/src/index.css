@@ -22,20 +22,21 @@
   --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1),
-    0 4px 6px -4px rgb(0 0 0 / 0.1);
-  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1),
-    0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --shadow-lg:
+    0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-xl:
+    0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
   --shadow-2xl: 0 25px 50px -12px rgb(0 0 0 / 0.25);
 
   /* Fonts */
-  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system,
-    BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans",
-    sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
-    "Noto Color Emoji";
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
 
   /* Shadcn colors */
   --background: 0 0% 100%;
@@ -71,12 +72,28 @@
   --sidebar-border: 223.8 0% 89.8%;
   --sidebar-ring: 223.8 0% 63%;
 
-  --instance-gradient-wasup-1: linear-gradient(135deg, #5e7281 0%, #b7cbd4 100%);
-  --instance-gradient-wasup-2: linear-gradient(135deg, #5f7567 0%, #c0d0bf 100%);
-  --instance-gradient-wasup-3: linear-gradient(135deg, #8b6b5c 0%, #d2b5a7 100%);
+  --instance-gradient-wasup-1: linear-gradient(
+    135deg,
+    #5e7281 0%,
+    #b7cbd4 100%
+  );
+  --instance-gradient-wasup-2: linear-gradient(
+    135deg,
+    #5f7567 0%,
+    #c0d0bf 100%
+  );
+  --instance-gradient-wasup-3: linear-gradient(
+    135deg,
+    #8b6b5c 0%,
+    #d2b5a7 100%
+  );
   --instance-gradient-slate: linear-gradient(135deg, #5d6874 0%, #c7ced6 100%);
   --instance-gradient-moss: linear-gradient(135deg, #64705b 0%, #c9d0bd 100%);
-  --instance-gradient-fallback: linear-gradient(135deg, #4b5563 0%, #c3ccd6 100%);
+  --instance-gradient-fallback: linear-gradient(
+    135deg,
+    #4b5563 0%,
+    #c3ccd6 100%
+  );
 }
 
 .dark {
@@ -114,16 +131,36 @@
   --sidebar-border: 223.8 0% 15.5%;
   --sidebar-ring: 223.8 0% 32.2%;
 
-  --instance-gradient-wasup-1: linear-gradient(135deg, #172330 0%, #3f6070 100%);
-  --instance-gradient-wasup-2: linear-gradient(135deg, #18271f 0%, #46664d 100%);
-  --instance-gradient-wasup-3: linear-gradient(135deg, #33221d 0%, #855f4e 100%);
+  --instance-gradient-wasup-1: linear-gradient(
+    135deg,
+    #172330 0%,
+    #3f6070 100%
+  );
+  --instance-gradient-wasup-2: linear-gradient(
+    135deg,
+    #18271f 0%,
+    #46664d 100%
+  );
+  --instance-gradient-wasup-3: linear-gradient(
+    135deg,
+    #33221d 0%,
+    #855f4e 100%
+  );
   --instance-gradient-slate: linear-gradient(135deg, #141b24 0%, #4b5563 100%);
   --instance-gradient-moss: linear-gradient(135deg, #1f291b 0%, #596949 100%);
-  --instance-gradient-fallback: linear-gradient(135deg, #111827 0%, #4b5563 100%);
+  --instance-gradient-fallback: linear-gradient(
+    135deg,
+    #111827 0%,
+    #4b5563 100%
+  );
 }
 
 body {
-  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  font-family:
+    var(--font-sans),
+    system-ui,
+    -apple-system,
+    sans-serif;
 
   line-height: 1.5;
   font-weight: 400;
@@ -132,31 +169,96 @@ body {
   background-color: hsl(var(--background));
 }
 
+[data-wasup-login] .wasup-login-clerk {
+  --clerk-border-radius: 10px;
+  --cl-radius: 10px;
+  width: 100%;
+}
+
+[data-wasup-login] .wasup-login-clerk :is(button, input, [class*="cl-"]) {
+  border-radius: 10px !important;
+}
+
+[data-wasup-login] .wasup-login-clerk [class*="cl-formFieldInput"] {
+  height: 50px !important;
+  min-height: 50px !important;
+  width: 100% !important;
+}
+
+[data-wasup-login] .wasup-login-clerk [class*="cl-formButtonPrimary"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-socialButtonsBlockButton"] {
+  height: 50px !important;
+  min-height: 50px !important;
+  width: 100% !important;
+}
+
+[data-wasup-login] .wasup-login-clerk [class*="cl-formButtonPrimary"] {
+  box-shadow: 0 10px 26px rgba(0, 200, 83, 0.18) !important;
+}
+
 @layer utilities {
   @keyframes fadeUp {
-    from { opacity: 0; transform: translateY(6px); }
-    to   { opacity: 1; transform: translateY(0); }
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
   @keyframes fadeIn {
-    from { opacity: 0; }
-    to   { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
   @keyframes popIn {
-    from { opacity: 0; transform: translateY(-4px) scale(0.98); }
-    to   { opacity: 1; transform: translateY(0) scale(1); }
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
   }
   @keyframes feedTicketIn {
-    from { opacity: 0; transform: translateY(-10px); }
-    to   { opacity: 1; transform: translateY(0); }
+    from {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
   @keyframes scaleIn {
-    from { opacity: 0; transform: scale(0.96); }
-    to   { opacity: 1; transform: scale(1); }
+    from {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
   }
 
-  .animate-fade-up  { animation: fadeUp 280ms cubic-bezier(0.22, 1, 0.36, 1) both; }
-  .animate-fade-in  { animation: fadeIn 220ms ease-out both; }
-  .animate-pop-in   { animation: popIn 180ms cubic-bezier(0.22, 1, 0.36, 1) both; }
-  .animate-feed-ticket { animation: feedTicketIn 320ms cubic-bezier(0.22, 1, 0.36, 1) both; }
-  .animate-scale-in { animation: scaleIn 160ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .animate-fade-up {
+    animation: fadeUp 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-fade-in {
+    animation: fadeIn 220ms ease-out both;
+  }
+  .animate-pop-in {
+    animation: popIn 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-feed-ticket {
+    animation: feedTicketIn 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-scale-in {
+    animation: scaleIn 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
 }

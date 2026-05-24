@@ -7,13 +7,13 @@ info:
     **Base URL:** use the host you opened this spec on (each Azure region is its own base URL, e.g. `https://wasup-uk-south.azurewebsites.net`). The Scalar page rewrites `servers` automatically.
 
     ## Authentication
-    When `API_KEY` is set on the server, **every** `/api/...` request must include that key (admin dashboard, external integrations, and tools).
+    When authentication is enabled, **every** `/api/...` request must include a valid org API key from the Wasup dashboard Connection page.
 
     Use one of:
-    - Header: `X-API-Key: <your-api-key-for-this-deployment>`
-    - Header: `Authorization: Bearer <your-api-key-for-this-deployment>`
+    - Header: `X-API-Key: <your-org-api-key>`
+    - Header: `Authorization: Bearer <your-org-api-key>`
 
-    Example (replace `BASE` and `KEY` with this region’s URL and key):
+    Example (replace `BASE` and `KEY` with this region's URL and your org key):
 
     ```bash
     curl -sS -H "X-API-Key: KEY" "BASE/api/instances"
@@ -25,7 +25,18 @@ info:
       -d '{"to":"447700900000@s.whatsapp.net","message":"Hello"}'
     ```
 
-    To reveal this deployment’s key from the browser, open **`/docs`** and use the password gate (see `DOCS_REVEAL_PASSWORD` / default in server env).
+    ## Interactive buttons
+    Custom quick-reply buttons are supported on the same send endpoints. Set
+    `messageType: buttons`, or omit `messageType` and include a non-empty
+    `buttons` array. Use `message` or `text` for the body.
+
+    ```bash
+    curl -sS -X POST "BASE/api/instances/INSTANCE_ID/send" \
+      -H "X-API-Key: KEY" -H "Content-Type: application/json" \
+      -d '{"to":"60123456789","text":"Choose an option","buttons":[{"id":"yes","text":"Yes"},{"id":"no","text":"No"}],"footer":"Wasup"}'
+    ```
+
+    The worker docs and test console do not reveal deployment/server keys.
 
     ## WebSocket
     Connect to `wss://<same-host>/ws` (or `ws://` locally). If `API_KEY` is set, send `{"type":"auth","apiKey":"<key>"}` after connect and wait for `auth_success` before relying on live events.
@@ -607,6 +618,21 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SendMessageBody'
+            examples:
+              text:
+                summary: Plain text
+                value:
+                  to: '60123456789'
+                  message: Hello from Wasup
+              buttons:
+                summary: Interactive quick-reply buttons
+                value:
+                  to: '60123456789'
+                  text: Choose an option
+                  buttons:
+                    - { id: yes, text: Yes }
+                    - { id: no, text: No }
+                  footer: Wasup
       responses:
         '200':
           description: Message sent
@@ -650,6 +676,26 @@ paths:
                       type: string
                       description: Alias for `to`
                       example: '60198765432'
+            examples:
+              autoSelectButtons:
+                summary: Auto-select connected instance and send buttons
+                value:
+                  to_phone: '60123456789'
+                  text: Choose an option
+                  buttons:
+                    - { id: yes, text: Yes }
+                    - { id: no, text: No }
+                  footer: Wasup
+              fromPhoneButtons:
+                summary: Send buttons from a specific connected phone
+                value:
+                  from_phone: '60111111111'
+                  to_phone: '60123456789'
+                  message: Choose an option
+                  messageType: buttons
+                  buttons:
+                    - { id: yes, text: Yes }
+                    - { id: no, text: No }
       responses:
         '200':
           description: Message sent
@@ -1939,9 +1985,13 @@ components:
           type: string
           description: Text body or caption (required for text type, optional caption for media)
           example: Hello! How can I help you today?
+        text:
+          type: string
+          description: Alias for `message`; useful for concise interactive button payloads
+          example: Choose an option
         messageType:
           type: string
-          description: Type of message to send
+          description: Type of message to send. If omitted, `buttons` implies `buttons` and `sections` implies `list`.
           enum: [text, image, video, document, audio, buttons, list, location, contact]
           default: text
           example: text
@@ -1968,8 +2018,9 @@ components:
         buttons:
           type: array
           description: |
-            Quick-reply buttons (messageType=buttons). Uses Wasup's interactive helper so
-            native tappable buttons render on iOS and Android.
+            Quick-reply buttons. Set `messageType=buttons`, or omit `messageType`
+            and include this array. Native WhatsApp clients generally support up
+            to 3 quick-reply buttons; button titles are capped at 20 characters.
           items:
             type: object
             properties:

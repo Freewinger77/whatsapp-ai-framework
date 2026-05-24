@@ -1,7 +1,8 @@
 import type { ComponentType, FormEvent, KeyboardEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { toast } from "sonner";
 import {
   ActivityIcon,
   BellIcon,
@@ -10,6 +11,7 @@ import {
   ChevronDownIcon,
   CircleIcon,
   ClockIcon,
+  CopyIcon,
   ExternalLinkIcon,
   GlobeIcon,
   HandIcon,
@@ -31,46 +33,51 @@ import {
   INSTANCE_ACTIVITY_LOG,
   INSTANCES,
   LIVE_FEED,
+  type ActivityLogItem,
+  type Instance,
+  type LiveFeedItem,
 } from "@/polymet/data/dashboard-data";
 import { instanceGradient } from "@/polymet/data/instance-colors";
+import { InlineProvisioningSpinner, useWorkspaceState } from "@/polymet/hooks/use-workspace-state";
+import { clearInstanceAuth, connectInstance, deleteInstance, getInstance, getInstanceQr, updateInstanceSettings } from "@/polymet/lib/control-plane-api";
 import { cn } from "@/lib/utils";
 
-type ActivityLogItem = (typeof INSTANCE_ACTIVITY_LOG)[number];
-type LiveFeedItem = (typeof LIVE_FEED)[number];
 type ConnectMode = "menu" | "qr" | "pairing" | "clear";
-type MainSettingsCard = "webhook" | "handoff" | "profile" | "behaviour" | "anti-ban" | "proxy";
+type MainSettingsCard = "webhook" | "api-credentials" | "handoff" | "profile" | "behaviour" | "anti-ban" | "proxy";
 
-const DEFAULT_HANDOFF_NUMBERS = [
-  "+4478392039923",
-  "+44778392039923",
-  "+447700900321",
-  "+60123456789",
-  "+60192345678",
-  "+6581234567",
-  "+6587654321",
-  "+61412345678",
-  "+61498765432",
-  "+12025550183",
-  "+12025550194",
-  "+14155552671",
-  "+14155552682",
-  "+442071838750",
-  "+442071838761",
-  "+493012345678",
-  "+33123456789",
-  "+358401234567",
-];
+const DEFAULT_HANDOFF_NUMBERS: string[] = [];
+const QR_DISPLAY_TTL_MS = 110_000;
+const DEFAULT_OPEN_SETTINGS_CARDS: Record<MainSettingsCard, boolean> = {
+  webhook: true,
+  "api-credentials": true,
+  handoff: false,
+  profile: false,
+  behaviour: false,
+  "anti-ban": false,
+  proxy: false,
+};
+
+function getQrExpiresInMs(updatedAt?: string | null, workerExpiresInMs?: number | null) {
+  if (typeof workerExpiresInMs === "number") return workerExpiresInMs;
+  if (!updatedAt) return null;
+  return Math.max(0, QR_DISPLAY_TTL_MS - (Date.now() - new Date(updatedAt).getTime()));
+}
 
 export function InstanceDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { refresh } = useWorkspaceState();
+  const [liveInstance, setLiveInstance] = useState<Instance | null>(null);
+  const [loadError, setLoadError] = useState("");
   const inst =
+    liveInstance ??
     INSTANCES.find((i) => i.id === id) ?? {
       id: id ?? "",
-      name: id ?? "Instance",
+      name: "Instance",
       region: "Pending",
       status: "provisioning" as const,
       phone: "Not linked",
-      webhookUrl: "https://n8n.wasup.ai/webhook/new-instance",
+      webhookUrl: "",
       behaviorProfile: "Notification balanced" as const,
       proxy: "pending",
       messagesToday: "0",
@@ -79,11 +86,13 @@ export function InstanceDetailPage() {
     };
 
   const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [instanceName, setInstanceName] = useState(inst.name);
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState(inst.name);
   const [webhookUrl, setWebhookUrl] = useState(inst.webhookUrl);
-  const [signingSecret, setSigningSecret] = useState("whsec_mocked_per_org");
+  const [signingSecret, setSigningSecret] = useState("");
+  const [signingSecretEdited, setSigningSecretEdited] = useState(false);
   const [handoffMessage, setHandoffMessage] = useState(
     "Great, I'll take over the chat now. Happy to help!",
   );
@@ -91,30 +100,33 @@ export function InstanceDetailPage() {
   const [handoffNumbers, setHandoffNumbers] = useState(DEFAULT_HANDOFF_NUMBERS);
   const [handoffManagerOpen, setHandoffManagerOpen] = useState(false);
   const [profileDisplayName, setProfileDisplayName] = useState(inst.name);
-  const [profileAbout, setProfileAbout] = useState("Fast replies powered by Wasup");
+  const [profileAbout, setProfileAbout] = useState("");
   const [profilePictureUrl, setProfilePictureUrl] = useState(
-    "https://assets.wasup.ai/profiles/wasup-operator.png",
+    "",
   );
-  const [pictureStatus, setPictureStatus] = useState("Picture loaded in mock");
+  const [pictureStatus, setPictureStatus] = useState("No profile picture set");
   const [pictureModalOpen, setPictureModalOpen] = useState(false);
   const [notificationGrace, setNotificationGrace] = useState(
     inst.behaviorProfile === "Bot-native" ? "0" : "8",
   );
   const [behaviorProfile, setBehaviorProfile] = useState(inst.behaviorProfile);
-  const [connected, setConnected] = useState(inst.status !== "provisioning");
+  const [connected, setConnected] = useState(inst.status === "active");
   const [linkOpen, setLinkOpen] = useState(false);
   const [typing, setTyping] = useState(inst.behaviorProfile !== "Notification max");
   const [readReceipts, setReadReceipts] = useState(inst.behaviorProfile !== "Notification max");
   const [responseDelays, setResponseDelays] = useState(false);
   const [handoffsCleared, setHandoffsCleared] = useState(false);
   const [pictureRemoved, setPictureRemoved] = useState(false);
-  const [openSettingsCard, setOpenSettingsCard] = useState<MainSettingsCard>("webhook");
+  const [openSettingsCards, setOpenSettingsCards] = useState<Record<MainSettingsCard, boolean>>(
+    DEFAULT_OPEN_SETTINGS_CARDS,
+  );
   const [deleteSheetOpen, setDeleteSheetOpen] = useState(false);
-  const [deleteScheduled, setDeleteScheduled] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   const instanceLogs = INSTANCE_ACTIVITY_LOG.filter((item) => item.instanceId === inst.id);
   const instanceFeed = LIVE_FEED.filter((item) => item.instanceId === inst.id);
-  const statusLabel = connected ? "active" : "disconnected";
+  const statusLabel = inst.status === "provisioning" ? "provisioning" : inst.status === "connecting" ? "connecting" : connected ? "active" : "disconnected";
   const health = getInstanceHealth(connected, inst.status, inst.qualityScore);
 
   const activityItems = useMemo(
@@ -137,6 +149,33 @@ export function InstanceDetailPage() {
   );
 
   useEffect(() => {
+    if (!id) return;
+    getInstance(id)
+      .then((nextInstance) => {
+        setLiveInstance(nextInstance);
+        setLoadError("");
+      })
+      .catch((error) => {
+        setLiveInstance(null);
+        setLoadError(error instanceof Error ? error.message : "Instance not found");
+      });
+  }, [id]);
+
+  useEffect(() => {
+    if (!id || (liveInstance?.status !== "provisioning" && liveInstance?.status !== "connecting")) return;
+    const timer = window.setInterval(() => {
+      getInstance(id)
+        .then((nextInstance) => {
+          setLiveInstance(nextInstance);
+          setLoadError("");
+        })
+        .catch((error) => setLoadError(error instanceof Error ? error.message : "Could not refresh instance status"));
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [id, liveInstance?.status]);
+
+  useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (!dirty) return;
       event.preventDefault();
@@ -149,8 +188,14 @@ export function InstanceDetailPage() {
   useEffect(() => {
     setInstanceName(inst.name);
     setTitleDraft(inst.name);
+    setWebhookUrl(inst.webhookUrl);
+    setSigningSecret("");
+    setSigningSecretEdited(false);
+    setProfileDisplayName(inst.name);
+    setBehaviorProfile(inst.behaviorProfile);
+    setConnected(inst.status === "active");
     setTitleEditing(false);
-  }, [inst.id, inst.name]);
+  }, [inst.behaviorProfile, inst.id, inst.name, inst.status, inst.webhookUrl]);
 
   useEffect(() => {
     const handler = (event: MouseEvent) => {
@@ -168,11 +213,44 @@ export function InstanceDetailPage() {
   }, [dirty]);
 
   const markDirty = () => setDirty(true);
+  const toggleSettingsCard = (card: MainSettingsCard) => {
+    setOpenSettingsCards((current) => ({
+      ...current,
+      [card]: !current[card],
+    }));
+  };
 
   const saveTitle = () => {
     setInstanceName(titleDraft.trim() || inst.name);
     markDirty();
     setTitleEditing(false);
+  };
+
+  const saveSettings = async () => {
+    if (!id || saving) return;
+    setSaving(true);
+    try {
+      const input: Parameters<typeof updateInstanceSettings>[1] = {
+        name: instanceName.trim() || inst.name,
+        webhookUrl: webhookUrl.trim() || null,
+      };
+      if (signingSecretEdited) input.webhookSigningSecret = signingSecret.trim() || null;
+
+      const updated = await updateInstanceSettings(id, input);
+      setLiveInstance(updated);
+      setDirty(false);
+      setSigningSecret("");
+      setSigningSecretEdited(false);
+      toast.success("Instance settings saved", {
+        description: "Webhook settings and instance name were updated.",
+      });
+    } catch (error) {
+      toast.error("Could not save settings", {
+        description: error instanceof Error ? error.message : "Please try again shortly.",
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const disconnect = () => {
@@ -192,7 +270,7 @@ export function InstanceDetailPage() {
   const confirmProfilePicture = (nextUrl: string) => {
     setProfilePictureUrl(nextUrl);
     setPictureRemoved(false);
-    setPictureStatus("Picture loaded and set in mock");
+    setPictureStatus("Picture loaded");
     setPictureModalOpen(false);
     markDirty();
   };
@@ -200,33 +278,59 @@ export function InstanceDetailPage() {
   const removeProfilePicture = () => {
     setProfilePictureUrl("");
     setPictureRemoved(true);
-    setPictureStatus("Picture removed in mock");
+    setPictureStatus("Picture removed");
     markDirty();
   };
 
   const requestDelete = () => {
-    if (deleteScheduled) return;
+    if (deleteBusy) return;
     if (!window.confirm("Are you sure?")) return;
+    setDeleteError("");
     setDeleteSheetOpen(true);
   };
 
-  const confirmDelete = () => {
-    setDeleteScheduled(true);
-    setDeleteSheetOpen(false);
-    setDirty(false);
+  const confirmDelete = async () => {
+    if (!id || deleteBusy) return;
+    setDeleteBusy(true);
+    setDeleteError("");
+    try {
+      await deleteInstance(id);
+      setDeleteSheetOpen(false);
+      setDirty(false);
+      toast.success("Instance deleted", {
+        description: "The worker instance was cleaned up and its proxy lease was released.",
+      });
+      await refresh();
+      navigate("/instances");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Instance deletion failed";
+      setDeleteError(message);
+      toast.error("Instance deletion failed", { description: message });
+    } finally {
+      setDeleteBusy(false);
+    }
   };
 
   return (
-    <div className="space-y-8">
-      {deleteScheduled && (
+    <div className="space-y-6 sm:space-y-8">
+      {loadError && !liveInstance && (
+        <div className="rounded-2xl border border-red-200 bg-red-50/70 p-4 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+          {loadError}
+        </div>
+      )}
+      {inst.lastError && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+          <div className="font-semibold">Provisioning needs attention</div>
+          <p className="mt-1">{inst.lastError}</p>
+        </div>
+      )}
+      {deleteError && (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
           <div className="flex items-center gap-2 font-semibold">
-            <CheckIcon className="h-4 w-4" />
-            Delete scheduled
+            <XIcon className="h-4 w-4" />
+            Delete failed
           </div>
-          <p className="mt-1 text-red-700/80 dark:text-red-200/80">
-            {instanceName} is marked for deletion in this mock control-plane state.
-          </p>
+          <p className="mt-1 text-red-700/80 dark:text-red-200/80">{deleteError}</p>
         </div>
       )}
 
@@ -235,14 +339,22 @@ export function InstanceDetailPage() {
           className="h-20 w-20 shrink-0 rounded-2xl shadow-sm"
           style={{ background: instanceGradient(inst.id) }}
         />
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           <div
             className={cn(
               "flex items-center gap-2 text-xs font-medium uppercase tracking-wider",
-              connected ? "text-emerald-600" : "text-red-600 dark:text-red-400",
+              inst.status === "provisioning" || inst.status === "connecting"
+                ? "text-blue-600 dark:text-blue-300"
+                : connected
+                ? "text-emerald-600"
+                : "text-red-600 dark:text-red-400",
             )}
           >
-            <CircleIcon className="h-2 w-2" fill="currentColor" stroke="none" />
+            {inst.status === "provisioning" || inst.status === "connecting" ? (
+              <InlineProvisioningSpinner className="h-2.5 w-2.5" />
+            ) : (
+              <CircleIcon className="h-2 w-2" fill="currentColor" stroke="none" />
+            )}
             {statusLabel}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -257,11 +369,11 @@ export function InstanceDetailPage() {
                     setTitleEditing(false);
                   }
                 }}
-                className="h-11 min-w-0 rounded-lg border border-border/60 bg-background px-3 text-3xl font-semibold tracking-tight outline-none focus:ring-2 focus:ring-ring/30"
+                className="h-11 min-w-0 max-w-full rounded-lg border border-border/60 bg-background px-3 text-2xl font-semibold tracking-tight outline-none focus:ring-2 focus:ring-ring/30 sm:text-3xl"
                 autoFocus
               />
             ) : (
-              <h1 className="text-3xl font-semibold tracking-tight">{instanceName}</h1>
+              <h1 className="break-words text-2xl font-semibold tracking-tight sm:text-3xl">{instanceName}</h1>
             )}
             <button
               onClick={
@@ -286,7 +398,7 @@ export function InstanceDetailPage() {
             <span className={cn("font-medium", health.className)}>{health.label}</span>
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
           {connected ? (
             <button
               onClick={disconnect}
@@ -303,10 +415,11 @@ export function InstanceDetailPage() {
             </button>
           )}
           <button
-            onClick={() => setDirty(false)}
-            className="rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90"
+            onClick={saveSettings}
+            disabled={saving}
+            className="rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Save settings
+            {saving ? "Saving..." : "Save settings"}
           </button>
         </div>
       </div>
@@ -330,7 +443,7 @@ export function InstanceDetailPage() {
         })}
       </div>
 
-      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[420px_minmax(0,1fr)] xl:items-stretch">
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[420px_minmax(0,1fr)] xl:items-stretch">
         <section className="min-h-0 xl:self-stretch">
           <LiveActivityPanel instanceId={inst.id} items={activityItems} />
         </section>
@@ -339,18 +452,45 @@ export function InstanceDetailPage() {
           <SettingsAccordionCard
             icon={WebhookIcon}
             title="Webhook"
-            open={openSettingsCard === "webhook"}
-            onToggle={() => setOpenSettingsCard("webhook")}
+            open={openSettingsCards.webhook}
+            onToggle={() => toggleSettingsCard("webhook")}
           >
+            <div className="border-b border-border/60 px-4 py-4 text-sm text-muted-foreground sm:px-5">
+              <p>
+                Webhook signing is optional. For a secured webhook, set a shared
+                signing secret so Wasup can sign outbound webhook deliveries and
+                your receiver can verify them. For an unsecured webhook or no API-key
+                receiver, leave it blank.
+              </p>
+            </div>
             <EditableTextRow label="Inbound webhook" value={webhookUrl} onSave={setWebhookUrl} onDirty={markDirty} />
-            <EditableTextRow label="Webhook signing secret" value={signingSecret} onSave={setSigningSecret} onDirty={markDirty} monospace />
+            <EditableTextRow
+              label="Webhook signing secret"
+              value={signingSecret}
+              placeholder="Optional - leave blank for unsigned deliveries"
+              onSave={(value) => {
+                setSigningSecret(value.trim());
+                setSigningSecretEdited(true);
+              }}
+              onDirty={markDirty}
+              monospace
+            />
+          </SettingsAccordionCard>
+
+          <SettingsAccordionCard
+            icon={KeyRoundIcon}
+            title="API credentials"
+            open={openSettingsCards["api-credentials"]}
+            onToggle={() => toggleSettingsCard("api-credentials")}
+          >
+            <InstanceIdentityCard instanceId={inst.id} />
           </SettingsAccordionCard>
 
           <SettingsAccordionCard
             icon={HandIcon}
             title="Human handoff"
-            open={openSettingsCard === "handoff"}
-            onToggle={() => setOpenSettingsCard("handoff")}
+            open={openSettingsCards.handoff}
+            onToggle={() => toggleSettingsCard("handoff")}
           >
             <ResumeKeywordChips
               keywords={resumeKeywords}
@@ -363,7 +503,7 @@ export function InstanceDetailPage() {
             <ManageNumbersRow count={handoffNumbers.length} onManage={() => setHandoffManagerOpen(true)} />
             {handoffsCleared && (
               <div className="border-t border-border/60 px-5 py-3 text-sm text-emerald-600 dark:text-emerald-400">
-                Active handoffs cleared in this mock state.
+                Active handoffs cleared.
               </div>
             )}
           </SettingsAccordionCard>
@@ -371,8 +511,8 @@ export function InstanceDetailPage() {
           <SettingsAccordionCard
             icon={UserRoundIcon}
             title="WhatsApp profile"
-            open={openSettingsCard === "profile"}
-            onToggle={() => setOpenSettingsCard("profile")}
+            open={openSettingsCards.profile}
+            onToggle={() => toggleSettingsCard("profile")}
           >
             <EditableTextRow label="Display name" value={profileDisplayName} onSave={setProfileDisplayName} onDirty={markDirty} />
             <EditableTextRow label="About / status text" value={profileAbout} onSave={setProfileAbout} onDirty={markDirty} />
@@ -382,8 +522,8 @@ export function InstanceDetailPage() {
           <SettingsAccordionCard
             icon={SlidersHorizontalIcon}
             title="Behaviour"
-            open={openSettingsCard === "behaviour"}
-            onToggle={() => setOpenSettingsCard("behaviour")}
+            open={openSettingsCards.behaviour}
+            onToggle={() => toggleSettingsCard("behaviour")}
           >
             <SelectRow
               label="Behaviour profile"
@@ -424,8 +564,8 @@ export function InstanceDetailPage() {
           <SettingsAccordionCard
             icon={BellIcon}
             title="Anti-ban and usage"
-            open={openSettingsCard === "anti-ban"}
-            onToggle={() => setOpenSettingsCard("anti-ban")}
+            open={openSettingsCards["anti-ban"]}
+            onToggle={() => toggleSettingsCard("anti-ban")}
           >
             <StaticRow label="Quality score" value={connected ? inst.qualityScore : "Disconnected"} />
             <StaticRow label="Daily send cap" value="1,000 messages" />
@@ -436,8 +576,8 @@ export function InstanceDetailPage() {
           <SettingsAccordionCard
             icon={GlobeIcon}
             title="Proxy and region"
-            open={openSettingsCard === "proxy"}
-            onToggle={() => setOpenSettingsCard("proxy")}
+            open={openSettingsCards.proxy}
+            onToggle={() => toggleSettingsCard("proxy")}
           >
             <StaticRow label="Region" value={inst.region} />
             <StaticRow label="Proxy allocation" value={inst.proxy} />
@@ -449,17 +589,17 @@ export function InstanceDetailPage() {
               <div>
                 <h2 className="font-semibold text-red-900 dark:text-red-100">Danger area</h2>
                 <p className="mt-1 max-w-xl text-sm text-red-700/80 dark:text-red-200/75">
-                  Delete this instance from the mock control plane. You will be asked to confirm and type the instance name exactly.
+                  Delete this instance from the control plane. You will be asked to confirm and type the instance name exactly.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={requestDelete}
-                disabled={deleteScheduled}
+                disabled={deleteBusy}
                 className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-300 bg-background px-4 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/80 dark:text-red-200 dark:hover:bg-red-950/40"
               >
                 <Trash2Icon className="h-4 w-4" />
-                {deleteScheduled ? "Delete scheduled" : "Delete instance"}
+                {deleteBusy ? "Deleting..." : "Delete instance"}
               </button>
             </div>
           </div>
@@ -468,6 +608,7 @@ export function InstanceDetailPage() {
 
       {linkOpen && (
         <ConnectOverlay
+          instanceId={inst.id}
           connected={connected}
           onClose={() => setLinkOpen(false)}
           onConnected={() => {
@@ -496,6 +637,8 @@ export function InstanceDetailPage() {
           instanceName={instanceName}
           onClose={() => setDeleteSheetOpen(false)}
           onConfirm={confirmDelete}
+          busy={deleteBusy}
+          error={deleteError}
         />
       )}
       {pictureModalOpen && (
@@ -511,9 +654,9 @@ export function InstanceDetailPage() {
 
 function ManageNumbersRow({ count, onManage }: { count: number; onManage: () => void }) {
   return (
-    <div className="flex items-center justify-between gap-6 border-b border-border/60 px-5 py-4 last:border-b-0">
+    <div className="flex flex-col gap-3 border-b border-border/60 px-4 py-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:px-5">
       <div className="text-sm text-muted-foreground">Phone number to tag</div>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <span className="font-mono text-sm">{count} tagged</span>
         <button
           onClick={onManage}
@@ -522,6 +665,69 @@ function ManageNumbersRow({ count, onManage }: { count: number; onManage: () => 
           Manage
           <ExternalLinkIcon className="h-4 w-4" />
         </button>
+      </div>
+    </div>
+  );
+}
+
+function InstanceIdentityCard({ instanceId }: { instanceId: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const copyInstanceId = async () => {
+    if (!instanceId || instanceId.includes("...")) {
+      toast.error("Nothing safe to copy", {
+        description: "The instance ID is not available yet.",
+      });
+      return;
+    }
+
+    try {
+      await navigator.clipboard?.writeText(instanceId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 7000);
+      toast.success("Instance ID copied");
+    } catch {
+      toast.error("Copy failed", {
+        description: "Your browser did not allow clipboard access.",
+      });
+    }
+  };
+
+  return (
+    <div className="space-y-4 px-4 py-4 sm:px-5">
+      <div className="rounded-xl border border-border/60 bg-muted/20 p-4">
+        <div className="text-sm font-semibold">Instance-scoped identifier</div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Use this ID with API requests, support tickets, and webhook routing. Workspace API keys live on the Connection page.
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-border/60 bg-background p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className="font-semibold">Instance ID</div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              This copy button always copies the raw ID shown here, never masked text.
+            </p>
+          </div>
+          <span className="inline-flex w-fit rounded-full border border-border bg-muted/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            Instance
+          </span>
+        </div>
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg bg-muted/60 px-3 py-2.5 font-mono text-sm">
+            <KeyRoundIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="truncate">{instanceId}</span>
+          </div>
+          <button
+            type="button"
+            onClick={copyInstanceId}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+          >
+            {copied ? <CheckIcon className="h-4 w-4 text-emerald-600" /> : <CopyIcon className="h-4 w-4" />}
+            Copy ID
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -539,14 +745,14 @@ function ProfilePictureRow({
   removed: boolean;
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+    <div className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
       <div>
         <div className="text-sm text-muted-foreground">Profile picture</div>
         <div className={cn("mt-1 text-sm", removed ? "text-muted-foreground" : "text-emerald-600 dark:text-emerald-400")}>
           {status}
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
         <button
           onClick={onSet}
           className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted"
@@ -589,8 +795,8 @@ function ProfilePictureOverlay({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[110] flex h-screen w-screen items-center justify-center bg-black/45 p-4 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-lg rounded-3xl border border-border bg-background p-6 shadow-2xl animate-pop-in">
+    <div className="fixed inset-0 z-[110] flex h-dvh w-screen items-center justify-center bg-black/45 p-3 backdrop-blur-sm animate-fade-in sm:p-4">
+      <div className="max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-background p-4 shadow-2xl animate-pop-in sm:rounded-3xl sm:p-6">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-semibold tracking-tight">Set profile picture</h2>
@@ -669,9 +875,9 @@ function ProfilePictureOverlay({
 
 function StaticRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-6 border-b border-border/60 px-5 py-4 last:border-b-0">
+    <div className="flex flex-col gap-2 border-b border-border/60 px-4 py-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:px-5">
       <div className="text-sm text-muted-foreground">{label}</div>
-      <div className="max-w-[60%] truncate text-right font-mono text-sm">{value}</div>
+      <div className="max-w-full truncate font-mono text-sm sm:max-w-[60%] sm:text-right">{value}</div>
     </div>
   );
 }
@@ -703,7 +909,7 @@ function ResumeKeywordChips({
   };
 
   return (
-    <div className="border-b border-border/60 px-5 py-4">
+    <div className="border-b border-border/60 px-4 py-4 sm:px-5">
       <div className="mb-3 text-sm text-muted-foreground">Resume keywords</div>
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-background p-2">
         {keywords.map((keyword) => (
@@ -744,12 +950,14 @@ function EditableTextRow({
   onSave,
   onDirty,
   monospace = false,
+  placeholder = "",
 }: {
   label: string;
   value: string;
   onSave: (value: string) => void;
   onDirty: () => void;
   monospace?: boolean;
+  placeholder?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -765,26 +973,27 @@ function EditableTextRow({
   };
 
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-border/60 px-5 py-4 last:border-b-0">
+    <div className="flex flex-col gap-3 border-b border-border/60 px-4 py-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:px-5">
       <div className="text-sm text-muted-foreground">{label}</div>
       <div className="flex min-w-0 flex-1 justify-end gap-2">
         {editing ? (
           <input
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
+            placeholder={placeholder}
             className={cn(
-              "h-9 min-w-0 flex-1 rounded-md border border-border/60 bg-background px-3 text-right text-sm outline-none focus:ring-2 focus:ring-ring/30 md:max-w-[420px]",
+              "h-9 min-w-0 flex-1 rounded-md border border-border/60 bg-background px-3 text-left text-sm outline-none focus:ring-2 focus:ring-ring/30 sm:text-right md:max-w-[420px]",
               monospace && "font-mono",
             )}
           />
         ) : (
           <div
             className={cn(
-              "min-w-0 flex-1 truncate text-right text-sm md:max-w-[420px]",
+              "min-w-0 flex-1 truncate text-left text-sm sm:text-right md:max-w-[420px]",
               monospace ? "font-mono" : "font-medium",
             )}
           >
-            {value}
+            {value || <span className="text-muted-foreground/70">{placeholder || "Not set"}</span>}
           </div>
         )}
         <button
@@ -811,12 +1020,12 @@ function SelectRow<TValue extends string>({
   onChange: (value: TValue) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-6 border-b border-border/60 px-5 py-4 last:border-b-0">
+    <div className="flex flex-col gap-3 border-b border-border/60 px-4 py-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:px-5">
       <div className="text-sm text-muted-foreground">{label}</div>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value as TValue)}
-        className="h-9 rounded-md border border-border/60 bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30"
+        className="h-9 w-full rounded-md border border-border/60 bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30 sm:w-auto"
       >
         {options.map((option) => (
           <option key={option} value={option}>
@@ -838,7 +1047,7 @@ function ToggleRow({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-6 border-b border-border/60 px-5 py-4 last:border-b-0">
+    <div className="flex items-center justify-between gap-6 border-b border-border/60 px-4 py-4 last:border-b-0 sm:px-5">
       <div className="text-sm text-muted-foreground">{label}</div>
       <button
         role="switch"
@@ -873,14 +1082,14 @@ function LiveActivityPanel({
   const visibleItems = items.slice(0, 8);
 
   return (
-    <div className="flex h-full min-h-[420px] w-full flex-col overflow-hidden rounded-xl border border-border/60 bg-card p-5 shadow-sm">
+    <div className="flex h-full min-h-[360px] w-full flex-col overflow-hidden rounded-xl border border-border/60 bg-card p-4 shadow-sm sm:min-h-[420px] sm:p-5">
       <div className="mb-5 flex shrink-0 items-start justify-between gap-4">
         <div>
           <h2 className="font-semibold">Live activity</h2>
           <p className="mt-1 text-sm text-muted-foreground">Combined message feed and system log for this instance.</p>
         </div>
       </div>
-      <div className="min-h-0 flex-1 space-y-2 overflow-hidden">
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
         {visibleItems.map((entry, index) => (
           <div
             key={entry.id}
@@ -952,8 +1161,10 @@ function SettingsAccordionCard({
   return (
     <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
       <button
+        type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-muted/35"
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
       >
         <span className="flex items-center gap-2">
           <Icon className="h-4 w-4" />
@@ -1000,13 +1211,13 @@ function HandoffNumbersOverlay({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex h-screen w-screen items-center justify-center bg-black/45 p-4 backdrop-blur-sm animate-fade-in">
-      <div className="relative flex h-[90vh] max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-border bg-background shadow-2xl animate-pop-in">
-        <div className="flex items-start justify-between gap-4 border-b border-border/60 p-6">
+    <div className="fixed inset-0 z-[100] flex h-dvh w-screen items-center justify-center bg-black/45 p-3 backdrop-blur-sm animate-fade-in sm:p-4">
+      <div className="relative flex h-[92dvh] max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl animate-pop-in sm:rounded-3xl">
+        <div className="flex items-start justify-between gap-4 border-b border-border/60 p-4 sm:p-6">
           <div>
             <h2 className="text-xl font-semibold">Manage tagged numbers</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Search, add, or remove the mock numbers notified during human handoff.
+              Search, add, or remove numbers notified during human handoff.
             </p>
           </div>
           <button onClick={onClose} className="rounded-md p-2 text-muted-foreground hover:bg-muted">
@@ -1014,7 +1225,7 @@ function HandoffNumbersOverlay({
           </button>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-4 p-6">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 p-4 sm:p-6">
           <div className="relative">
             <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
@@ -1032,7 +1243,7 @@ function HandoffNumbersOverlay({
               onKeyDown={(event) => {
                 if (event.key === "Enter") addNumber();
               }}
-              placeholder="+4478392039923"
+              placeholder="+15551234567"
               className="h-10 min-w-0 flex-1 rounded-lg border border-border/60 bg-background px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring/30"
             />
             <button
@@ -1052,7 +1263,7 @@ function HandoffNumbersOverlay({
               </p>
               {handoffsCleared && (
                 <p className="mt-2 text-sm text-emerald-600 dark:text-emerald-400">
-                  Handoffs cleared in this mock state.
+                  Handoffs cleared.
                 </p>
               )}
             </div>
@@ -1068,8 +1279,8 @@ function HandoffNumbersOverlay({
           <div className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-border/60">
             {filteredNumbers.length > 0 ? (
               filteredNumbers.map((number) => (
-                <div key={number} className="flex items-center justify-between gap-4 border-b border-border/60 px-4 py-3 last:border-b-0">
-                  <span className="font-mono text-sm">{number}</span>
+                <div key={number} className="flex flex-col gap-3 border-b border-border/60 px-4 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                  <span className="break-all font-mono text-sm">{number}</span>
                   <button
                     onClick={() => removeNumber(number)}
                     className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -1096,28 +1307,32 @@ function DeleteInstanceSheet({
   instanceName,
   onClose,
   onConfirm,
+  busy,
+  error,
 }: {
   instanceName: string;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: () => Promise<void>;
+  busy: boolean;
+  error: string;
 }) {
   const [typedName, setTypedName] = useState("");
-  const canDelete = typedName === instanceName;
+  const canDelete = typedName === instanceName && !busy;
 
   const submitDelete = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canDelete) return;
-    onConfirm();
+    void onConfirm();
   };
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[110] flex h-screen w-screen items-center justify-center bg-black/45 p-4 backdrop-blur-sm animate-fade-in sm:p-6"
+      className="fixed inset-0 z-[110] flex h-dvh w-screen items-center justify-center bg-black/45 p-3 backdrop-blur-sm animate-fade-in sm:p-6"
       onClick={onClose}
     >
       <form
         onSubmit={submitDelete}
-        className="w-full max-w-xl rounded-3xl border border-border bg-background p-6 shadow-2xl animate-pop-in"
+        className="max-h-[92dvh] w-full max-w-xl overflow-y-auto rounded-2xl border border-border bg-background p-4 shadow-2xl animate-pop-in sm:rounded-3xl sm:p-6"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4">
@@ -1127,7 +1342,7 @@ function DeleteInstanceSheet({
             </div>
             <h2 className="text-xl font-semibold tracking-tight">Delete {instanceName}?</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              This mock action schedules the instance for deletion. Type{" "}
+              This removes the worker-side WhatsApp instance and auth, releases its proxy, and marks the control-plane row deleted. Type{" "}
               <span className="font-mono font-semibold text-foreground">{instanceName}</span>{" "}
               exactly to enable deletion.
             </p>
@@ -1153,6 +1368,12 @@ function DeleteInstanceSheet({
           />
         </label>
 
+        {error && (
+          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/70 dark:bg-red-950/30 dark:text-red-200">
+            {error}
+          </div>
+        )}
+
         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button
             type="button"
@@ -1167,7 +1388,7 @@ function DeleteInstanceSheet({
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Trash2Icon className="h-4 w-4" />
-            Delete instance
+            {busy ? "Deleting..." : "Delete instance"}
           </button>
         </div>
       </form>
@@ -1177,51 +1398,185 @@ function DeleteInstanceSheet({
 }
 
 function ConnectOverlay({
+  instanceId,
   connected,
   onClose,
   onConnected,
 }: {
+  instanceId: string;
   connected: boolean;
   onClose: () => void;
   onConnected: () => void;
 }) {
   const [mode, setMode] = useState<ConnectMode>("menu");
   const [loading, setLoading] = useState(false);
-  const [qrReady, setQrReady] = useState(false);
+  const [qrCode, setQrCode] = useState<string | null>(null);
   const [phone, setPhone] = useState("");
   const [pairingCode, setPairingCode] = useState("");
   const [authCleared, setAuthCleared] = useState(false);
+  const [connectError, setConnectError] = useState("");
+  const [qrUpdatedAt, setQrUpdatedAt] = useState<string | null>(null);
+  const [qrVersion, setQrVersion] = useState(0);
+  const [qrExpiresInMs, setQrExpiresInMs] = useState<number | null>(null);
+  const [qrRefreshRestartCount, setQrRefreshRestartCount] = useState(0);
+  const [pairingStatus, setPairingStatus] = useState("");
 
-  const showQr = () => {
+  useEffect(() => {
+    if (mode !== "qr") return;
+
+    let cancelled = false;
+    const pollQr = async () => {
+      try {
+        const latest = (await getInstanceQr(instanceId)).worker;
+        if (cancelled) return;
+
+        if (latest.status === "connected") {
+          onConnected();
+          return;
+        }
+
+        if (latest.qrCode) {
+          const expiresInMs = getQrExpiresInMs(latest.qrCodeUpdatedAt, latest.qrExpiresInMs);
+          if (typeof expiresInMs === "number" && expiresInMs <= 0) {
+            setQrCode(null);
+            setQrExpiresInMs(0);
+            setPairingStatus("Refreshing QR...");
+            setConnectError("");
+            setLoading(false);
+            return;
+          }
+          setQrCode(latest.qrCode);
+          setQrUpdatedAt(latest.qrCodeUpdatedAt || null);
+          setQrVersion(latest.qrVersion || 0);
+          setQrExpiresInMs(expiresInMs);
+          setQrRefreshRestartCount(latest.qrRefreshRestartCount || 0);
+          setPairingStatus("");
+          setConnectError("");
+          setLoading(false);
+          return;
+        }
+
+        if (latest.linkingGraceActive || latest.connectionIssue?.message) {
+          setQrCode(null);
+          setLoading(false);
+          setPairingStatus(latest.connectionIssue?.message || "Scan received, finishing WhatsApp link...");
+          setConnectError("");
+          return;
+        }
+
+        if (latest.status === "disconnected") {
+          setLoading(false);
+          setConnectError(
+            latest.connectionIssue?.message ||
+              latest.message ||
+              "QR pairing stopped. Clear auth, then start QR pairing again.",
+          );
+          return;
+        }
+
+        setQrRefreshRestartCount(latest.qrRefreshRestartCount || 0);
+      } catch (error) {
+        if (!cancelled) {
+          setLoading(false);
+          setConnectError(error instanceof Error ? error.message : "Could not refresh QR code.");
+        }
+      }
+    };
+
+    pollQr();
+    const timer = window.setInterval(pollQr, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [instanceId, mode, onConnected]);
+
+  const showQr = async () => {
     setMode("qr");
-    setQrReady(false);
+    setQrCode(null);
+    setQrUpdatedAt(null);
+    setQrVersion(0);
+    setQrExpiresInMs(null);
+    setQrRefreshRestartCount(0);
+    setPairingStatus("");
+    setConnectError("");
     setLoading(true);
-    window.setTimeout(() => {
-      setLoading(false);
-      setQrReady(true);
-    }, 850);
+    let keepPreparing = false;
+    try {
+      await connectInstance(instanceId);
+      const qr = await waitForQr(instanceId);
+      if (qr.status === "connected") {
+        onConnected();
+        return;
+      }
+      if (!qr.qrCode) {
+        if (qr.status === "connecting") {
+          keepPreparing = true;
+          setConnectError("");
+        } else {
+          setConnectError(qr.message || "QR is not ready yet. Try again in a few seconds.");
+        }
+        return;
+      }
+      const expiresInMs = getQrExpiresInMs(qr.qrCodeUpdatedAt, qr.qrExpiresInMs);
+      if (typeof expiresInMs === "number" && expiresInMs <= 0) {
+        keepPreparing = true;
+        setPairingStatus("Refreshing QR...");
+        return;
+      }
+      setQrCode(qr.qrCode);
+      setQrUpdatedAt(qr.qrCodeUpdatedAt || null);
+      setQrVersion(qr.qrVersion || 0);
+      setQrExpiresInMs(expiresInMs);
+      setQrRefreshRestartCount(qr.qrRefreshRestartCount || 0);
+      setPairingStatus("");
+    } catch (error) {
+      setConnectError(error instanceof Error ? error.message : "Could not start WhatsApp connection.");
+    } finally {
+      setLoading(keepPreparing);
+    }
   };
 
-  const generatePairingCode = () => {
+  const generatePairingCode = async () => {
     setMode("pairing");
     setLoading(true);
+    setConnectError("");
     setPairingCode("");
-    window.setTimeout(() => {
+    try {
+      const response = await connectInstance(instanceId, { pairingPhone: phone });
+      const code = response.worker.pairingCode || response.worker.instance?.pairingCode || "";
+      if (!code) {
+        setConnectError("Pairing code was not returned by the worker. Try QR pairing instead.");
+        return;
+      }
+      setPairingCode(code);
+    } catch (error) {
+      setConnectError(error instanceof Error ? error.message : "Could not generate pairing code.");
+    } finally {
       setLoading(false);
-      setPairingCode(String(Math.floor(10000000 + Math.random() * 90000000)));
-    }, 850);
+    }
   };
 
-  const clearAuth = () => {
+  const clearAuth = async () => {
     if (!window.confirm("Clear saved WhatsApp auth for this instance? You will need to pair again.")) return;
     setMode("clear");
-    setAuthCleared(true);
+    setLoading(true);
+    setConnectError("");
+    setAuthCleared(false);
+    try {
+      await clearInstanceAuth(instanceId);
+      setAuthCleared(true);
+    } catch (error) {
+      setConnectError(error instanceof Error ? error.message : "Could not clear saved auth.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex h-screen w-screen items-center justify-center bg-black/45 p-4 backdrop-blur-sm animate-fade-in">
-      <div className="relative flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-border bg-background shadow-2xl animate-pop-in">
-        <div className="flex items-start justify-between gap-4 border-b border-border/60 p-6">
+    <div className="fixed inset-0 z-[100] flex h-dvh w-screen items-center justify-center bg-black/45 p-3 backdrop-blur-sm animate-fade-in sm:p-4">
+      <div className="relative flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl animate-pop-in sm:rounded-3xl">
+        <div className="flex items-start justify-between gap-4 border-b border-border/60 p-4 sm:p-6">
           <div>
             <h2 className="text-xl font-semibold">Connect WhatsApp</h2>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -1233,7 +1588,7 @@ function ConnectOverlay({
           </button>
         </div>
 
-        <div className="grid gap-5 overflow-y-auto p-6 md:grid-cols-[260px_minmax(0,1fr)]">
+        <div className="grid gap-4 overflow-y-auto p-4 sm:p-6 md:grid-cols-[260px_minmax(0,1fr)] md:gap-5">
           <div className="space-y-3">
             <ActionTile
               active={mode === "qr"}
@@ -1253,12 +1608,12 @@ function ConnectOverlay({
               active={mode === "clear"}
               icon={LinkIcon}
               title="Clear auth"
-              body={connected ? "Wipe saved auth before pairing again." : "Reset the mock auth state."}
+              body={connected ? "Wipe saved auth before pairing again." : "Reset saved auth state."}
               onClick={clearAuth}
             />
           </div>
 
-          <div className="grid min-h-[360px] place-items-center rounded-2xl border border-border/60 bg-muted/20 p-6">
+          <div className="grid min-h-[300px] place-items-center rounded-2xl border border-border/60 bg-muted/20 p-4 sm:min-h-[360px] sm:p-6">
             {mode === "menu" && (
               <div className="max-w-sm text-center">
                 <MessageCircleIcon className="mx-auto h-10 w-10 text-muted-foreground" />
@@ -1272,16 +1627,35 @@ function ConnectOverlay({
             {mode === "qr" && (
               <div className="w-full max-w-sm text-center">
                 {loading && <LoadingState label="Preparing QR code" />}
-                {qrReady && (
-                  <>
-                    <QrMock />
-                    <p className="mt-4 text-sm text-muted-foreground">Scan this mock QR in WhatsApp linked devices.</p>
+                {!loading && connectError && (
+                  <div>
+                    <ErrorState message={connectError} />
                     <button
-                      onClick={onConnected}
-                      className="mt-5 rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90"
+                      onClick={showQr}
+                      className="mt-4 rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90"
                     >
-                      Simulate scanned
+                      Retry QR
                     </button>
+                  </div>
+                )}
+                {!loading && !connectError && pairingStatus && (
+                  <div className="rounded-2xl border border-border/60 bg-background p-5">
+                    <LoadingState label={pairingStatus} />
+                    <p className="mt-3 text-xs text-muted-foreground">Keep WhatsApp open while the link finishes. A new QR will appear only if this attempt times out.</p>
+                  </div>
+                )}
+                {!loading && qrCode && (
+                  <>
+                    <img src={qrCode} alt="WhatsApp pairing QR code" className="mx-auto h-48 w-48 rounded-2xl border border-border bg-white p-3 shadow-inner sm:h-56 sm:w-56" />
+                    <p className="mt-4 text-sm text-muted-foreground">Scan this QR in WhatsApp linked devices. It refreshes automatically while this modal stays open.</p>
+                    {(qrUpdatedAt || qrVersion > 0) && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {qrVersion > 0 ? `QR version ${qrVersion}` : "QR refreshed"}
+                        {qrUpdatedAt ? ` · Updated ${new Date(qrUpdatedAt).toLocaleTimeString()}` : ""}
+                        {typeof qrExpiresInMs === "number" ? ` · Expires in ${Math.max(0, Math.ceil(qrExpiresInMs / 1000))}s` : ""}
+                        {qrRefreshRestartCount > 0 ? ` · Auto-refresh restarts ${qrRefreshRestartCount}` : ""}
+                      </p>
+                    )}
                   </>
                 )}
               </div>
@@ -1290,11 +1664,11 @@ function ConnectOverlay({
             {mode === "pairing" && (
               <div className="w-full max-w-sm">
                 <label className="text-sm font-medium">Phone number</label>
-                <div className="mt-2 flex gap-2">
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                   <input
                     value={phone}
                     onChange={(event) => setPhone(event.target.value)}
-                    placeholder="+4478392039923"
+                    placeholder="+15551234567"
                     className="h-10 min-w-0 flex-1 rounded-lg border border-border/60 bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30"
                   />
                   <button
@@ -1307,19 +1681,14 @@ function ConnectOverlay({
                 </div>
                 <div className="mt-8 grid min-h-32 place-items-center rounded-2xl border border-border/60 bg-background p-5 text-center">
                   {loading && <LoadingState label="Generating code" />}
+                  {!loading && connectError && <ErrorState message={connectError} />}
                   {!loading && pairingCode && (
                     <div>
-                      <div className="font-mono text-4xl font-semibold tracking-[0.35em]">{pairingCode}</div>
+                      <div className="font-mono text-3xl font-semibold tracking-[0.24em] sm:text-4xl sm:tracking-[0.35em]">{pairingCode}</div>
                       <p className="mt-3 text-sm text-muted-foreground">Enter this 8 digit code in WhatsApp.</p>
-                      <button
-                        onClick={onConnected}
-                        className="mt-5 rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90"
-                      >
-                        Simulate paired
-                      </button>
                     </div>
                   )}
-                  {!loading && !pairingCode && (
+                  {!loading && !pairingCode && !connectError && (
                     <p className="text-sm text-muted-foreground">Enter a phone number to generate an 8 digit code.</p>
                   )}
                 </div>
@@ -1328,11 +1697,13 @@ function ConnectOverlay({
 
             {mode === "clear" && (
               <div className="max-w-sm text-center">
-                {authCleared ? (
+                {loading && <LoadingState label="Clearing auth" />}
+                {!loading && connectError && <ErrorState message={connectError} />}
+                {!loading && authCleared ? (
                   <>
                     <CheckIcon className="mx-auto h-10 w-10 text-emerald-600" />
                     <h3 className="mt-4 font-semibold">Auth cleared</h3>
-                    <p className="mt-2 text-sm text-muted-foreground">Saved credentials were cleared in this mock state.</p>
+                    <p className="mt-2 text-sm text-muted-foreground">Saved credentials were cleared.</p>
                     <button
                       onClick={showQr}
                       className="mt-5 rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90"
@@ -1340,9 +1711,9 @@ function ConnectOverlay({
                       Show QR next
                     </button>
                   </>
-                ) : (
+                ) : !loading && !connectError ? (
                   <p className="text-sm text-muted-foreground">Use the clear auth option to reset pairing credentials.</p>
-                )}
+                ) : null}
               </div>
             )}
           </div>
@@ -1351,6 +1722,16 @@ function ConnectOverlay({
     </div>,
     document.body,
   );
+}
+
+async function waitForQr(instanceId: string) {
+  let latest = await getInstanceQr(instanceId);
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    if (latest.worker.qrCode || latest.worker.status === "connected") return latest.worker;
+    await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    latest = await getInstanceQr(instanceId);
+  }
+  return latest.worker;
 }
 
 function ActionTile({
@@ -1394,25 +1775,19 @@ function LoadingState({ label }: { label: string }) {
   );
 }
 
-function QrMock() {
+function ErrorState({ message }: { message: string }) {
   return (
-    <div className="mx-auto grid h-56 w-56 grid-cols-7 gap-1 rounded-2xl border border-border bg-background p-4 shadow-inner">
-      {Array.from({ length: 49 }).map((_, index) => (
-        <div
-          key={index}
-          className={cn(
-            "rounded-[3px]",
-            [0, 1, 2, 7, 14, 42, 43, 44, 35, 28, 4, 6, 12, 16, 19, 22, 24, 31, 33, 38, 40, 46].includes(index)
-              ? "bg-foreground"
-              : "bg-muted",
-          )}
-        />
-      ))}
+    <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-center text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+      {message}
     </div>
   );
 }
 
 function getInstanceHealth(connected: boolean, status: string, qualityScore: string) {
+  if (status === "connecting") {
+    return { label: "Pairing pending", className: "text-amber-600 dark:text-amber-300" };
+  }
+
   if (!connected || status === "offline" || status === "provisioning") {
     return { label: "Critical health", className: "text-red-600 dark:text-red-400" };
   }

@@ -16,7 +16,7 @@ import crypto from 'crypto';
 import QRCode from 'qrcode';
 import NodeCache from 'node-cache';
 import pino from 'pino';
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, downloadMediaMessage, extensionForMediaMessage, fetchLatestWaWebVersion } from 'baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, downloadMediaMessage, extensionForMediaMessage, fetchLatestBaileysVersion, Browsers } from 'baileys';
 import baileysHelper from 'baileys_helper';
 import { AntiBanManager, safeSendMessage, delay } from './anti-ban.js';
 import { uploadMedia, isStorageEnabled } from './azure-storage.js';
@@ -67,30 +67,85 @@ function sanitizeClientReason(r) {
     return redactTechVendorNames(r);
 }
 
+function isProtocolMismatchDisconnect(plan = {}) {
+    const haystack = [
+        plan.message,
+        plan.category,
+        plan.raw?.message,
+        plan.raw?.category,
+        plan.raw?.reason,
+    ].filter(Boolean).join(' ');
+
+    return /client\s+too\s+old|protocol\s+mismatch|restart\s+required/i.test(haystack);
+}
+
 // Silent socket logger (reduces noise, improves stealth)
 const logger = pino({ level: 'silent' });
 
-let cachedWaWebVersion = null;
-let cachedWaWebVersionAt = 0;
-const WA_WEB_VERSION_CACHE_MS = 6 * 60 * 60 * 1000;
-const WA_WEB_VERSION_TIMEOUT_MS = 5000;
+let cachedBaileysVersion = null;
+let cachedBaileysVersionAt = 0;
+const BAILEYS_VERSION_CACHE_MS = 6 * 60 * 60 * 1000;
+const BAILEYS_VERSION_TIMEOUT_MS = 5000;
+const STALE_PROTOCOL_PAIRING_RETRY_LIMIT = 2;
+const PAIRING_RECONNECT_DELAY_MS = 1500;
+const POST_SCAN_LINK_GRACE_MS = 90 * 1000;
+const CONNECT_REPLACED_RETRY_DELAY_MS = 10_000;
+const QR_CODE_TTL_MS = 110_000;
 
-async function getCurrentWaWebVersion() {
+async function getCurrentBaileysVersion() {
     const now = Date.now();
-    if (cachedWaWebVersion && now - cachedWaWebVersionAt < WA_WEB_VERSION_CACHE_MS) {
-        return cachedWaWebVersion;
+    if (cachedBaileysVersion && now - cachedBaileysVersionAt < BAILEYS_VERSION_CACHE_MS) {
+        return cachedBaileysVersion;
     }
 
     const timeout = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('WhatsApp Web version lookup timed out')), WA_WEB_VERSION_TIMEOUT_MS);
+        setTimeout(() => reject(new Error('Baileys version lookup timed out')), BAILEYS_VERSION_TIMEOUT_MS);
     });
-    const result = await Promise.race([fetchLatestWaWebVersion(), timeout]);
+    const result = await Promise.race([fetchLatestBaileysVersion(), timeout]);
     if (!Array.isArray(result?.version)) {
-        throw new Error('WhatsApp Web version lookup returned no version');
+        throw new Error('Baileys version lookup returned no version');
     }
-    cachedWaWebVersion = result.version;
-    cachedWaWebVersionAt = now;
-    return cachedWaWebVersion;
+    cachedBaileysVersion = result.version;
+    cachedBaileysVersionAt = now;
+    return cachedBaileysVersion;
+}
+
+function summarizeConnectionUpdate(update = {}) {
+    const boom = update.lastDisconnect?.error;
+    const output = boom?.output || {};
+    const payload = output.payload || {};
+    return {
+        connection: update.connection || null,
+        hasQr: !!update.qr,
+        receivedPendingNotifications: update.receivedPendingNotifications,
+        isNewLogin: update.isNewLogin,
+        statusCode: output.statusCode || null,
+        error: boom?.message || payload.message || null,
+        reason: payload.reason || null,
+        boom: boom ? {
+            name: boom.name || null,
+            isBoom: !!boom.isBoom,
+            statusCode: output.statusCode || null,
+            error: payload.error || null,
+            message: payload.message || null,
+            reason: payload.reason || null,
+        } : null,
+    };
+}
+
+function summarizeCredsUpdate(creds = {}) {
+    return {
+        keys: Object.keys(creds).sort(),
+        registered: !!creds.registered,
+        hasMe: !!creds.me,
+        hasAccount: !!creds.account,
+        hasSignalIdentities: Array.isArray(creds.signalIdentities) && creds.signalIdentities.length > 0,
+        hasProcessedHistoryMessages: Array.isArray(creds.processedHistoryMessages) && creds.processedHistoryMessages.length > 0,
+        hasPlatform: !!creds.platform,
+        hasAccountSyncCounter: creds.accountSyncCounter !== undefined,
+        hasAdvSecretKey: !!creds.advSecretKey,
+        hasNoiseKey: !!creds.noiseKey,
+    };
 }
 
 /**
@@ -106,6 +161,13 @@ function generateUUID() {
 function normalizePhone(phone) {
     if (!phone) return '';
     return phone.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
+}
+
+function normalizeConnectedPhoneIdentity(identity) {
+    if (!identity || typeof identity !== 'string' || /@lid\b/i.test(identity)) return null;
+    const localPart = identity.trim().split('@')[0].split(':')[0];
+    const digits = normalizePhone(localPart).replace(/[^\d]/g, '');
+    return digits.length >= 6 && digits.length <= 20 ? digits : null;
 }
 
 // Base paths
@@ -216,6 +278,7 @@ class WhatsAppInstance {
         this.id = config.id;
         this.name = config.name || `Instance ${config.id}`;
         this.webhookUrl = config.webhookUrl || '';
+        this.webhookSigningSecret = String(config.webhookSigningSecret || '').trim();
         this.createdAt = config.createdAt || new Date().toISOString();
 
         // Per-instance proxy override (null = inherit deployment default from env vars)
@@ -239,9 +302,23 @@ class WhatsAppInstance {
         this.rawSocket = null;
         this.status = 'disconnected'; // disconnected | connecting | connected
         this.qrCode = null;
+        this.qrContent = null;
+        this.qrCodeUpdatedAt = null;
+        this.qrVersion = 0;
+        this.qrRefreshRestartCount = 0;
+        this.staleProtocolResetCount = 0;
+        this.pairingRestartTimer = null;
+        this.activeConnectGeneration = 0;
+        this.connectInFlight = false;
+        this.qrScanReceivedAt = null;
+        this.linkingGraceUntil = null;
+        this.lastPairingUpdateAt = null;
+        this.lastCredsUpdateAt = null;
+        this.lastCredsUpdateSummary = null;
         this.pairingCode = null; // For pairing code login (alternative to QR)
         this.connectedPhone = null;
         this.connectedAt = null;
+        this.connectionIssue = null;
         
         // Message deduplication (prevent processing same message multiple times)
         this.processedMessages = new Set();
@@ -333,6 +410,119 @@ class WhatsAppInstance {
         await this._loadSavedContacts();
         return this;
     }
+
+    _cancelPairingRestartTimer() {
+        if (this.pairingRestartTimer) {
+            clearTimeout(this.pairingRestartTimer);
+            this.pairingRestartTimer = null;
+        }
+    }
+
+    _isQrTimeoutDisconnect(statusCode, summary = {}) {
+        const detail = [summary.error, summary.reason].filter(Boolean).join(' ');
+        return statusCode === DisconnectReason.timedOut || /qr refs attempts ended|qr.*timeout|timed?\s*out/i.test(detail);
+    }
+
+    _isStaleProtocolDisconnect(statusCode, reconnectPlan = {}, summary = {}) {
+        const detail = [
+            reconnectPlan.message,
+            reconnectPlan.category,
+            reconnectPlan.raw?.message,
+            reconnectPlan.raw?.reason,
+            summary.error,
+            summary.reason,
+        ].filter(Boolean).join(' ');
+
+        return statusCode === DisconnectReason.restartRequired
+            || isProtocolMismatchDisconnect(reconnectPlan)
+            || /client\s+too\s+old|protocol\s+mismatch|restart\s+required/i.test(detail);
+    }
+
+    _isConflictDisconnect(statusCode, reconnectPlan = {}, summary = {}) {
+        const detail = [
+            reconnectPlan.message,
+            reconnectPlan.category,
+            reconnectPlan.raw?.message,
+            reconnectPlan.raw?.reason,
+            summary.error,
+            summary.reason,
+            summary.boom?.message,
+            summary.boom?.reason,
+        ].filter(Boolean).join(' ');
+
+        return statusCode === DisconnectReason.connectionReplaced
+            || /\bconflict\b|connection\s+replaced|replaced\s+by\s+another/i.test(detail);
+    }
+
+    _isPostScanGraceActive(now = Date.now()) {
+        return !!this.linkingGraceUntil && now < new Date(this.linkingGraceUntil).getTime();
+    }
+
+    _markPairingLinking(source, extra = {}) {
+        const now = Date.now();
+        const firstSeen = !this.qrScanReceivedAt;
+        this.qrScanReceivedAt = this.qrScanReceivedAt || new Date(now).toISOString();
+        this.linkingGraceUntil = new Date(now + POST_SCAN_LINK_GRACE_MS).toISOString();
+        this.qrCode = null;
+        this.qrContent = null;
+        this.qrCodeUpdatedAt = null;
+        this.connectionIssue = {
+            message: 'Scan received, finishing WhatsApp link...',
+            category: 'pairing_linking',
+            requiresAuthClear: false,
+            at: new Date().toISOString(),
+            source,
+            linkingGraceUntil: this.linkingGraceUntil,
+            ...extra,
+        };
+        this._emitStatusChange();
+        this._log(
+            `Scan received; entering linking grace until ${this.linkingGraceUntil}${firstSeen ? '' : ' (extended)'} via ${source}`,
+            'info'
+        );
+    }
+
+    _schedulePairingReconnect({ reason, clearAuth = false, delayMs = PAIRING_RECONNECT_DELAY_MS, recoveryMode = null } = {}) {
+        this._cancelPairingRestartTimer();
+        const generation = this.activeConnectGeneration;
+        const mode = recoveryMode || 'qr-timeout';
+        this.status = 'connecting';
+        this.pairingCode = null;
+        this.connectedPhone = null;
+        this.connectedAt = null;
+        this.connectionIssue = reason ? {
+            message: reason,
+            category: mode === 'post-scan-restart'
+                    ? 'pairing_restart_required'
+                    : 'pairing_qr_refresh',
+            requiresAuthClear: false,
+            at: new Date().toISOString(),
+            qrRefreshRestartCount: this.qrRefreshRestartCount,
+            staleProtocolResetCount: this.staleProtocolResetCount,
+            recoveryMode: mode,
+        } : null;
+        this._emitStatusChange();
+
+        this.pairingRestartTimer = setTimeout(async () => {
+            if (generation !== this.activeConnectGeneration) return;
+            this.pairingRestartTimer = null;
+            try {
+                await this.connect({ _pairingRecovery: mode });
+            } catch (err) {
+                this.status = 'disconnected';
+                this.connectionIssue = {
+                    message: `Automatic pairing retry failed: ${err.message}`,
+                    category: 'pairing_retry_failed',
+                    requiresAuthClear: false,
+                    at: new Date().toISOString(),
+                    qrRefreshRestartCount: this.qrRefreshRestartCount,
+                    staleProtocolResetCount: this.staleProtocolResetCount,
+                };
+                this._log(`Automatic pairing retry failed: ${err.message}`, 'error');
+                this._emitStatusChange();
+            }
+        }, delayMs);
+    }
     
     /**
      * Start WhatsApp connection (QR code mode by default, or pairing code if phone provided)
@@ -341,14 +531,30 @@ class WhatsAppInstance {
      */
     async connect(options = {}) {
         const usePairingCode = !!options.pairingPhone;
+        const isPairingRecovery = !!options._pairingRecovery;
         console.log(`[Instance ${this.id}] connect() called, mode: ${usePairingCode ? 'pairing' : 'qr'}, status: ${this.status}`);
         
         if (this.status === 'connected') {
             throw new Error('Already connected');
         }
-        if (this.status === 'connecting') {
+        if (this.status === 'connecting' && !isPairingRecovery) {
             throw new Error('Connection in progress');
         }
+        if (this.connectInFlight) {
+            throw new Error('Connection in progress');
+        }
+        this.connectInFlight = true;
+
+        this._cancelPairingRestartTimer();
+        if (!isPairingRecovery) {
+            this.qrRefreshRestartCount = 0;
+            this.staleProtocolResetCount = 0;
+            this.qrScanReceivedAt = null;
+            this.linkingGraceUntil = null;
+            this.lastCredsUpdateAt = null;
+            this.lastCredsUpdateSummary = null;
+        }
+        const connectGeneration = ++this.activeConnectGeneration;
         
         // Clean up existing socket if any
         if (this.socket) {
@@ -364,6 +570,7 @@ class WhatsAppInstance {
         }
         
         this.status = 'connecting';
+        this.connectionIssue = null;
         this.pairingCode = null;
         this._emitStatusChange();
         this._log(`Starting ${usePairingCode ? 'pairing code' : 'QR code'} connection...`, 'info');
@@ -437,24 +644,34 @@ class WhatsAppInstance {
             }
 
             // 3) Build the raw socket; apply the sticky fingerprint only after registration
-            let waWebVersion = null;
+            let baileysVersion = null;
             try {
-                waWebVersion = await getCurrentWaWebVersion();
-                this._log(`Using WhatsApp Web version ${waWebVersion.join('.')}`, 'info');
+                baileysVersion = await getCurrentBaileysVersion();
+                this._log(`Using WhatsApp transport version ${baileysVersion.join('.')}`, 'info');
             } catch (err) {
-                this._log(`Could not refresh WhatsApp Web version, using transport default: ${err.message}`, 'warning');
+                this._log(`Could not refresh WhatsApp transport version, using bundled default: ${err.message}`, 'warning');
             }
 
             const rawSocket = makeWASocket({
                 auth: state,
                 logger: logger,
-                ...(waWebVersion ? { version: waWebVersion } : {}),
+                ...(baileysVersion ? { version: baileysVersion } : {}),
+                browser: fingerprint ? fingerprint.browser : Browsers.macOS('Chrome'),
+                printQRInTerminal: false,
                 cachedGroupMetadata: async (jid) => this.groupMetadataCache.get(jid),
                 userDevicesCache: this.userDevicesCache,
                 msgRetryCounterCache: this.msgRetryCounterCache,
                 mediaCache: this.mediaCache,
                 markOnlineOnConnect: false,
-                ...(fingerprint ? { browser: fingerprint.browser } : {}),
+                mobile: false,
+                connectTimeoutMs: 60_000,
+                keepAliveIntervalMs: 15_000,
+                defaultQueryTimeoutMs: 120_000,
+                retryRequestDelayMs: 500,
+                qrTimeout: QR_CODE_TTL_MS,
+                syncFullHistory: !isInitialRegistration,
+                shouldSyncHistoryMessage: () => !isInitialRegistration,
+                generateHighQualityLinkPreview: false,
                 getMessage: async (key) => {
                     const msg = this.messageStore.get(key.id);
                     return msg?.message || undefined;
@@ -478,9 +695,48 @@ class WhatsAppInstance {
                 this.socket = rawSocket;
             }
             console.log(`[Instance ${this.id}] Socket created${proxyAgent ? ' (via proxy)' : ''}${this.antibanCtx ? ' [antiban-v2]' : ''}`);
+
+            const socketConfigSummary = {
+                browser: fingerprint ? fingerprint.browser : Browsers.macOS('Chrome'),
+                mobile: false,
+                markOnlineOnConnect: false,
+                syncFullHistory: !isInitialRegistration,
+                connectTimeoutMs: 60_000,
+                keepAliveIntervalMs: 15_000,
+                defaultQueryTimeoutMs: 120_000,
+                qrTimeout: QR_CODE_TTL_MS,
+                proxy: !!proxyAgent,
+            };
+            this._log(`Pairing socket config: ${JSON.stringify(socketConfigSummary)}`, 'info');
+
+            rawSocket.ws?.on?.('close', (code, reason) => {
+                this._log(`WhatsApp websocket closed: ${JSON.stringify({
+                    code,
+                    reason: reason?.toString?.() || null,
+                    sinceScanMs: this.qrScanReceivedAt ? Date.now() - new Date(this.qrScanReceivedAt).getTime() : null,
+                })}`, 'warning');
+            });
+            rawSocket.ws?.on?.('error', (err) => {
+                this._log(`WhatsApp websocket error: ${err?.message || String(err)}`, 'warning');
+            });
             
             // Save credentials when updated
-            this.socket.ev.on('creds.update', saveCreds);
+            this.socket.ev.on('creds.update', async (creds) => {
+                const summary = summarizeCredsUpdate(creds);
+                this.lastCredsUpdateAt = new Date().toISOString();
+                this.lastCredsUpdateSummary = summary;
+                this._log(`Credentials update during pairing: ${JSON.stringify({
+                    ...summary,
+                    sinceQrMs: this.qrCodeUpdatedAt ? Date.now() - new Date(this.qrCodeUpdatedAt).getTime() : null,
+                    linkingGraceActive: this._isPostScanGraceActive(),
+                })}`, 'info');
+
+                if (this.status === 'connecting' && !this.connectedAt && (this.qrCode || this.qrContent || this.qrScanReceivedAt)) {
+                    this._markPairingLinking('creds.update', { creds: summary });
+                }
+
+                await saveCreds();
+            });
 
             const enableAntibanAfterRegistration = async () => {
                 if (!isInitialRegistration || this.antibanCtx || !this.rawSocket) return;
@@ -519,16 +775,47 @@ class WhatsAppInstance {
             
             // Handle connection updates
             this.socket.ev.on('connection.update', async (update) => {
+                if (connectGeneration !== this.activeConnectGeneration) {
+                    return;
+                }
                 const { connection, qr, lastDisconnect } = update;
+                const updateSummary = summarizeConnectionUpdate(update);
+                this.lastPairingUpdateAt = new Date().toISOString();
+
+                if (connection || lastDisconnect) {
+                    this._log(`Pairing update: ${JSON.stringify({
+                        ...updateSummary,
+                        sinceQrMs: this.qrCodeUpdatedAt ? Date.now() - new Date(this.qrCodeUpdatedAt).getTime() : null,
+                        sinceScanMs: this.qrScanReceivedAt ? Date.now() - new Date(this.qrScanReceivedAt).getTime() : null,
+                        linkingGraceUntil: this.linkingGraceUntil,
+                    })}`, lastDisconnect ? 'warning' : 'info');
+                }
+
+                if (update.isNewLogin && this.status === 'connecting' && !this.connectedAt) {
+                    this._markPairingLinking('new-login', { isNewLogin: true });
+                }
+
+                if (connection === 'connecting' && !qr && this.lastCredsUpdateAt && this.qrScanReceivedAt && !this.connectedAt) {
+                    this._markPairingLinking('connection.update', { connection });
+                }
                 
                 // QR Code received (only show if NOT in pairing code mode)
                 if (qr && !usePairingCode) {
+                    if (this._isPostScanGraceActive()) {
+                        this._log(`Suppressing QR update while scan is in linking grace (until ${this.linkingGraceUntil})`, 'warning');
+                        return;
+                    }
                     console.log(`[Instance ${this.id}] QR code received`);
                     try {
+                        const qrChanged = this.qrContent !== qr;
+                        this.qrContent = qr;
                         this.qrCode = await QRCode.toDataURL(qr);
+                        this.qrCodeUpdatedAt = new Date().toISOString();
+                        this.qrVersion += 1;
+                        this.connectionIssue = null;
                         this.status = 'connecting';
                         this._emitStatusChange();
-                        this._log('QR code generated - scan with WhatsApp', 'info');
+                        this._log(`QR code ${qrChanged ? 'generated' : 'refreshed'} - scan with WhatsApp (version ${this.qrVersion})`, 'info');
                     } catch (err) {
                         console.error(`[Instance ${this.id}] QR generation error:`, err);
                     }
@@ -538,17 +825,27 @@ class WhatsAppInstance {
                     const statusCode = lastDisconnect?.error?.output?.statusCode;
                     // Use the anti-ban pipeline's typed disconnect classifier for backoff
                     const reconnectPlan = planReconnect(statusCode, 5000);
-                    // Honor our existing "loggedOut means stop" rule on top of the classifier
-                    const isLoggedOut = statusCode === DisconnectReason.loggedOut;
-                    const shouldReconnect = !isLoggedOut && reconnectPlan.shouldReconnect !== false;
+                    const isConflict = this._isConflictDisconnect(statusCode, reconnectPlan, updateSummary);
+                    // A 401 with "conflict" is a replaced socket, not an auth wipe signal.
+                    const isLoggedOut = statusCode === DisconnectReason.loggedOut && !isConflict;
+                    const shouldReconnect = !isLoggedOut && !isConflict && reconnectPlan.shouldReconnect !== false;
+                    const wasPairing = this.status === 'connecting' && !this.connectedAt;
+                    const isQrTimeout = this._isQrTimeoutDisconnect(statusCode, updateSummary);
+                    const isStaleProtocol = this._isStaleProtocolDisconnect(statusCode, reconnectPlan, updateSummary);
+                    const postScanGraceActive = this._isPostScanGraceActive();
 
-                    console.log(`[Instance ${this.id}] Connection closed. Status:`, statusCode, '→', reconnectPlan.message);
+                    console.log(`[Instance ${this.id}] Connection closed. Status:`, statusCode, '→', reconnectPlan.message, updateSummary);
                     this.status = 'disconnected';
-                    this.qrCode = null;
+                    this.socket = null;
+                    this.rawSocket = null;
+                    if (!wasPairing || (!isQrTimeout && !isStaleProtocol)) {
+                        this.qrCode = null;
+                        this.qrContent = null;
+                        this.qrCodeUpdatedAt = null;
+                    }
                     this.pairingCode = null;
                     this.connectedPhone = null;
                     this.connectedAt = null;
-                    this._emitStatusChange();
 
                     // Cancel any pending stealth presence ramp
                     if (this.presenceRampAbort) {
@@ -563,12 +860,106 @@ class WhatsAppInstance {
                         ctx.destroy().catch((err) => console.warn(`[Instance ${this.id}] antiban ctx destroy failed:`, err.message));
                     }
 
-                    if (shouldReconnect) {
+                    if (wasPairing && postScanGraceActive && statusCode === DisconnectReason.restartRequired) {
+                        this._log(
+                            `Post-scan restart required (${statusCode}: ${updateSummary.error || reconnectPlan.message}); preserving auth and restarting socket in ${Math.round(PAIRING_RECONNECT_DELAY_MS / 1000)}s`,
+                            'warning'
+                        );
+                        this._schedulePairingReconnect({
+                            reason: 'Scan received; restarting WhatsApp socket with preserved auth.',
+                            clearAuth: false,
+                            delayMs: PAIRING_RECONNECT_DELAY_MS,
+                            recoveryMode: 'post-scan-restart',
+                        });
+                    } else if (wasPairing && postScanGraceActive && isQrTimeout) {
+                        this._log(
+                            `Post-scan timeout (${statusCode}: ${updateSummary.error || reconnectPlan.message}); preserving auth and restarting socket in ${Math.round(PAIRING_RECONNECT_DELAY_MS / 1000)}s`,
+                            'warning'
+                        );
+                        this._schedulePairingReconnect({
+                            reason: 'Scan received; restarting after pairing timeout with preserved auth.',
+                            clearAuth: false,
+                            delayMs: PAIRING_RECONNECT_DELAY_MS,
+                            recoveryMode: 'post-scan-timeout',
+                        });
+                    } else if (wasPairing && isQrTimeout && !usePairingCode) {
+                        this.qrRefreshRestartCount += 1;
+                        this._log(`QR expired before scan (${updateSummary.error || reconnectPlan.message}); restarting pairing socket for a fresh QR`, 'warning');
+                        this._schedulePairingReconnect({
+                            reason: 'QR expired before scan; generating a fresh QR automatically.',
+                            clearAuth: false,
+                            delayMs: 1000,
+                        });
+                    } else if (wasPairing && isStaleProtocol) {
+                        if (this.staleProtocolResetCount < STALE_PROTOCOL_PAIRING_RETRY_LIMIT) {
+                            this.staleProtocolResetCount += 1;
+                            this.qrCode = null;
+                            this.qrContent = null;
+                            this.qrCodeUpdatedAt = null;
+                            this._log(
+                                `WhatsApp requested a pairing socket restart (${updateSummary.error || reconnectPlan.message}); preserving auth and retrying (${this.staleProtocolResetCount}/${STALE_PROTOCOL_PAIRING_RETRY_LIMIT})`,
+                                'warning'
+                            );
+                            this._schedulePairingReconnect({
+                                reason: `WhatsApp requested a pairing socket restart; retrying with preserved auth (${this.staleProtocolResetCount}/${STALE_PROTOCOL_PAIRING_RETRY_LIMIT}).`,
+                                clearAuth: false,
+                                recoveryMode: 'restart-required',
+                            });
+                        } else {
+                            this.qrCode = null;
+                            this.qrContent = null;
+                            this.qrCodeUpdatedAt = null;
+                            this.connectionIssue = {
+                                message: 'WhatsApp still requested pairing restarts after retries. Press QR code again to start a fresh pairing attempt.',
+                                category: reconnectPlan.category || 'restart_required',
+                                requiresAuthClear: false,
+                                at: new Date().toISOString(),
+                                statusCode,
+                                detail: updateSummary.error || reconnectPlan.message,
+                                staleProtocolResetCount: this.staleProtocolResetCount,
+                            };
+                            this._log(`Pairing protocol retries exhausted after ${this.staleProtocolResetCount} attempt(s): ${updateSummary.error || reconnectPlan.message}`, 'error');
+                            this._emitStatusChange();
+                        }
+                    } else if (isConflict) {
+                        this.connectionIssue = {
+                            message: 'WhatsApp replaced this socket with another active connection. Auth is preserved; disconnect the other worker/session, then reconnect.',
+                            category: 'connection_replaced',
+                            requiresAuthClear: false,
+                            at: new Date().toISOString(),
+                            statusCode,
+                            detail: updateSummary.error || reconnectPlan.message,
+                            retryAfterMs: CONNECT_REPLACED_RETRY_DELAY_MS,
+                        };
+                        this._log(`Connection replaced/conflict (${statusCode}: ${updateSummary.error || reconnectPlan.message}); auth preserved`, 'warning');
+                        this._emitStatusChange();
+                    } else if (shouldReconnect) {
                         const backoffMs = Math.max(2000, reconnectPlan.backoffMs || 5000);
                         this._log(`Connection lost (${reconnectPlan.category}: ${reconnectPlan.message}) — reconnecting in ${Math.round(backoffMs / 1000)}s`, 'warning');
-                        setTimeout(() => this.connect(), backoffMs);
+                        this.connectionIssue = null;
+                        this._emitStatusChange();
+                        setTimeout(() => this.connect().catch((err) => {
+                            this.connectionIssue = {
+                                message: `Reconnect failed: ${err.message}`,
+                                category: 'reconnect_failed',
+                                requiresAuthClear: false,
+                                at: new Date().toISOString()
+                            };
+                            this._log(`Reconnect failed: ${err.message}`, 'error');
+                            this._emitStatusChange();
+                        }), backoffMs);
                     } else {
-                        this._log(`Disconnect is fatal (${reconnectPlan.message}) — manual re-pair required`, 'error');
+                        const isProtocolMismatch = isProtocolMismatchDisconnect(reconnectPlan);
+                        this.connectionIssue = {
+                            message: isProtocolMismatch
+                                ? 'WhatsApp requested a pairing restart. Press QR Code again to start a fresh pairing attempt; saved auth was preserved.'
+                                : reconnectPlan.message,
+                            category: reconnectPlan.category,
+                            requiresAuthClear: false,
+                            at: new Date().toISOString()
+                        };
+                        this._log(`Disconnect is fatal (${reconnectPlan.message}) — auth preserved; manual re-pair may be required`, 'error');
+                        this._emitStatusChange();
                     }
                 }
 
@@ -577,11 +968,21 @@ class WhatsAppInstance {
                     await enableAntibanAfterRegistration();
                     this.status = 'connected';
                     this.qrCode = null;
+                    this.qrContent = null;
+                    this.qrCodeUpdatedAt = null;
+                    this.qrRefreshRestartCount = 0;
+                    this.staleProtocolResetCount = 0;
+                    this.qrScanReceivedAt = null;
+                    this.linkingGraceUntil = null;
                     this.pairingCode = null;
-                    this.connectedPhone = this.socket.user?.id?.split(':')[0] || 'Unknown';
+                    this.connectionIssue = null;
+                    this.connectedPhone = normalizeConnectedPhoneIdentity(this.socket.user?.id)
+                        || normalizeConnectedPhoneIdentity(this.socket.user?.jid)
+                        || normalizeConnectedPhoneIdentity(this.socket.user?.phone)
+                        || null;
                     this.connectedAt = new Date().toISOString();
                     this._emitStatusChange();
-                    this._log(`Connected as ${this.connectedPhone}`, 'success');
+                    this._log(`Connected as ${this.connectedPhone || 'unknown phone'}`, 'success');
 
                     const phoneNotifsOn = this._preservesPhoneNotifications();
 
@@ -662,10 +1063,19 @@ class WhatsAppInstance {
                     await this._storeLidMapping(lid, pn);
                 }
             });
+
+            this.connectInFlight = false;
             
         } catch (error) {
+            this.connectInFlight = false;
             console.error(`[Instance ${this.id}] Connection error:`, error);
             this.status = 'disconnected';
+            this.connectionIssue = {
+                message: error.message,
+                category: 'connect_error',
+                requiresAuthClear: false,
+                at: new Date().toISOString()
+            };
             this._emitStatusChange();
             this._log(`Connection error: ${error.message}`, 'error');
             throw error;
@@ -680,11 +1090,14 @@ class WhatsAppInstance {
      */
     async disconnect(options = {}) {
         const revokeSession = !!options.revokeSession;
+        this._cancelPairingRestartTimer();
+        this.activeConnectGeneration += 1;
         // Stop presence cycling
         this._stopPresenceCycling();
         
         if (this.socket) {
             try {
+                this.socket.ev?.removeAllListeners?.();
                 if (revokeSession) {
                     await this.socket.logout();
                     this._log('Disconnected (session revoked on server)', 'info');
@@ -703,7 +1116,12 @@ class WhatsAppInstance {
         }
         this.status = 'disconnected';
         this.qrCode = null;
+        this.qrContent = null;
+        this.qrCodeUpdatedAt = null;
+        this.qrScanReceivedAt = null;
+        this.linkingGraceUntil = null;
         this.pairingCode = null;
+        this.connectionIssue = null;
         this.connectedPhone = null;
         this.connectedAt = null;
         this._emitStatusChange();
@@ -845,33 +1263,51 @@ class WhatsAppInstance {
      */
     async clearAuth() {
         console.log(`[Instance ${this.id}] Clearing auth...`);
+        this._cancelPairingRestartTimer();
+        this.activeConnectGeneration += 1;
+        this.qrRefreshRestartCount = 0;
+        this.staleProtocolResetCount = 0;
         
         // Disconnect first if connected
         if (this.socket) {
             try {
+                this.socket.ev?.removeAllListeners?.();
                 await this.socket.logout();
             } catch (e) {
                 console.log(`[Instance ${this.id}] Logout during clear auth:`, e.message);
             }
             this.socket = null;
+            this.rawSocket = null;
         }
         
         this.status = 'disconnected';
         this.qrCode = null;
+        this.qrContent = null;
+        this.qrCodeUpdatedAt = null;
+        this.qrScanReceivedAt = null;
+        this.linkingGraceUntil = null;
+        this.lastCredsUpdateAt = null;
+        this.lastCredsUpdateSummary = null;
         this.connectedPhone = null;
         this.connectedAt = null;
+        this.connectionIssue = null;
         this._emitStatusChange();
         
         try {
-            console.log(`[Instance ${this.id}] Deleting auth folder: ${this.authFolder}`);
-            await fs.rm(this.authFolder, { recursive: true, force: true });
-            await fs.mkdir(this.authFolder, { recursive: true });
-            console.log(`[Instance ${this.id}] Auth folder cleared and recreated`);
+            await this._clearLocalAuthFiles();
             this._log('Auth cleared - ready for new QR scan', 'info');
         } catch (error) {
             console.error(`[Instance ${this.id}] Clear auth error:`, error);
             throw error;
         }
+    }
+
+    async _clearLocalAuthFiles(reason) {
+        console.log(`[Instance ${this.id}] Deleting auth folder: ${this.authFolder}`);
+        await fs.rm(this.authFolder, { recursive: true, force: true });
+        await fs.mkdir(this.authFolder, { recursive: true });
+        console.log(`[Instance ${this.id}] Auth folder cleared and recreated`);
+        if (reason) this._log(reason, 'warning');
     }
     
     /**
@@ -1638,7 +2074,19 @@ class WhatsAppInstance {
             
             console.log(`[Instance ${this.id}] Webhook payload:`, JSON.stringify(payload, null, 2));
             
-            const response = await axios.post(webhookUrl, payload, { timeout: 30000 });
+            const webhookBody = JSON.stringify(payload);
+            const headers = {};
+            if (this.webhookSigningSecret) {
+                const timestamp = Math.floor(Date.now() / 1000).toString();
+                const signature = crypto
+                    .createHmac('sha256', this.webhookSigningSecret)
+                    .update(`${timestamp}.${webhookBody}`)
+                    .digest('hex');
+                headers['X-Wasup-Signature-Timestamp'] = timestamp;
+                headers['X-Wasup-Signature-256'] = `sha256=${signature}`;
+            }
+
+            const response = await axios.post(webhookUrl, payload, { timeout: 30000, headers });
             
             console.log(`[Instance ${this.id}] Webhook response:`, response.status, response.data);
             
@@ -1962,9 +2410,26 @@ class WhatsAppInstance {
             name: this.name,
             status: this.status,
             qrCode: this.qrCode,
+            qrCodeUpdatedAt: this.qrCodeUpdatedAt,
+            qrVersion: this.qrVersion,
+            qrAgeMs: this.qrCodeUpdatedAt ? Date.now() - new Date(this.qrCodeUpdatedAt).getTime() : null,
+            qrTtlMs: QR_CODE_TTL_MS,
+            qrExpiresInMs: this.qrCodeUpdatedAt
+                ? Math.max(0, QR_CODE_TTL_MS - (Date.now() - new Date(this.qrCodeUpdatedAt).getTime()))
+                : null,
+            qrRefreshRestartCount: this.qrRefreshRestartCount,
+            staleProtocolResetCount: this.staleProtocolResetCount,
+            qrScanReceivedAt: this.qrScanReceivedAt,
+            linkingGraceUntil: this.linkingGraceUntil,
+            linkingGraceActive: this._isPostScanGraceActive(),
+            lastPairingUpdateAt: this.lastPairingUpdateAt,
+            lastCredsUpdateAt: this.lastCredsUpdateAt,
+            lastCredsUpdateSummary: this.lastCredsUpdateSummary,
             pairingCode: this.pairingCode,
+            phone: this.connectedPhone,
             connectedPhone: this.connectedPhone,
             connectedAt: this.connectedAt,
+            connectionIssue: this.connectionIssue,
             webhookUrl: this.webhookUrl || null,
             behaviorSettings: this.behaviorSettings,
             antiBanSettings: this.antiBanSettings,
@@ -2339,6 +2804,7 @@ class WhatsAppInstance {
             id: this.id,
             name: this.name,
             webhookUrl: this.webhookUrl,
+            webhookSigningSecret: this.webhookSigningSecret,
             behaviorSettings: this.behaviorSettings,
             antiBanSettings: this.antiBanSettings,
             antibanV2: this.antibanV2,
@@ -2642,6 +3108,7 @@ class InstanceManager {
             id,
             name: config.name || `Instance ${id}`,
             webhookUrl: config.webhookUrl || '',
+            webhookSigningSecret: config.webhookSigningSecret || '',
             behaviorSettings: config.behaviorSettings,
             antiBanSettings: config.antiBanSettings,
             antibanV2: config.antibanV2 || null,
@@ -2732,6 +3199,9 @@ class InstanceManager {
         
         if (updates.name) instance.name = updates.name;
         if (updates.webhookUrl !== undefined) instance.webhookUrl = updates.webhookUrl;
+        if (updates.webhookSigningSecret !== undefined) {
+            instance.webhookSigningSecret = String(updates.webhookSigningSecret || '').trim();
+        }
         if (updates.behaviorSettings) {
             instance.updateBehaviorSettings(updates.behaviorSettings);
         }

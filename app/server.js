@@ -43,9 +43,14 @@ import {
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.API_KEY || ''; // Optional API key for external access
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
-/** Password for /docs page "reveal API key" (override with DOCS_REVEAL_PASSWORD). */
-const DOCS_REVEAL_PASSWORD = process.env.DOCS_REVEAL_PASSWORD || 'Rahuls@123';
+const WORKER_SHARED_SECRET = process.env.WASUP_WORKER_SHARED_SECRET || API_KEY;
+const CONTROL_PLANE_URL = (
+    process.env.WASUP_CONTROL_PLANE_URL ||
+    process.env.CONTROL_PLANE_URL ||
+    'https://control-plane.wasup.co'
+).replace(/\/+$/, '');
 const DEFAULT_WEBHOOK_URL = process.env.DEFAULT_WEBHOOK_URL || process.env.N8N_WEBHOOK_URL || '';
+const CUSTOMER_KEY_AUTH_CACHE_TTL_MS = 60_000;
 
 // ========================================
 // STATE MANAGEMENT
@@ -53,6 +58,7 @@ const DEFAULT_WEBHOOK_URL = process.env.DEFAULT_WEBHOOK_URL || process.env.N8N_W
 
 let instanceManager = null;
 const wsClients = new Map(); // Map of WebSocket -> { subscribedInstances: Set }
+const customerKeyAuthCache = new Map();
 
 // ========================================
 // EXPRESS WEB SERVER
@@ -73,6 +79,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/test', (req, res) => res.sendFile(path.join(__dirname, 'public', 'test.html')));
 app.get('/docs', (req, res) => res.sendFile(path.join(__dirname, 'public', 'docs.html')));
+app.get('/playground', (req, res) => res.redirect(301, '/test'));
 // Cache the OpenAPI yaml file in memory so we don't re-read on every request.
 let _openapiCache = null;
 function loadOpenapiYaml() {
@@ -121,31 +128,6 @@ app.get('/api/openapi.yaml', (req, res) => {
     res.type('text/yaml').send(rewritten);
 });
 
-/**
- * Password-gated reveal of THIS deployment's API key + base URL for the /docs UI.
- * Registered before `authenticateAPI` so the docs page can unlock without already knowing the key.
- */
-app.post('/api/docs/unlock', (req, res) => {
-    try {
-        const submitted = String((req.body && req.body.password) || '').trim();
-        const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString().split(',')[0].trim();
-        const host = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`).toString().split(',')[0].trim();
-        const baseUrl = `${proto}://${host}`;
-        if (submitted !== DOCS_REVEAL_PASSWORD) {
-            return res.status(401).json({ success: false, error: 'Invalid password' });
-        }
-        res.json({
-            success: true,
-            baseUrl,
-            apiKey: API_KEY || '',
-            regionCode: process.env.REGION_CODE || null,
-            regionLabel: process.env.REGION_LABEL || null,
-        });
-    } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
 // CORS for API access
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
@@ -165,35 +147,106 @@ app.use((req, res, next) => {
  * Authenticate API requests
  * Supports: API Key (X-API-Key header) or Bearer token (Authorization header)
  */
-function authenticateAPI(req, res, next) {
+async function authenticateAPI(req, res, next) {
     // If no API key is configured, skip auth (for local development)
     if (!API_KEY) {
         return next();
     }
-    
-    const apiKey = req.headers['x-api-key'];
+
+    const credential = getCredentialFromRequest(req);
     const authHeader = req.headers.authorization;
-    
-    if (apiKey === API_KEY) {
+
+    if (credential === API_KEY || (WORKER_SHARED_SECRET && credential === WORKER_SHARED_SECRET)) {
         return next();
     }
-    
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-        const token = authHeader.substring(7);
-        if (token === API_KEY) {
-            return next();
-        }
-    }
-    
+
     // Check admin password as fallback
     if (ADMIN_PASSWORD && authHeader === `Bearer ${ADMIN_PASSWORD}`) {
         return next();
     }
-    
+
+    const customerAuth = await validateCustomerApiKeyForHost(
+        credential,
+        getHostnameFromRequest(req),
+        requiredScopeForRequest(req)
+    );
+    if (customerAuth.valid) {
+        req.wasupCustomerAuth = customerAuth;
+        return next();
+    }
+
     res.status(401).json({ 
         error: 'Unauthorized', 
-        message: 'Valid API key required. Use X-API-Key header or Authorization: Bearer <key>' 
+        message: customerAuth.message || 'Valid API key required. Use X-API-Key header or Authorization: Bearer <key>' 
     });
+}
+
+function getCredentialFromRequest(req) {
+    const apiKey = String(req.headers['x-api-key'] || '').trim();
+    if (apiKey) return apiKey;
+
+    const authHeader = String(req.headers.authorization || '');
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    return match ? match[1].trim() : '';
+}
+
+function getHostnameFromRequest(req) {
+    return String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+}
+
+function requiredScopeForRequest(req) {
+    const path = req.path || '';
+    if (/\/(?:send|react)(?:\/|$)/.test(path)) return 'messages:send';
+    if (req.method === 'GET') return 'instances:read';
+    return 'instances:write';
+}
+
+async function validateCustomerApiKeyForHost(apiKey, hostname, requiredScope = 'instances:read') {
+    const key = String(apiKey || '').trim();
+    const host = String(hostname || '').trim().toLowerCase();
+    if (!key || !/^sk-(?:prod|dev)-/i.test(key)) {
+        return { valid: false };
+    }
+
+    if (!WORKER_SHARED_SECRET) {
+        return { valid: false, message: 'Worker authentication is not configured.' };
+    }
+
+    const cacheKey = crypto
+        .createHash('sha256')
+        .update(`${host}:${requiredScope}:${key}`)
+        .digest('hex');
+    const cached = customerKeyAuthCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.result;
+    }
+
+    try {
+        const response = await axios.post(
+            `${CONTROL_PLANE_URL}/api/internal/worker-auth`,
+            { apiKey: key, hostname: host, requiredScope },
+            {
+                timeout: 5000,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-wasup-worker-secret': WORKER_SHARED_SECRET,
+                },
+            }
+        );
+        const data = response.data || {};
+        const result = data.valid
+            ? { valid: true, orgId: data.orgId, orgSlug: data.orgSlug, keyKind: data.keyKind, scopes: data.scopes || [] }
+            : { valid: false, message: data.message };
+
+        customerKeyAuthCache.set(cacheKey, {
+            result,
+            expiresAt: Date.now() + CUSTOMER_KEY_AUTH_CACHE_TTL_MS,
+        });
+        return result;
+    } catch (error) {
+        console.error('[Auth] Control-plane key validation failed:', error.response?.status || error.message);
+        return { valid: false, message: 'Could not validate the API key right now.' };
+    }
 }
 
 // Apply authentication to all API routes
@@ -227,13 +280,17 @@ app.get('/api/instances', (req, res) => {
  */
 app.post('/api/instances', async (req, res) => {
     try {
-        const { id, name, webhookUrl, antiBanSettings } = req.body;
+        const { id, name, webhookUrl, webhookSigningSecret, antiBanSettings, behaviorSettings, handoffSettings, proxy } = req.body;
         
         const instance = await instanceManager.createInstance({
             id,
             name,
             webhookUrl,
-            antiBanSettings
+            webhookSigningSecret: webhookSigningSecret || '',
+            antiBanSettings,
+            behaviorSettings,
+            handoffSettings,
+            proxy
         });
         
         broadcastToAll({
@@ -272,15 +329,16 @@ app.get('/api/instances/:id', (req, res) => {
 /**
  * PUT /api/instances/:id
  * Update instance settings
- * Body: { name?, webhookUrl?, behaviorSettings?, antiBanSettings?, handoffSettings? }
+ * Body: { name?, webhookUrl?, webhookSigningSecret?, behaviorSettings?, antiBanSettings?, handoffSettings? }
  */
 app.put('/api/instances/:id', async (req, res) => {
     try {
-        const { name, webhookUrl, behaviorSettings, antiBanSettings, handoffSettings } = req.body;
+        const { name, webhookUrl, webhookSigningSecret, behaviorSettings, antiBanSettings, handoffSettings } = req.body;
         
         const instance = await instanceManager.updateInstance(req.params.id, {
             name,
             webhookUrl,
+            webhookSigningSecret,
             behaviorSettings,
             antiBanSettings,
             handoffSettings,
@@ -432,6 +490,10 @@ app.post('/api/instances/:id/clear-auth', async (req, res) => {
  */
 app.get('/api/instances/:id/qr', async (req, res) => {
     try {
+        res.set('Cache-Control', 'no-store, no-cache, max-age=0, must-revalidate');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
+
         const instance = instanceManager.getInstance(req.params.id);
         if (!instance) {
             return res.status(404).json({ error: 'Instance not found' });
@@ -448,13 +510,24 @@ app.get('/api/instances/:id/qr', async (req, res) => {
                 status: 'connected',
                 phone: status.connectedPhone,
                 qrCode: null,
+                qrCodeUpdatedAt: status.qrCodeUpdatedAt || null,
+                qrVersion: status.qrVersion || 0,
+                qrAgeMs: status.qrAgeMs ?? null,
+                qrTtlMs: status.qrTtlMs ?? null,
+                qrExpiresInMs: status.qrExpiresInMs ?? null,
+                qrRefreshRestartCount: status.qrRefreshRestartCount || 0,
+                staleProtocolResetCount: status.staleProtocolResetCount || 0,
+                qrScanReceivedAt: status.qrScanReceivedAt || null,
+                linkingGraceUntil: status.linkingGraceUntil || null,
+                linkingGraceActive: !!status.linkingGraceActive,
+                lastCredsUpdateAt: status.lastCredsUpdateAt || null,
                 pairingCode: null,
                 message: 'Already connected'
             });
         }
         
-        if (req.query.format === 'image' && status.qrCode) {
-            const pngBuffer = await QRCode.toBuffer(status.qrCode, { type: 'png', width: 300, margin: 2 });
+        if (req.query.format === 'image' && instance.qrContent) {
+            const pngBuffer = await QRCode.toBuffer(instance.qrContent, { type: 'png', width: 300, margin: 2 });
             res.set('Content-Type', 'image/png');
             return res.send(pngBuffer);
         }
@@ -464,8 +537,20 @@ app.get('/api/instances/:id/qr', async (req, res) => {
                 success: true, 
                 status: status.status,
                 qrCode: null,
+                qrCodeUpdatedAt: status.qrCodeUpdatedAt || null,
+                qrVersion: status.qrVersion || 0,
+                qrAgeMs: status.qrAgeMs ?? null,
+                qrTtlMs: status.qrTtlMs ?? null,
+                qrExpiresInMs: status.qrExpiresInMs ?? null,
+                qrRefreshRestartCount: status.qrRefreshRestartCount || 0,
+                staleProtocolResetCount: status.staleProtocolResetCount || 0,
+                qrScanReceivedAt: status.qrScanReceivedAt || null,
+                linkingGraceUntil: status.linkingGraceUntil || null,
+                linkingGraceActive: !!status.linkingGraceActive,
+                lastCredsUpdateAt: status.lastCredsUpdateAt || null,
                 pairingCode: null,
-                message: 'Not yet generated. Call /connect or /pair first.'
+                connectionIssue: status.connectionIssue || null,
+                message: status.connectionIssue?.message || 'Not yet generated. Call /connect or /pair first.'
             });
         }
         
@@ -473,6 +558,18 @@ app.get('/api/instances/:id/qr', async (req, res) => {
             success: true, 
             status: status.status,
             qrCode: status.qrCode || null,
+            qrCodeUpdatedAt: status.qrCodeUpdatedAt || null,
+            qrVersion: status.qrVersion || 0,
+            qrAgeMs: status.qrAgeMs ?? null,
+            qrTtlMs: status.qrTtlMs ?? null,
+            qrExpiresInMs: status.qrExpiresInMs ?? null,
+            qrRefreshRestartCount: status.qrRefreshRestartCount || 0,
+            staleProtocolResetCount: status.staleProtocolResetCount || 0,
+            qrScanReceivedAt: status.qrScanReceivedAt || null,
+            linkingGraceUntil: status.linkingGraceUntil || null,
+            linkingGraceActive: !!status.linkingGraceActive,
+            lastCredsUpdateAt: status.lastCredsUpdateAt || null,
+            connectionIssue: status.connectionIssue || null,
             pairingCode: status.pairingCode || null
         });
     } catch (error) {
@@ -499,13 +596,15 @@ app.get('/api/instances/:id/qr', async (req, res) => {
 app.post('/api/instances/:id/send', async (req, res) => {
     try {
         const {
-            to, message,
-            messageType, mediaUrl, mimeType, fileName, ptt,
+            to,
+            mediaUrl, mimeType, fileName, ptt,
             footer, buttons, buttonText, title, sections,
             latitude, longitude, locationName, locationAddress,
             contactCard,
             typingSimulation, delayEnabled, contactName, skipContactSave
         } = req.body;
+        const message = req.body.message ?? req.body.text;
+        const messageType = resolveSendMessageType(req.body.messageType, req.body);
 
         if (!to) {
             return res.status(400).json({ error: 'Missing required field: to' });
@@ -523,10 +622,14 @@ app.post('/api/instances/:id/send', async (req, res) => {
         let textOrParams;
 
         if (richType) {
+            const normalizedInteractive = normalizeInteractivePayload(messageType, req.body, message);
             textOrParams = {
                 messageType, text: message || '',
                 mediaUrl, mimeType, fileName, ptt,
-                footer, buttons, buttonText, title, sections,
+                footer,
+                buttons: normalizedInteractive.buttons || buttons,
+                buttonText, title,
+                sections: normalizedInteractive.sections || sections,
                 latitude, longitude, locationName, locationAddress,
                 contactCard
             };
@@ -612,6 +715,60 @@ function normalizePhone(phone) {
     return phone.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
 }
 
+function resolveSendMessageType(messageType, body = {}) {
+    const explicitType = String(messageType || '').trim().toLowerCase();
+    if (explicitType) return explicitType;
+    if (Array.isArray(body.buttons) && body.buttons.length > 0) return 'buttons';
+    if (Array.isArray(body.sections) && body.sections.length > 0) return 'list';
+    return 'text';
+}
+
+function normalizeInteractivePayload(messageType, body = {}, message) {
+    if (messageType === 'buttons') {
+        if (!message) {
+            throw new Error('Missing required field: message or text');
+        }
+        if (!Array.isArray(body.buttons) || body.buttons.length === 0) {
+            throw new Error('Missing required field: buttons');
+        }
+        if (body.buttons.length > 3) {
+            throw new Error('WhatsApp quick-reply buttons support a maximum of 3 buttons');
+        }
+        return {
+            buttons: body.buttons.map((button, index) => {
+                const text = String(button?.text || button?.title || '').trim();
+                if (!text) {
+                    throw new Error(`Button ${index + 1} is missing text`);
+                }
+                return {
+                    id: String(button?.id || `btn_${index + 1}`).trim(),
+                    text: text.slice(0, 20)
+                };
+            })
+        };
+    }
+
+    if (messageType === 'list') {
+        if (!Array.isArray(body.sections) || body.sections.length === 0) {
+            throw new Error('Missing required field: sections');
+        }
+        return {
+            sections: body.sections.map((section, sectionIndex) => ({
+                title: String(section?.title || `Section ${sectionIndex + 1}`).trim(),
+                rows: Array.isArray(section?.rows)
+                    ? section.rows.map((row, rowIndex) => ({
+                        title: String(row?.title || `Option ${rowIndex + 1}`).trim(),
+                        id: String(row?.id || `row_${sectionIndex + 1}_${rowIndex + 1}`).trim(),
+                        description: String(row?.description || '').trim()
+                    }))
+                    : []
+            }))
+        };
+    }
+
+    return {};
+}
+
 /**
  * POST /api/send
  * Global send endpoint - finds instance by 'from_phone' number
@@ -622,12 +779,14 @@ app.post('/api/send', async (req, res) => {
         const fromPhone = req.body.from_phone || req.body.from;
         const toPhone = req.body.to_phone || req.body.to;
         const {
-            message, messageType, mediaUrl, mimeType, fileName, ptt,
+            mediaUrl, mimeType, fileName, ptt,
             footer, buttons, buttonText, title, sections,
             latitude, longitude, locationName, locationAddress,
             contactCard,
             typingSimulation, delayEnabled, contactName, skipContactSave
         } = req.body;
+        const message = req.body.message ?? req.body.text;
+        const messageType = resolveSendMessageType(req.body.messageType, req.body);
         
         if (!toPhone) {
             return res.status(400).json({ error: 'Missing required field: to_phone' });
@@ -644,10 +803,14 @@ app.post('/api/send', async (req, res) => {
         const richType = messageType && messageType !== 'text';
         let textOrParams;
         if (richType) {
+            const normalizedInteractive = normalizeInteractivePayload(messageType, req.body, message);
             textOrParams = {
                 messageType, text: message || '',
                 mediaUrl, mimeType, fileName, ptt,
-                footer, buttons, buttonText, title, sections,
+                footer,
+                buttons: normalizedInteractive.buttons || buttons,
+                buttonText, title,
+                sections: normalizedInteractive.sections || sections,
                 latitude, longitude, locationName, locationAddress,
                 contactCard
             };
@@ -2186,6 +2349,7 @@ wss.on('connection', (ws, req) => {
     wsClients.set(ws, {
         subscribedInstances: new Set(),
         authenticated: !API_KEY, // When API_KEY is set, wait for { type:'auth' } before full init + broadcasts
+        hostname: getHostnameFromRequest(req),
     });
     
     // Initial payload: hide instance metadata on the socket until authenticated
@@ -2201,7 +2365,10 @@ wss.on('connection', (ws, req) => {
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
-            handleWebSocketMessage(ws, data);
+            void handleWebSocketMessage(ws, data).catch((error) => {
+                console.error('[WS] Message handling failed:', error);
+                ws.send(JSON.stringify({ type: 'auth_failed' }));
+            });
         } catch (error) {
             console.error('[WS] Invalid message:', error);
         }
@@ -2213,13 +2380,23 @@ wss.on('connection', (ws, req) => {
     });
 });
 
-function handleWebSocketMessage(ws, data) {
+async function handleWebSocketMessage(ws, data) {
     const clientState = wsClients.get(ws);
     
     switch (data.type) {
         case 'auth':
             // Authenticate WebSocket client (API key or admin password)
-            if (data.apiKey === API_KEY || data.apiKey === ADMIN_PASSWORD) {
+            const customerAuth = await validateCustomerApiKeyForHost(
+                data.apiKey,
+                clientState.hostname,
+                'instances:read'
+            );
+            if (
+                data.apiKey === API_KEY ||
+                data.apiKey === WORKER_SHARED_SECRET ||
+                data.apiKey === ADMIN_PASSWORD ||
+                customerAuth.valid
+            ) {
                 clientState.authenticated = true;
                 ws.send(JSON.stringify({ type: 'auth_success' }));
                 if (API_KEY && instanceManager) {

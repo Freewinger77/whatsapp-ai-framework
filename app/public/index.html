@@ -3139,11 +3139,11 @@
     <div class="modal-overlay" id="modal-api-key">
         <div class="modal">
             <div class="modal-header">
-                <h3>Deployment API key</h3>
+                <h3>Org API key</h3>
                 <button class="modal-close" type="button" id="modal-api-key-close">&times;</button>
             </div>
             <p id="modal-api-key-hint" style="font-size:12px;color:var(--zinc-500);margin:0 0 10px;line-height:1.45;">
-                Each Azure region has its own key. Paste the <code>X-API-Key</code> value from your App Service configuration (or use <strong>/docs</strong> → reveal). Stored only in this browser for this origin.
+                Paste your full Wasup production/development API key from the Connection page. Existing keys may show only a public ID; rotate the key there and copy the new full key once. Stored only in this browser for this origin.
             </p>
             <div class="form-group">
                 <label>API key</label>
@@ -3300,8 +3300,8 @@
             if (!el.modalApiKey) return;
             if (el.modalApiKeyHint) {
                 el.modalApiKeyHint.textContent = (opts && opts.invalid)
-                    ? 'That key was rejected. Paste the API key from Azure App Service → Configuration → API_KEY for this exact hostname.'
-                    : 'Each Azure region has its own key. Paste the X-API-Key value from your App Service configuration (or use /docs → reveal). Stored only in this browser for this origin.';
+                    ? 'That key was rejected. Paste the full Wasup API key for this workspace URL. If you only have a sk-prod/sk-dev public ID, rotate the key in the Connection page and copy the new full key once.'
+                    : 'Paste your full Wasup production/development API key from the Connection page. Existing keys may show only a public ID; rotate the key there and copy the new full key once. Stored only in this browser for this origin.';
             }
             if (el.inputApiKey) el.inputApiKey.value = getWasupApiKey();
             el.modalApiKey.classList.add('visible');

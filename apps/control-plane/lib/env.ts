@@ -3,13 +3,61 @@ import { z } from 'zod';
 const EnvSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
-  WASUP_API_KEY_PEPPER: z.string().min(16).optional()
+  WASUP_API_KEY_PEPPER: z.string().min(16).optional(),
+  WASUP_CONTROL_PLANE_URL: z.string().url().optional(),
+  WASUP_BASE_DOMAIN: z.string().min(1).default('wasup.co'),
+  WASUP_TRIAL_DAYS: z.coerce.number().int().positive().default(14),
+  WASUP_TRIAL_DELETION_GRACE_DAYS: z.coerce.number().int().positive().default(14),
+  WASUP_TRIAL_WARNING_DAYS: z.string().default('7,1,0'),
+  WASUP_PROVISIONING_MODE: z.enum(['record-only', 'webhook']).default('record-only'),
+  AZURE_PROVISIONING_WEBHOOK_URL: z.string().url().optional(),
+  AZURE_DEPROVISIONING_WEBHOOK_URL: z.string().url().optional(),
+  AZURE_SUBSCRIPTION_ID: z.string().optional(),
+  AZURE_RESOURCE_GROUP_PREFIX: z.string().default('wasup-org'),
+  AZURE_LOCATION: z.string().default('northeurope'),
+  AZURE_VM_SIZE: z.string().default('Standard_B2s'),
+  AZURE_VM_ADMIN_USERNAME: z.string().default('wasupadmin'),
+  AZURE_SSH_PUBLIC_KEY: z.string().optional(),
+  WASUP_WORKER_GIT_REPO: z.string().url().default('https://github.com/Freewinger77/whatsapp-ai-framework.git'),
+  WASUP_WORKER_GIT_REF: z.string().default('feature/wasup-v3-control-plane'),
+  GODADDY_API_KEY: z.string().optional(),
+  GODADDY_API_SECRET: z.string().optional(),
+  GODADDY_DOMAIN: z.string().default('wasup.co'),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().email().optional()
 });
 
 export function getServerEnv() {
   return EnvSchema.parse({
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
-    WASUP_API_KEY_PEPPER: process.env.WASUP_API_KEY_PEPPER
+    WASUP_API_KEY_PEPPER: process.env.WASUP_API_KEY_PEPPER,
+    WASUP_CONTROL_PLANE_URL: process.env.WASUP_CONTROL_PLANE_URL,
+    WASUP_BASE_DOMAIN: process.env.WASUP_BASE_DOMAIN,
+    WASUP_TRIAL_DAYS: process.env.WASUP_TRIAL_DAYS,
+    WASUP_TRIAL_DELETION_GRACE_DAYS: process.env.WASUP_TRIAL_DELETION_GRACE_DAYS,
+    WASUP_TRIAL_WARNING_DAYS: process.env.WASUP_TRIAL_WARNING_DAYS,
+    WASUP_PROVISIONING_MODE: process.env.WASUP_PROVISIONING_MODE,
+    AZURE_PROVISIONING_WEBHOOK_URL: process.env.AZURE_PROVISIONING_WEBHOOK_URL,
+    AZURE_DEPROVISIONING_WEBHOOK_URL: process.env.AZURE_DEPROVISIONING_WEBHOOK_URL,
+    AZURE_SUBSCRIPTION_ID: process.env.AZURE_SUBSCRIPTION_ID,
+    AZURE_RESOURCE_GROUP_PREFIX: process.env.AZURE_RESOURCE_GROUP_PREFIX,
+    AZURE_LOCATION: process.env.AZURE_LOCATION,
+    AZURE_VM_SIZE: process.env.AZURE_VM_SIZE,
+    AZURE_VM_ADMIN_USERNAME: process.env.AZURE_VM_ADMIN_USERNAME,
+    AZURE_SSH_PUBLIC_KEY: process.env.AZURE_SSH_PUBLIC_KEY,
+    WASUP_WORKER_GIT_REPO: process.env.WASUP_WORKER_GIT_REPO,
+    WASUP_WORKER_GIT_REF: process.env.WASUP_WORKER_GIT_REF,
+    GODADDY_API_KEY: process.env.GODADDY_API_KEY,
+    GODADDY_API_SECRET: process.env.GODADDY_API_SECRET,
+    GODADDY_DOMAIN: process.env.GODADDY_DOMAIN,
+    SMTP_HOST: process.env.SMTP_HOST,
+    SMTP_PORT: process.env.SMTP_PORT,
+    SMTP_USER: process.env.SMTP_USER,
+    SMTP_PASS: process.env.SMTP_PASS,
+    SMTP_FROM: process.env.SMTP_FROM
   });
 }

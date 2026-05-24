@@ -15,8 +15,8 @@ export function getPlaceholderPrincipal(): PlaceholderPrincipal {
     actorId: 'dev-admin',
     role: 'owner',
     orgId: process.env.WASUP_DEV_ORG_ID || DEV_ORG_ID,
-    orgSlug: process.env.WASUP_DEV_ORG_SLUG || 'demo',
-    orgName: process.env.WASUP_DEV_ORG_NAME || 'Demo Organisation'
+    orgSlug: process.env.WASUP_DEV_ORG_SLUG || 'local-dev',
+    orgName: process.env.WASUP_DEV_ORG_NAME || 'Local development'
   };
 }
 

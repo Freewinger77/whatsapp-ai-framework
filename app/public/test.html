@@ -3,1030 +3,1115 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wasup API Tester</title>
+    <title>Wasup Worker Test Console</title>
+    <meta name="description" content="Functional test console for this Wasup worker deployment">
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
+        :root {
+            color-scheme: dark;
+            --bg: #060807;
+            --bg-2: #0b1110;
+            --panel: rgba(13, 18, 17, 0.88);
+            --panel-strong: #101817;
+            --border: rgba(99, 115, 129, 0.22);
+            --border-strong: rgba(34, 197, 94, 0.34);
+            --text: #ecfdf5;
+            --muted: #98a2b3;
+            --soft: #d1fae5;
+            --accent: #22c55e;
+            --accent-2: #14b8a6;
+            --accent-dark: #052e16;
+            --warn: #f59e0b;
+            --err: #fb7185;
+            --shadow: 0 28px 90px rgba(0, 0, 0, 0.38);
+            --radius: 22px;
         }
-        
+
+        * { box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            margin: 0;
             min-height: 100vh;
-            color: #e4e4e4;
-            padding: 20px;
+            background:
+                radial-gradient(circle at 15% 0%, rgba(34, 197, 94, 0.18), transparent 34rem),
+                radial-gradient(circle at 85% 10%, rgba(20, 184, 166, 0.12), transparent 30rem),
+                linear-gradient(180deg, var(--bg), var(--bg-2) 46%, #060807);
+            color: var(--text);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         }
-        
-        .container {
-            max-width: 800px;
+
+        a { color: inherit; }
+        button, input, textarea, select { font: inherit; }
+        button { border: 0; }
+        code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+
+        .shell {
+            width: min(1240px, calc(100% - 32px));
             margin: 0 auto;
+            padding: 28px 0 42px;
         }
-        
-        h1 {
-            text-align: center;
-            margin-bottom: 10px;
-            color: #25d366;
+
+        .hero {
+            position: relative;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 30px;
+            background: linear-gradient(135deg, rgba(16, 24, 23, 0.96), rgba(8, 12, 11, 0.86));
+            box-shadow: var(--shadow);
+            padding: clamp(22px, 4vw, 42px);
         }
-        
-        .subtitle {
-            text-align: center;
-            color: #888;
-            margin-bottom: 30px;
-            font-size: 14px;
+
+        .hero::after {
+            content: "";
+            position: absolute;
+            inset: auto -10% -40% auto;
+            width: 28rem;
+            height: 28rem;
+            border-radius: 999px;
+            background: rgba(34, 197, 94, 0.12);
+            filter: blur(18px);
+            pointer-events: none;
         }
-        
-        .card {
-            background: #1f2937;
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-        }
-        
-        .card-title {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 16px;
-            color: #25d366;
-            display: flex;
+
+        .eyebrow {
+            display: inline-flex;
             align-items: center;
             gap: 8px;
+            border: 1px solid var(--border-strong);
+            border-radius: 999px;
+            background: rgba(34, 197, 94, 0.1);
+            color: #bbf7d0;
+            padding: 7px 11px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
         }
-        
-        .form-group {
-            margin-bottom: 16px;
+
+        h1 {
+            margin: 18px 0 10px;
+            max-width: 800px;
+            font-size: clamp(34px, 6vw, 64px);
+            line-height: 0.95;
+            letter-spacing: -0.06em;
         }
-        
+
+        .hero-copy {
+            max-width: 760px;
+            color: var(--muted);
+            font-size: 16px;
+            line-height: 1.7;
+        }
+
+        .hero-grid {
+            position: relative;
+            z-index: 1;
+            display: grid;
+            grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+            gap: 22px;
+            align-items: end;
+        }
+
+        .auth-card, .card {
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--panel);
+            box-shadow: 0 14px 45px rgba(0, 0, 0, 0.22);
+        }
+
+        .auth-card {
+            padding: 18px;
+            backdrop-filter: blur(18px);
+        }
+
+        .field { display: grid; gap: 8px; margin-bottom: 14px; }
+        .field:last-child { margin-bottom: 0; }
+
         label {
-            display: block;
-            margin-bottom: 6px;
-            font-size: 13px;
-            color: #9ca3af;
-            font-weight: 500;
+            color: var(--soft);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
         }
-        
+
         input, textarea, select {
             width: 100%;
-            padding: 12px;
-            border: 1px solid #374151;
-            border-radius: 8px;
-            background: #111827;
-            color: #e4e4e4;
-            font-size: 14px;
-            transition: border-color 0.2s, box-shadow 0.2s;
-        }
-        
-        input:focus, textarea:focus, select:focus {
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: rgba(3, 7, 6, 0.78);
+            color: var(--text);
+            padding: 12px 13px;
             outline: none;
-            border-color: #25d366;
-            box-shadow: 0 0 0 3px rgba(37, 211, 102, 0.1);
-        }
-        
-        textarea {
-            min-height: 100px;
-            resize: vertical;
-        }
-        
-        .row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
+            transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
         }
 
-        .inline-actions {
-            display: flex;
-            gap: 12px;
-            align-items: flex-end;
-            margin-bottom: 16px;
+        input:focus, textarea:focus, select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.12);
+            background: rgba(3, 7, 6, 0.96);
         }
 
-        .inline-actions .form-group {
-            flex: 1;
-            margin-bottom: 0;
-        }
-        
-        @media (max-width: 600px) {
-            .row {
-                grid-template-columns: 1fr;
-            }
-
-            .inline-actions {
-                flex-direction: column;
-                align-items: stretch;
-            }
-        }
-        
-        .btn {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .btn-primary {
-            background: #25d366;
-            color: #000;
-        }
-        
-        .btn-primary:hover {
-            background: #20bd5a;
-            transform: translateY(-1px);
-        }
-        
-        .btn-primary:disabled {
-            background: #1a9149;
+        input[readonly] {
+            color: #bbf7d0;
+            border-color: rgba(34, 197, 94, 0.22);
+            background: rgba(34, 197, 94, 0.06);
             cursor: not-allowed;
-            transform: none;
         }
-        
-        .btn-secondary {
-            background: #374151;
-            color: #e4e4e4;
+
+        textarea {
+            min-height: 128px;
+            resize: vertical;
+            line-height: 1.55;
         }
-        
-        .btn-secondary:hover {
-            background: #4b5563;
+
+        .hint {
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.45;
         }
-        
-        .btn-group {
+
+        .key-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 10px;
+            align-items: end;
+        }
+
+        .check {
+            display: inline-flex;
+            gap: 9px;
+            align-items: center;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.35;
+        }
+
+        .check input { width: auto; }
+
+        .nav {
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            margin: 18px 0;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: rgba(6, 8, 7, 0.82);
+            backdrop-filter: blur(18px);
             display: flex;
-            gap: 12px;
-            margin-top: 20px;
+            gap: 8px;
+            overflow-x: auto;
         }
-        
-        .response-box {
-            background: #111827;
-            border: 1px solid #374151;
-            border-radius: 8px;
-            padding: 16px;
-            font-family: 'Monaco', 'Menlo', monospace;
-            font-size: 13px;
-            white-space: pre-wrap;
-            word-break: break-all;
-            max-height: 400px;
-            overflow-y: auto;
-            min-height: 100px;
+
+        .tab {
+            flex: 0 0 auto;
+            border-radius: 999px;
+            background: transparent;
+            color: var(--muted);
+            cursor: pointer;
+            font-weight: 700;
+            padding: 10px 14px;
+            transition: background 160ms ease, color 160ms ease;
         }
-        
-        .response-box.success {
-            border-color: #25d366;
-            background: rgba(37, 211, 102, 0.1);
+
+        .tab:hover, .tab.active {
+            background: rgba(34, 197, 94, 0.14);
+            color: var(--text);
         }
-        
-        .response-box.error {
-            border-color: #ef4444;
-            background: rgba(239, 68, 68, 0.1);
+
+        .layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
+            gap: 18px;
+            align-items: start;
         }
-        
-        .status-bar {
+
+        .panel-stack { display: grid; gap: 18px; }
+        .page { display: none; }
+        .page.active { display: grid; gap: 18px; }
+
+        .card {
+            padding: clamp(18px, 3vw, 24px);
+        }
+
+        .card-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 18px;
+        }
+
+        .card h2, .card h3 {
+            margin: 0;
+            letter-spacing: -0.03em;
+        }
+
+        .card p {
+            color: var(--muted);
+            line-height: 1.6;
+            margin: 6px 0 0;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .button-row {
+            display: grid;
+            grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) auto;
+            gap: 10px;
+            align-items: end;
+            margin-bottom: 10px;
+        }
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            margin-top: 16px;
+        }
+
+        .btn, a.btn {
+            display: inline-flex;
+            min-height: 42px;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            border-radius: 13px;
+            cursor: pointer;
+            text-decoration: none;
+            font-weight: 800;
+            padding: 0 15px;
+            transition: transform 160ms ease, background 160ms ease, opacity 160ms ease;
+        }
+
+        .btn:hover { transform: translateY(-1px); }
+        .btn:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
+        .primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--accent-dark); }
+        .secondary { background: rgba(148, 163, 184, 0.14); color: var(--text); border: 1px solid var(--border); }
+        .danger { background: rgba(251, 113, 133, 0.14); color: #fecdd3; border: 1px solid rgba(251, 113, 133, 0.24); }
+
+        .response {
+            position: sticky;
+            top: 92px;
+        }
+
+        .status-line {
             display: flex;
             align-items: center;
-            gap: 8px;
-            margin-bottom: 12px;
+            gap: 10px;
+            color: var(--muted);
             font-size: 13px;
+            margin-bottom: 12px;
         }
-        
-        .status-indicator {
+
+        .dot {
             width: 10px;
             height: 10px;
-            border-radius: 50%;
-            background: #6b7280;
+            border-radius: 999px;
+            background: var(--muted);
+            box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.1);
         }
-        
-        .status-indicator.success { background: #25d366; }
-        .status-indicator.error { background: #ef4444; }
-        .status-indicator.loading { background: #f59e0b; animation: pulse 1s infinite; }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-        
-        .quick-actions {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-top: 12px;
-        }
-        
-        .quick-btn {
-            padding: 6px 12px;
-            background: #374151;
-            border: none;
-            border-radius: 6px;
-            color: #e4e4e4;
+
+        .dot.ok { background: var(--accent); box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.12); }
+        .dot.err { background: var(--err); box-shadow: 0 0 0 4px rgba(251, 113, 133, 0.12); }
+        .dot.loading { background: var(--warn); animation: pulse 1s infinite; }
+        @keyframes pulse { 50% { opacity: 0.45; } }
+
+        pre {
+            min-height: 380px;
+            max-height: 68vh;
+            overflow: auto;
+            margin: 0;
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            background: rgba(0, 0, 0, 0.42);
+            color: #d1fae5;
+            padding: 16px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            line-height: 1.5;
             font-size: 12px;
-            cursor: pointer;
-            transition: background 0.2s;
         }
-        
-        .quick-btn:hover {
-            background: #4b5563;
+
+        .mini-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
         }
-        
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 8px;
+
+        .metric {
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            background: rgba(148, 163, 184, 0.08);
+            padding: 13px;
         }
-        
-        .checkbox-group input[type="checkbox"] {
-            width: auto;
+
+        .metric b { display: block; font-size: 21px; letter-spacing: -0.04em; }
+        .metric span { color: var(--muted); font-size: 12px; }
+
+        .table-wrap {
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: 18px;
         }
-        
-        .options-row {
-            display: flex;
-            gap: 24px;
-            flex-wrap: wrap;
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 640px;
+            font-size: 13px;
         }
-        
-        .hint {
-            font-size: 11px;
-            color: #6b7280;
-            margin-top: 4px;
+
+        th, td {
+            border-bottom: 1px solid var(--border);
+            padding: 11px 12px;
+            text-align: left;
+            vertical-align: top;
         }
-        
-        .divider {
-            height: 1px;
-            background: #374151;
-            margin: 20px 0;
-        }
-        
-        .back-link {
+
+        th { color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+        tr:last-child td { border-bottom: 0; }
+
+        .badge {
             display: inline-flex;
             align-items: center;
-            gap: 6px;
-            color: #9ca3af;
-            text-decoration: none;
-            font-size: 14px;
-            margin-bottom: 20px;
-        }
-        
-        .back-link:hover {
-            color: #25d366;
-        }
-        
-        .history-item {
-            background: #111827;
-            border: 1px solid #374151;
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 8px;
-            font-size: 12px;
-        }
-        
-        .history-item .time {
-            color: #6b7280;
-        }
-        
-        .history-item .status {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            color: var(--soft);
+            background: rgba(148, 163, 184, 0.08);
+            padding: 4px 8px;
             font-size: 11px;
-            font-weight: 600;
+            font-weight: 800;
         }
-        
-        .history-item .status.success {
-            background: rgba(37, 211, 102, 0.2);
-            color: #25d366;
+
+        .qr {
+            display: grid;
+            place-items: center;
+            min-height: 220px;
+            border: 1px dashed var(--border-strong);
+            border-radius: 18px;
+            background: rgba(34, 197, 94, 0.05);
+            color: var(--muted);
+            padding: 16px;
+            text-align: center;
         }
-        
-        .history-item .status.error {
-            background: rgba(239, 68, 68, 0.2);
-            color: #ef4444;
+
+        .qr img {
+            max-width: min(100%, 280px);
+            border-radius: 14px;
+            background: white;
+            padding: 10px;
+        }
+
+        .empty {
+            border: 1px dashed var(--border);
+            border-radius: 18px;
+            color: var(--muted);
+            padding: 16px;
+            text-align: center;
+        }
+
+        @media (max-width: 980px) {
+            .hero-grid, .layout { grid-template-columns: 1fr; }
+            .response { position: static; }
+        }
+
+        @media (max-width: 680px) {
+            .shell { width: min(100% - 20px, 1240px); padding-top: 10px; }
+            .hero { border-radius: 22px; }
+            .grid-2, .mini-grid, .key-row, .button-row { grid-template-columns: 1fr; }
+            .nav { border-radius: 22px; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-            <a href="/" class="back-link" style="margin:0;">← Dashboard</a>
-            <a href="/docs" class="back-link" style="margin:0; color:#25d366;">API Docs →</a>
-        </div>
-        
-        <h1>📱 Wasup API Tester</h1>
-        <p class="subtitle">Test Wasup messaging, reactions, rich media, and instance routes</p>
-        
-        <!-- Configuration Card -->
-        <div class="card">
-            <div class="card-title">⚙️ Configuration</div>
-            
-            <div class="form-group">
-                <label>Base API URL</label>
-                <input type="text" id="baseUrl" placeholder="http://localhost:3000">
-                <div class="hint">Leave empty to use current origin (window.location.origin)</div>
+    <main class="shell">
+        <section class="hero">
+            <div class="hero-grid">
+                <div>
+                    <span class="eyebrow">Worker test console</span>
+                    <h1>Run live checks against this Wasup worker.</h1>
+                    <p class="hero-copy">
+                        The base URL is locked to this deployment. Paste an org API key from the Wasup dashboard Connection page to test health, instances, QR connection, messages, logs, and docs links. This page does not reveal deployment or server keys.
+                    </p>
+                </div>
+                <div class="auth-card">
+                    <div class="field">
+                        <label for="base-url">Base URL</label>
+                        <input id="base-url" class="mono" type="text" readonly aria-readonly="true">
+                        <div class="hint">Locked to <code>window.location.origin</code> for this browser tab.</div>
+                    </div>
+                    <div class="field">
+                        <label for="api-key">Org API key</label>
+                        <div class="key-row">
+                            <input id="api-key" type="password" autocomplete="off" placeholder="sk-prod-... or sk-dev-...">
+                            <button class="btn secondary" type="button" id="toggle-key">Show</button>
+                        </div>
+                        <label class="check" for="remember-key">
+                            <input id="remember-key" type="checkbox">
+                            Remember in this browser origin. Otherwise the key stays in session storage only.
+                        </label>
+                        <div class="hint">Use a customer/org key copied from <code>dev.wasup.co</code>. Avoid screenshots with visible keys.</div>
+                    </div>
+                </div>
             </div>
-            
-            <div class="form-group">
-                <label>API Key (optional)</label>
-                <input type="password" id="apiKey" placeholder="Enter API key if required">
-            </div>
-        </div>
-        
-        <!-- Message Card -->
-        <div class="card">
-            <div class="card-title">📨 Send Message</div>
+        </section>
 
-            <div class="inline-actions">
-                <div class="form-group">
-                    <label>Connected Instance</label>
-                    <select id="connectedInstance">
-                        <option value="">Manual / first connected instance</option>
-                    </select>
-                    <div class="hint">Choose a live connected instance to auto-fill the sender number</div>
-                </div>
-                <button class="btn btn-secondary" type="button" onclick="loadConnectedInstances()" style="white-space: nowrap;">Refresh Instances</button>
-            </div>
-            
-            <div class="row">
-                <div class="form-group">
-                    <label>From Phone (your connected number)</label>
-                    <input type="text" id="fromPhone" placeholder="60123456789">
-                    <div class="hint">Leave empty to use first connected instance</div>
-                </div>
-                
-                <div class="form-group">
-                    <label>To Phone *</label>
-                    <input type="text" id="toPhone" placeholder="60198765432" required>
-                </div>
-            </div>
-            
-            <div class="form-group">
-                <label>Message Type</label>
-                <select id="messageType" onchange="toggleMessageFields()">
-                    <option value="text">Text</option>
-                    <option value="image">Image</option>
-                    <option value="video">Video</option>
-                    <option value="document">Document</option>
-                    <option value="audio">Audio / Voice Note</option>
-                    <option value="buttons">Reply Buttons</option>
-                    <option value="list">List Menu</option>
-                    <option value="location">Location</option>
-                    <option value="contact">Contact Card</option>
-                </select>
-            </div>
-            
-            <div class="form-group">
-                <label>Message / Caption</label>
-                <textarea id="message" placeholder="Type your message here...">Hello! This is a test message.</textarea>
-            </div>
-            
-            <!-- Media fields (image, video, document, audio) -->
-            <div id="mediaFields" style="display:none;">
-                <div class="form-group">
-                    <label>Media URL *</label>
-                    <input type="text" id="mediaUrl" placeholder="https://example.com/image.jpg">
-                    <div class="hint">Direct link to the image, video, document, or audio file</div>
-                </div>
-                <div class="row" id="docFields" style="display:none;">
-                    <div class="form-group">
-                        <label>File Name</label>
-                        <input type="text" id="fileName" placeholder="report.pdf">
-                    </div>
-                    <div class="form-group">
-                        <label>MIME Type</label>
-                        <input type="text" id="mimeType" placeholder="application/pdf">
-                        <div class="hint">e.g. application/pdf, audio/mp4, audio/ogg</div>
-                    </div>
-                </div>
-                <div class="form-group" id="pttField" style="display:none;">
-                    <div class="checkbox-group">
-                        <input type="checkbox" id="ptt" checked>
-                        <label for="ptt" style="margin: 0;">Voice Note (push-to-talk)</label>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Button fields -->
-            <div id="buttonFields" style="display:none;">
-                <div class="form-group">
-                    <label>Footer Text</label>
-                    <input type="text" id="footer" placeholder="Powered by WhatsApp AI">
-                </div>
-                <div class="form-group">
-                    <label>Buttons (max 3)</label>
-                    <div id="buttonsContainer">
-                        <div class="row" style="margin-bottom:8px;">
-                            <input type="text" class="btn-id" placeholder="Button ID (e.g. yes)">
-                            <input type="text" class="btn-text" placeholder="Button Text (e.g. Yes)">
+        <nav class="nav" aria-label="Test console sections">
+            <button class="tab active" type="button" data-page="overview">Health</button>
+            <button class="tab" type="button" data-page="instances">Instances</button>
+            <button class="tab" type="button" data-page="connect">Connect and QR</button>
+            <button class="tab" type="button" data-page="send">Send Message</button>
+            <button class="tab" type="button" data-page="buttons">Interactive Buttons</button>
+            <button class="tab" type="button" data-page="logs">Logs and Events</button>
+            <button class="tab" type="button" data-page="docs">Docs</button>
+        </nav>
+
+        <section class="layout">
+            <div class="panel-stack">
+                <section class="page active" id="page-overview">
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h2>Health and status</h2>
+                                <p>Confirm the worker is reachable and inspect the instance summary.</p>
+                            </div>
                         </div>
-                        <div class="row" style="margin-bottom:8px;">
-                            <input type="text" class="btn-id" placeholder="Button ID">
-                            <input type="text" class="btn-text" placeholder="Button Text">
+                        <div class="mini-grid" id="metrics">
+                            <div class="metric"><b>--</b><span>Health</span></div>
+                            <div class="metric"><b>--</b><span>Instances</span></div>
+                            <div class="metric"><b>--</b><span>Connected</span></div>
                         </div>
-                        <div class="row" style="margin-bottom:8px;">
-                            <input type="text" class="btn-id" placeholder="Button ID">
-                            <input type="text" class="btn-text" placeholder="Button Text">
+                        <div class="actions">
+                            <button class="btn primary" type="button" data-action="health">Check health</button>
+                            <button class="btn secondary" type="button" data-action="status">Load status</button>
+                            <button class="btn secondary" type="button" data-action="instances-list">Refresh instances</button>
                         </div>
                     </div>
-                    <div class="hint">Uses Wasup interactive helper for native buttons (iOS + Android)</div>
-                </div>
-            </div>
-            
-            <!-- List fields -->
-            <div id="listFields" style="display:none;">
-                <div class="row">
-                    <div class="form-group">
-                        <label>List Title</label>
-                        <input type="text" id="listTitle" placeholder="Our Services">
-                    </div>
-                    <div class="form-group">
-                        <label>Button Label</label>
-                        <input type="text" id="listButtonText" placeholder="Menu" value="Menu">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>Footer Text</label>
-                    <input type="text" id="listFooter" placeholder="Choose an option">
-                </div>
-                <div class="form-group">
-                    <label>List Items (JSON)</label>
-                    <textarea id="listSections" style="min-height:120px; font-family:monospace; font-size:12px;" placeholder='[{"title":"Section 1","rows":[{"title":"Option A","id":"a","description":"First option"},{"title":"Option B","id":"b","description":"Second option"}]}]'>[{"title":"Options","rows":[{"title":"Option A","id":"opt_a","description":"First option"},{"title":"Option B","id":"opt_b","description":"Second option"}]}]</textarea>
-                    <div class="hint">Array of sections with rows. Each row: { title, id, description }</div>
-                </div>
-            </div>
-            
-            <!-- Location fields -->
-            <div id="locationFields" style="display:none;">
-                <div class="row">
-                    <div class="form-group">
-                        <label>Latitude *</label>
-                        <input type="number" id="latitude" placeholder="3.1390" step="any">
-                    </div>
-                    <div class="form-group">
-                        <label>Longitude *</label>
-                        <input type="number" id="longitude" placeholder="101.6869" step="any">
-                    </div>
-                </div>
-                <div class="row">
-                    <div class="form-group">
-                        <label>Location Name</label>
-                        <input type="text" id="locationName" placeholder="KLCC">
-                    </div>
-                    <div class="form-group">
-                        <label>Address</label>
-                        <input type="text" id="locationAddress" placeholder="Kuala Lumpur, Malaysia">
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Contact card fields -->
-            <div id="contactFields" style="display:none;">
-                <div class="row">
-                    <div class="form-group">
-                        <label>Contact Display Name *</label>
-                        <input type="text" id="contactDisplayName" placeholder="John Doe">
-                    </div>
-                    <div class="form-group">
-                        <label>Contact Phone *</label>
-                        <input type="text" id="contactPhone" placeholder="+60123456789">
-                    </div>
-                </div>
-            </div>
-            
-            <div class="divider"></div>
-            
-            <div class="card-title" style="margin-top: 0;">🛡️ Anti-Ban Options</div>
-            
-            <div class="row">
-                <div class="form-group">
-                    <label>Contact Name (for new contacts)</label>
-                    <input type="text" id="contactName" placeholder="Unknown User">
-                    <div class="hint">Leave empty for auto-generated name</div>
-                </div>
-                
-                <div class="form-group">
-                    <label>&nbsp;</label>
-                    <div class="options-row">
-                        <div class="checkbox-group">
-                            <input type="checkbox" id="typingSimulation" checked>
-                            <label for="typingSimulation" style="margin: 0;">Typing Simulation</label>
+                </section>
+
+                <section class="page" id="page-instances">
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h2>Instances</h2>
+                                <p>List existing WhatsApp instances or create a new test instance.</p>
+                            </div>
+                            <button class="btn secondary" type="button" data-action="instances-list">Refresh</button>
                         </div>
-                        <div class="checkbox-group">
-                            <input type="checkbox" id="delayEnabled" checked>
-                            <label for="delayEnabled" style="margin: 0;">Human Delays</label>
-                        </div>
-                        <div class="checkbox-group">
-                            <input type="checkbox" id="skipContactSave">
-                            <label for="skipContactSave" style="margin: 0;">Skip Contact Save</label>
+                        <div class="table-wrap" id="instances-table">
+                            <div class="empty">Load instances to populate this table.</div>
                         </div>
                     </div>
+
+                    <form class="card" id="create-form">
+                        <div class="card-head">
+                            <div>
+                                <h3>Create instance</h3>
+                                <p>Creates an isolated worker instance. Leave ID empty for the worker default.</p>
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="create-id">Instance ID</label>
+                                <input id="create-id" placeholder="optional-instance-id">
+                            </div>
+                            <div class="field">
+                                <label for="create-name">Display name</label>
+                                <input id="create-name" placeholder="Sales WhatsApp">
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="create-webhook">Webhook URL</label>
+                            <input id="create-webhook" type="url" placeholder="https://n8n.example.com/webhook/...">
+                        </div>
+                        <div class="actions">
+                            <button class="btn primary" type="submit">Create instance</button>
+                        </div>
+                    </form>
+                </section>
+
+                <section class="page" id="page-connect">
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h2>Connect and QR</h2>
+                                <p>Start a WhatsApp connection, request a QR, or inspect connection state.</p>
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="connect-id">Instance ID</label>
+                                <input id="connect-id" placeholder="instance-id">
+                            </div>
+                            <div class="field">
+                                <label for="pair-phone">Pairing phone</label>
+                                <input id="pair-phone" placeholder="Optional, country code only">
+                            </div>
+                        </div>
+                        <div class="actions">
+                            <button class="btn primary" type="button" data-action="connect">Start QR connection</button>
+                            <button class="btn secondary" type="button" data-action="pair">Generate pairing code</button>
+                            <button class="btn secondary" type="button" data-action="qr">Get QR</button>
+                            <button class="btn secondary" type="button" data-action="connection">Connection status</button>
+                            <button class="btn danger" type="button" data-action="disconnect">Disconnect</button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h3>QR and pairing output</h3>
+                                <p>QR codes are rendered from authenticated JSON responses, not unauthenticated image URLs.</p>
+                            </div>
+                        </div>
+                        <div class="qr" id="qr-panel">Request a QR after starting connection.</div>
+                    </div>
+                </section>
+
+                <section class="page" id="page-send">
+                    <form class="card" id="send-form">
+                        <div class="card-head">
+                            <div>
+                                <h2>Send message</h2>
+                                <p>Send a practical test message through a selected instance.</p>
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="send-id">Instance ID</label>
+                                <input id="send-id" placeholder="instance-id">
+                            </div>
+                            <div class="field">
+                                <label for="send-to">Recipient phone or JID</label>
+                                <input id="send-to" placeholder="60123456789">
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="send-message">Message</label>
+                            <textarea id="send-message">Hello from the Wasup worker test console.</textarea>
+                        </div>
+                        <div class="grid-2">
+                            <label class="check" for="typing-simulation">
+                                <input id="typing-simulation" type="checkbox" checked>
+                                Typing simulation
+                            </label>
+                            <label class="check" for="delay-enabled">
+                                <input id="delay-enabled" type="checkbox" checked>
+                                Human delay
+                            </label>
+                        </div>
+                        <div class="actions">
+                            <button class="btn primary" type="submit">Send message</button>
+                            <button class="btn secondary" type="button" id="sample-message">Use sample</button>
+                        </div>
+                    </form>
+                </section>
+
+                <section class="page" id="page-buttons">
+                    <form class="card" id="buttons-form">
+                        <div class="card-head">
+                            <div>
+                                <h2>Interactive buttons</h2>
+                                <p>Send native WhatsApp quick-reply buttons through a selected instance. WhatsApp clients typically support up to 3 quick replies.</p>
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="buttons-id">Instance ID</label>
+                                <input id="buttons-id" placeholder="instance-id">
+                            </div>
+                            <div class="field">
+                                <label for="buttons-to">Recipient phone or JID</label>
+                                <input id="buttons-to" placeholder="60123456789">
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="buttons-message">Message</label>
+                            <textarea id="buttons-message">Choose an option</textarea>
+                        </div>
+                        <div class="field">
+                            <label for="buttons-footer">Footer</label>
+                            <input id="buttons-footer" placeholder="Wasup" value="Wasup">
+                        </div>
+                        <div class="field">
+                            <label>Buttons</label>
+                            <div id="button-rows">
+                                <div class="button-row">
+                                    <input class="button-id" placeholder="id" value="yes">
+                                    <input class="button-text" placeholder="Button text" value="Yes">
+                                    <button class="btn secondary remove-button-row" type="button">Remove</button>
+                                </div>
+                                <div class="button-row">
+                                    <input class="button-id" placeholder="id" value="no">
+                                    <input class="button-text" placeholder="Button text" value="No">
+                                    <button class="btn secondary remove-button-row" type="button">Remove</button>
+                                </div>
+                            </div>
+                            <div class="hint">Button text is capped at 20 characters before sending. Keep IDs stable so webhook replies can route choices.</div>
+                        </div>
+                        <div class="actions">
+                            <button class="btn primary" type="submit">Send buttons</button>
+                            <button class="btn secondary" type="button" id="add-button-row">Add button</button>
+                            <button class="btn secondary" type="button" id="sample-buttons">Use sample</button>
+                        </div>
+                    </form>
+                </section>
+
+                <section class="page" id="page-logs">
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h2>Logs and events</h2>
+                                <p>Read recent instance activity and message history for debugging.</p>
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="logs-id">Instance ID</label>
+                                <input id="logs-id" placeholder="instance-id">
+                            </div>
+                            <div class="field">
+                                <label for="logs-limit">Limit</label>
+                                <input id="logs-limit" type="number" min="1" max="200" value="50">
+                            </div>
+                        </div>
+                        <div class="actions">
+                            <button class="btn primary" type="button" data-action="logs">Load logs</button>
+                            <button class="btn secondary" type="button" data-action="messages">Load messages</button>
+                            <button class="btn secondary" type="button" data-action="anti-ban">Anti-ban status</button>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="page" id="page-docs">
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h2>Docs and OpenAPI</h2>
+                                <p>Open worker documentation or copy starter curl commands with redacted keys.</p>
+                            </div>
+                        </div>
+                        <div class="actions">
+                            <a class="btn primary" href="/docs">Open docs</a>
+                            <a class="btn secondary" href="/api/openapi.yaml" target="_blank" rel="noreferrer">OpenAPI YAML</a>
+                            <button class="btn secondary" type="button" data-action="copy-curl-list">Copy list curl</button>
+                            <button class="btn secondary" type="button" data-action="copy-curl-send">Copy send curl</button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <aside class="card response">
+                <div class="card-head">
+                    <div>
+                        <h2>Response</h2>
+                        <p id="last-request">Run a request to see details here.</p>
+                    </div>
                 </div>
-            </div>
-            
-            <div class="btn-group">
-                <button class="btn btn-primary" id="sendBtn" onclick="sendMessage()">
-                    <span id="sendBtnText">🚀 Send Message</span>
-                </button>
-                <button class="btn btn-secondary" onclick="clearForm()">Clear</button>
-            </div>
-            
-            <div class="quick-actions">
-                <span style="color: #6b7280; font-size: 12px;">Quick Messages:</span>
-                <button class="quick-btn" onclick="setMessage('Hello!')">Hello!</button>
-                <button class="quick-btn" onclick="setMessage('Hi, how are you?')">How are you?</button>
-                <button class="quick-btn" onclick="setMessage('Testing 1-2-3')">Test 123</button>
-                <button class="quick-btn" onclick="setMessage('👋')">Wave</button>
-                <button class="quick-btn" onclick="prefillButtons()">Sample Buttons</button>
-                <button class="quick-btn" onclick="prefillImage()">Sample Image</button>
-                <button class="quick-btn" onclick="prefillList()">Sample List</button>
-                <button class="quick-btn" onclick="prefillLocation()">Sample Location</button>
-            </div>
-        </div>
-        
-        <!-- Reaction Card -->
-        <div class="card">
-            <div class="card-title">😍 Send Reaction</div>
-            <p style="font-size:12px; color:#9ca3af; margin-bottom:12px;">React to a message with an emoji. You need the message ID (returned when sending or from message history).</p>
-            <div class="row">
-                <div class="form-group">
-                    <label>To Phone *</label>
-                    <input type="text" id="reactToPhone" placeholder="60198765432">
-                    <div class="hint">The chat where the message lives</div>
+                <div class="status-line">
+                    <span class="dot" id="status-dot"></span>
+                    <span id="status-text">Ready</span>
                 </div>
-                <div class="form-group">
-                    <label>Message ID *</label>
-                    <input type="text" id="reactMessageId" placeholder="3EB0XXXX...">
-                </div>
-            </div>
-            <div class="form-group">
-                <label>Emoji</label>
-                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                    <input type="text" id="reactEmoji" value="👍" style="width:60px; text-align:center; font-size:20px;">
-                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='👍'">👍</button>
-                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='❤️'">❤️</button>
-                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='😂'">😂</button>
-                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='😮'">😮</button>
-                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='😢'">😢</button>
-                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='🙏'">🙏</button>
-                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='🔥'">🔥</button>
-                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value='🎉'">🎉</button>
-                    <button class="quick-btn" onclick="document.getElementById('reactEmoji').value=''">Remove</button>
-                </div>
-            </div>
-            <div class="btn-group">
-                <button class="btn btn-primary" onclick="sendReaction()">😍 Send Reaction</button>
-            </div>
-            <div class="response-box" id="reactResponseBox" style="margin-top:12px; min-height:40px;">Ready</div>
-        </div>
-        
-        <!-- Response Card -->
-        <div class="card">
-            <div class="card-title">📋 Response</div>
-            
-            <div class="status-bar">
-                <div class="status-indicator" id="statusIndicator"></div>
-                <span id="statusText">Ready to send</span>
-            </div>
-            
-            <div class="response-box" id="responseBox">Waiting for request...</div>
-        </div>
-        
-        <!-- History Card -->
-        <div class="card">
-            <div class="card-title">📜 Request History</div>
-            <div id="historyContainer">
-                <p style="color: #6b7280; font-size: 13px;">No requests yet</p>
-            </div>
-            <button class="btn btn-secondary" onclick="clearHistory()" style="margin-top: 12px;">Clear History</button>
-        </div>
-    </div>
-    
+                <pre id="response-box">No response yet.</pre>
+            </aside>
+        </section>
+    </main>
+
     <script>
-        function getBaseUrl() {
-            return document.getElementById('baseUrl').value || window.location.origin;
-        }
-
-        function getApiHeaders() {
-            const headers = { 'Content-Type': 'application/json' };
-            const apiKey = document.getElementById('apiKey').value;
-            if (apiKey) headers['X-API-Key'] = apiKey;
-            return headers;
-        }
-
-        async function loadConnectedInstances() {
-            const select = document.getElementById('connectedInstance');
-            const fromPhoneInput = document.getElementById('fromPhone');
-            const currentSelected = localStorage.getItem('wa_test_connectedInstance') || select.value || fromPhoneInput.value;
-
-            select.innerHTML = '<option value="">Loading connected instances...</option>';
-
-            try {
-                const response = await fetch(`${getBaseUrl()}/api/instances`, {
-                    headers: getApiHeaders()
-                });
-                const data = await response.json();
-                const instances = Array.isArray(data.instances) ? data.instances : [];
-                const connectedInstances = instances.filter(instance => instance.status === 'connected' && instance.connectedPhone);
-
-                select.innerHTML = '<option value="">Manual / first connected instance</option>';
-
-                connectedInstances.forEach(instance => {
-                    const option = document.createElement('option');
-                    option.value = instance.connectedPhone;
-                    option.textContent = `${instance.name} (+${instance.connectedPhone})`;
-                    select.appendChild(option);
-                });
-
-                const hasMatch = [...select.options].some(option => option.value === currentSelected);
-                if (hasMatch) {
-                    select.value = currentSelected;
-                    fromPhoneInput.value = currentSelected;
-                } else if (!connectedInstances.length) {
-                    select.innerHTML = '<option value="">No connected instances found</option>';
-                }
-            } catch (error) {
-                select.innerHTML = '<option value="">Failed to load instances</option>';
-            }
-        }
-
-        // Load saved settings on page load
-        document.addEventListener('DOMContentLoaded', () => {
-            const savedBaseUrl = localStorage.getItem('wa_test_baseUrl');
-            const savedApiKey = localStorage.getItem('wa_test_apiKey');
-            const savedFromPhone = localStorage.getItem('wa_test_fromPhone');
-            const savedConnectedInstance = localStorage.getItem('wa_test_connectedInstance');
-            
-            if (savedBaseUrl) document.getElementById('baseUrl').value = savedBaseUrl;
-            if (savedApiKey) document.getElementById('apiKey').value = savedApiKey;
-            if (savedFromPhone) document.getElementById('fromPhone').value = savedFromPhone;
-            if (savedConnectedInstance) document.getElementById('connectedInstance').value = savedConnectedInstance;
-            
-            loadHistory();
-            toggleMessageFields();
-            loadConnectedInstances();
-        });
-        
-        // Save settings when changed
-        document.getElementById('baseUrl').addEventListener('change', (e) => {
-            localStorage.setItem('wa_test_baseUrl', e.target.value);
-            loadConnectedInstances();
-        });
-        document.getElementById('apiKey').addEventListener('change', (e) => {
-            localStorage.setItem('wa_test_apiKey', e.target.value);
-            loadConnectedInstances();
-        });
-        document.getElementById('fromPhone').addEventListener('change', (e) => {
-            localStorage.setItem('wa_test_fromPhone', e.target.value);
-            const select = document.getElementById('connectedInstance');
-            const matchingOption = [...select.options].find(option => option.value === e.target.value);
-            select.value = matchingOption ? matchingOption.value : '';
-            localStorage.setItem('wa_test_connectedInstance', select.value);
-        });
-        document.getElementById('connectedInstance').addEventListener('change', (e) => {
-            const value = e.target.value;
-            if (value) {
-                document.getElementById('fromPhone').value = value;
-                localStorage.setItem('wa_test_fromPhone', value);
-            }
-            localStorage.setItem('wa_test_connectedInstance', value);
-        });
-        
-        function toggleMessageFields() {
-            const type = document.getElementById('messageType').value;
-            const mediaTypes = ['image', 'video', 'document', 'audio'];
-            
-            document.getElementById('mediaFields').style.display = mediaTypes.includes(type) ? 'block' : 'none';
-            document.getElementById('docFields').style.display = ['document', 'audio'].includes(type) ? 'grid' : 'none';
-            document.getElementById('pttField').style.display = type === 'audio' ? 'block' : 'none';
-            document.getElementById('buttonFields').style.display = type === 'buttons' ? 'block' : 'none';
-            document.getElementById('listFields').style.display = type === 'list' ? 'block' : 'none';
-            document.getElementById('locationFields').style.display = type === 'location' ? 'block' : 'none';
-            document.getElementById('contactFields').style.display = type === 'contact' ? 'block' : 'none';
-        }
-        
-        function setMessage(msg) {
-            document.getElementById('message').value = msg;
-        }
-        
-        function prefillButtons() {
-            document.getElementById('messageType').value = 'buttons';
-            toggleMessageFields();
-            document.getElementById('message').value = 'Would you like to proceed?';
-            document.getElementById('footer').value = 'Tap a button to reply';
-            const ids = document.querySelectorAll('.btn-id');
-            const texts = document.querySelectorAll('.btn-text');
-            ids[0].value = 'yes'; texts[0].value = 'Yes';
-            ids[1].value = 'no'; texts[1].value = 'No';
-            ids[2].value = 'maybe'; texts[2].value = 'Maybe Later';
-        }
-        
-        function prefillImage() {
-            document.getElementById('messageType').value = 'image';
-            toggleMessageFields();
-            document.getElementById('message').value = 'Check this out!';
-            document.getElementById('mediaUrl').value = 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/6d/Good_Food_Display_-_NCI_Visuals_Online.jpg/800px-Good_Food_Display_-_NCI_Visuals_Online.jpg';
-        }
-        
-        function prefillList() {
-            document.getElementById('messageType').value = 'list';
-            toggleMessageFields();
-            document.getElementById('message').value = 'Please choose a service:';
-            document.getElementById('listTitle').value = 'Our Services';
-            document.getElementById('listButtonText').value = 'View Menu';
-            document.getElementById('listFooter').value = 'Tap to select';
-            document.getElementById('listSections').value = JSON.stringify([{
-                title: 'Services',
-                rows: [
-                    { title: 'Consulting', id: 'consulting', description: 'Expert advice' },
-                    { title: 'Development', id: 'dev', description: 'Custom software' },
-                    { title: 'Support', id: 'support', description: '24/7 assistance' }
-                ]
-            }], null, 2);
-        }
-        
-        function prefillLocation() {
-            document.getElementById('messageType').value = 'location';
-            toggleMessageFields();
-            document.getElementById('message').value = '';
-            document.getElementById('latitude').value = '3.1577';
-            document.getElementById('longitude').value = '101.7117';
-            document.getElementById('locationName').value = 'Petronas Twin Towers';
-            document.getElementById('locationAddress').value = 'KLCC, Kuala Lumpur, Malaysia';
-        }
-        
-        function clearForm() {
-            document.getElementById('toPhone').value = '';
-            document.getElementById('messageType').value = 'text';
-            document.getElementById('message').value = 'Hello! This is a test message.';
-            document.getElementById('contactName').value = '';
-            document.getElementById('typingSimulation').checked = true;
-            document.getElementById('delayEnabled').checked = true;
-            document.getElementById('skipContactSave').checked = false;
-            document.getElementById('mediaUrl').value = '';
-            document.getElementById('fileName').value = '';
-            document.getElementById('mimeType').value = '';
-            document.getElementById('footer').value = '';
-            document.querySelectorAll('.btn-id').forEach(el => el.value = '');
-            document.querySelectorAll('.btn-text').forEach(el => el.value = '');
-            document.getElementById('listTitle').value = '';
-            document.getElementById('listButtonText').value = 'Menu';
-            document.getElementById('listFooter').value = '';
-            document.getElementById('listSections').value = '[{"title":"Options","rows":[{"title":"Option A","id":"opt_a","description":"First option"},{"title":"Option B","id":"opt_b","description":"Second option"}]}]';
-            document.getElementById('latitude').value = '';
-            document.getElementById('longitude').value = '';
-            document.getElementById('locationName').value = '';
-            document.getElementById('locationAddress').value = '';
-            document.getElementById('contactDisplayName').value = '';
-            document.getElementById('contactPhone').value = '';
-            document.getElementById('connectedInstance').value = '';
-            toggleMessageFields();
-        }
-        
-        function setStatus(status, text) {
-            const indicator = document.getElementById('statusIndicator');
-            const statusText = document.getElementById('statusText');
-            const responseBox = document.getElementById('responseBox');
-            
-            indicator.className = 'status-indicator ' + status;
-            statusText.textContent = text;
-            responseBox.className = 'response-box ' + (status === 'error' ? 'error' : status === 'success' ? 'success' : '');
-        }
-        
-        function buildPayload() {
-            const toPhone = document.getElementById('toPhone').value;
-            const fromPhone = document.getElementById('fromPhone').value;
-            const message = document.getElementById('message').value;
-            const msgType = document.getElementById('messageType').value;
-            const contactNameVal = document.getElementById('contactName').value;
-            const typingSimulation = document.getElementById('typingSimulation').checked;
-            const delayEnabled = document.getElementById('delayEnabled').checked;
-            const skipContactSave = document.getElementById('skipContactSave').checked;
-            
-            const payload = {
-                to_phone: toPhone,
-                message: message,
-                messageType: msgType,
-                typingSimulation,
-                delayEnabled,
-                skipContactSave
+        (function () {
+            const baseUrl = window.location.origin;
+            const state = {
+                instances: [],
+                lastInstanceId: '',
             };
-            
-            if (fromPhone) payload.from_phone = fromPhone;
-            if (contactNameVal) payload.contactName = contactNameVal;
-            
-            if (['image', 'video', 'document', 'audio'].includes(msgType)) {
-                payload.mediaUrl = document.getElementById('mediaUrl').value;
-                if (['document', 'audio'].includes(msgType)) {
-                    const fn = document.getElementById('fileName').value;
-                    const mt = document.getElementById('mimeType').value;
-                    if (fn) payload.fileName = fn;
-                    if (mt) payload.mimeType = mt;
-                }
-                if (msgType === 'audio') {
-                    payload.ptt = document.getElementById('ptt').checked;
-                }
+
+            const els = {
+                baseUrl: document.getElementById('base-url'),
+                apiKey: document.getElementById('api-key'),
+                rememberKey: document.getElementById('remember-key'),
+                toggleKey: document.getElementById('toggle-key'),
+                statusDot: document.getElementById('status-dot'),
+                statusText: document.getElementById('status-text'),
+                responseBox: document.getElementById('response-box'),
+                lastRequest: document.getElementById('last-request'),
+                metrics: document.getElementById('metrics'),
+                instancesTable: document.getElementById('instances-table'),
+                qrPanel: document.getElementById('qr-panel'),
+            };
+
+            els.baseUrl.value = baseUrl;
+
+            const persistedKey = localStorage.getItem('wasup_test_api_key') || '';
+            const sessionKey = sessionStorage.getItem('wasup_test_api_key') || '';
+            if (persistedKey) {
+                els.apiKey.value = persistedKey;
+                els.rememberKey.checked = true;
+            } else if (sessionKey) {
+                els.apiKey.value = sessionKey;
             }
-            
-            if (msgType === 'buttons') {
-                payload.footer = document.getElementById('footer').value;
-                const ids = document.querySelectorAll('.btn-id');
-                const texts = document.querySelectorAll('.btn-text');
-                const btns = [];
-                for (let i = 0; i < ids.length; i++) {
-                    if (texts[i].value.trim()) {
-                        btns.push({ id: ids[i].value.trim() || `btn_${i}`, text: texts[i].value.trim() });
-                    }
-                }
-                payload.buttons = btns;
+
+            function apiKey() {
+                return els.apiKey.value.trim();
             }
-            
-            if (msgType === 'list') {
-                payload.title = document.getElementById('listTitle').value;
-                payload.buttonText = document.getElementById('listButtonText').value;
-                payload.footer = document.getElementById('listFooter').value;
-                try {
-                    payload.sections = JSON.parse(document.getElementById('listSections').value);
-                } catch (e) {
-                    throw new Error('Invalid JSON in List Items field');
-                }
-            }
-            
-            if (msgType === 'location') {
-                payload.latitude = parseFloat(document.getElementById('latitude').value) || 0;
-                payload.longitude = parseFloat(document.getElementById('longitude').value) || 0;
-                payload.locationName = document.getElementById('locationName').value;
-                payload.locationAddress = document.getElementById('locationAddress').value;
-            }
-            
-            if (msgType === 'contact') {
-                payload.contactCard = {
-                    displayName: document.getElementById('contactDisplayName').value,
-                    phoneNumber: document.getElementById('contactPhone').value
-                };
-            }
-            
-            return payload;
-        }
-        
-        async function sendMessage() {
-            const baseUrl = getBaseUrl();
-            const toPhone = document.getElementById('toPhone').value;
-            const message = document.getElementById('message').value;
-            const msgType = document.getElementById('messageType').value;
-            
-            if (!toPhone) {
-                setStatus('error', 'Missing required fields');
-                document.getElementById('responseBox').textContent = 'Error: Please fill in the To Phone field';
-                return;
-            }
-            if (msgType === 'text' && !message) {
-                setStatus('error', 'Missing required fields');
-                document.getElementById('responseBox').textContent = 'Error: Message text is required for text messages';
-                return;
-            }
-            if (['image', 'video', 'document', 'audio'].includes(msgType) && !document.getElementById('mediaUrl').value) {
-                setStatus('error', 'Missing required fields');
-                document.getElementById('responseBox').textContent = 'Error: Media URL is required for ' + msgType + ' messages';
-                return;
-            }
-            
-            const sendBtn = document.getElementById('sendBtn');
-            const sendBtnText = document.getElementById('sendBtnText');
-            sendBtn.disabled = true;
-            sendBtnText.textContent = '⏳ Sending...';
-            setStatus('loading', `Sending ${msgType} message...`);
-            
-            let payload;
-            try {
-                payload = buildPayload();
-            } catch (e) {
-                setStatus('error', 'Payload error');
-                document.getElementById('responseBox').textContent = 'Error: ' + e.message;
-                sendBtn.disabled = false;
-                sendBtnText.textContent = '🚀 Send Message';
-                return;
-            }
-            
-            const headers = getApiHeaders();
-            
-            const startTime = Date.now();
-            
-            try {
-                const response = await fetch(`${baseUrl}/api/send`, {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify(payload)
-                });
-                
-                const elapsed = Date.now() - startTime;
-                const data = await response.json();
-                
-                if (response.ok) {
-                    setStatus('success', `Success (${elapsed}ms)`);
-                    document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
-                    addToHistory(toPhone, `[${msgType}] ${message || ''}`.trim(), true, elapsed);
+
+            function persistKey() {
+                const key = apiKey();
+                sessionStorage.setItem('wasup_test_api_key', key);
+                if (els.rememberKey.checked) {
+                    localStorage.setItem('wasup_test_api_key', key);
                 } else {
-                    setStatus('error', `Error ${response.status} (${elapsed}ms)`);
-                    document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
-                    addToHistory(toPhone, `[${msgType}] ${message || ''}`.trim(), false, elapsed, data.error);
+                    localStorage.removeItem('wasup_test_api_key');
                 }
-            } catch (error) {
-                const elapsed = Date.now() - startTime;
-                setStatus('error', 'Request failed');
-                document.getElementById('responseBox').textContent = `Error: ${error.message}\n\nMake sure the API server is running at: ${baseUrl}`;
-                addToHistory(toPhone, `[${msgType}] ${message || ''}`.trim(), false, elapsed, error.message);
-            } finally {
-                sendBtn.disabled = false;
-                sendBtnText.textContent = '🚀 Send Message';
             }
-        }
-        
-        function addToHistory(to, message, success, elapsed, error = null) {
-            const history = JSON.parse(localStorage.getItem('wa_test_history') || '[]');
-            history.unshift({
-                to,
-                message: message.substring(0, 60) + (message.length > 60 ? '...' : ''),
-                success,
-                elapsed,
-                error,
-                time: new Date().toLocaleTimeString()
-            });
-            
-            if (history.length > 10) history.pop();
-            
-            localStorage.setItem('wa_test_history', JSON.stringify(history));
-            loadHistory();
-        }
-        
-        function loadHistory() {
-            const history = JSON.parse(localStorage.getItem('wa_test_history') || '[]');
-            const container = document.getElementById('historyContainer');
-            
-            if (history.length === 0) {
-                container.innerHTML = '<p style="color: #6b7280; font-size: 13px;">No requests yet</p>';
-                return;
+
+            function authHeaders(includeJson) {
+                const headers = {};
+                const key = apiKey();
+                if (includeJson) headers['Content-Type'] = 'application/json';
+                if (key) {
+                    headers['X-API-Key'] = key;
+                    headers.Authorization = 'Bearer ' + key;
+                }
+                return headers;
             }
-            
-            container.innerHTML = history.map(item => `
-                <div class="history-item">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                        <span class="status ${item.success ? 'success' : 'error'}">${item.success ? 'SUCCESS' : 'FAILED'}</span>
-                        <span class="time">${item.time} (${item.elapsed}ms)</span>
-                    </div>
-                    <div><strong>To:</strong> ${item.to}</div>
-                    <div><strong>Message:</strong> ${item.message}</div>
-                    ${item.error ? `<div style="color: #ef4444;"><strong>Error:</strong> ${item.error}</div>` : ''}
-                </div>
-            `).join('');
-        }
-        
-        function clearHistory() {
-            localStorage.removeItem('wa_test_history');
-            loadHistory();
-        }
-        
-        // Allow Ctrl+Enter to send
-        document.getElementById('message').addEventListener('keydown', (e) => {
-            if (e.ctrlKey && e.key === 'Enter') {
-                sendMessage();
+
+            function setStatus(kind, text) {
+                els.statusDot.className = 'dot' + (kind ? ' ' + kind : '');
+                els.statusText.textContent = text;
             }
-        });
-        
-        async function sendReaction() {
-            const baseUrl = getBaseUrl();
-            const fromPhone = document.getElementById('fromPhone').value;
-            const toPhone = document.getElementById('reactToPhone').value;
-            const messageId = document.getElementById('reactMessageId').value;
-            const emoji = document.getElementById('reactEmoji').value;
-            const box = document.getElementById('reactResponseBox');
-            
-            if (!toPhone || !messageId) {
-                box.textContent = 'Error: To Phone and Message ID are required';
-                box.className = 'response-box error';
-                return;
+
+            function redact(value) {
+                return JSON.stringify(value, function (key, item) {
+                    if (/apiKey|api_key|authorization|x-api-key|token|secret|password/i.test(key)) {
+                        return item ? '[redacted]' : item;
+                    }
+                    return item;
+                }, 2);
             }
-            
-            box.textContent = 'Sending reaction...';
-            box.className = 'response-box';
-            
-            const payload = { to_phone: toPhone, messageId, emoji };
-            if (fromPhone) payload.from_phone = fromPhone;
-            
-            const headers = getApiHeaders();
-            
-            try {
-                const response = await fetch(`${baseUrl}/api/react`, {
-                    method: 'POST', headers,
-                    body: JSON.stringify(payload)
+
+            function showResponse(label, request, data, ok, status) {
+                els.lastRequest.textContent = request;
+                setStatus(ok ? 'ok' : 'err', (ok ? 'Success' : 'Error') + (status ? ' - HTTP ' + status : ''));
+                els.responseBox.textContent = redact({
+                    label,
+                    request,
+                    status,
+                    response: data,
                 });
-                const data = await response.json();
-                box.textContent = JSON.stringify(data, null, 2);
-                box.className = 'response-box ' + (response.ok ? 'success' : 'error');
-            } catch (error) {
-                box.textContent = 'Error: ' + error.message;
-                box.className = 'response-box error';
             }
-        }
+
+            async function callApi(label, method, path, body) {
+                persistKey();
+                const hasBody = body !== undefined && body !== null;
+                const request = method + ' ' + path;
+                setStatus('loading', 'Loading ' + request);
+                els.lastRequest.textContent = request;
+
+                try {
+                    const response = await fetch(baseUrl + path, {
+                        method,
+                        headers: authHeaders(hasBody),
+                        body: hasBody ? JSON.stringify(body) : undefined,
+                    });
+                    const contentType = response.headers.get('content-type') || '';
+                    const data = contentType.includes('application/json')
+                        ? await response.json().catch(function () { return {}; })
+                        : await response.text();
+                    showResponse(label, request, data, response.ok, response.status);
+                    return { ok: response.ok, status: response.status, data };
+                } catch (error) {
+                    showResponse(label, request, { error: error.message || 'Network error' }, false, 0);
+                    return { ok: false, status: 0, data: { error: error.message } };
+                }
+            }
+
+            function currentInstanceId(preferredId) {
+                const value = document.getElementById(preferredId).value.trim();
+                if (value) return value;
+                return state.lastInstanceId || (state.instances[0] && state.instances[0].id) || '';
+            }
+
+            function setInstanceHints(id) {
+                if (!id) return;
+                state.lastInstanceId = id;
+                ['connect-id', 'send-id', 'buttons-id', 'logs-id'].forEach(function (inputId) {
+                    const input = document.getElementById(inputId);
+                    if (input && !input.value.trim()) input.value = id;
+                });
+            }
+
+            function renderMetrics(health, instances) {
+                const connected = instances.filter(function (item) { return item.status === 'connected'; }).length;
+                els.metrics.innerHTML = [
+                    '<div class="metric"><b>' + (health || '--') + '</b><span>Health</span></div>',
+                    '<div class="metric"><b>' + instances.length + '</b><span>Instances</span></div>',
+                    '<div class="metric"><b>' + connected + '</b><span>Connected</span></div>',
+                ].join('');
+            }
+
+            function renderInstances(instances) {
+                state.instances = instances;
+                if (instances[0]) setInstanceHints(instances[0].id);
+                renderMetrics('ok', instances);
+
+                if (!instances.length) {
+                    els.instancesTable.innerHTML = '<div class="empty">No instances returned by this worker.</div>';
+                    return;
+                }
+
+                const rows = instances.map(function (item) {
+                    const id = escapeHtml(item.id || '');
+                    const name = escapeHtml(item.name || 'Unnamed');
+                    const phone = escapeHtml(item.connectedPhone || item.phone || '');
+                    const status = escapeHtml(item.status || 'unknown');
+                    return '<tr>' +
+                        '<td><button class="btn secondary pick-instance" type="button" data-id="' + id + '">Use</button></td>' +
+                        '<td class="mono">' + id + '</td>' +
+                        '<td>' + name + '</td>' +
+                        '<td><span class="badge">' + status + '</span></td>' +
+                        '<td class="mono">' + (phone || '-') + '</td>' +
+                    '</tr>';
+                }).join('');
+
+                els.instancesTable.innerHTML = '<table><thead><tr><th></th><th>ID</th><th>Name</th><th>Status</th><th>Phone</th></tr></thead><tbody>' + rows + '</tbody></table>';
+                document.querySelectorAll('.pick-instance').forEach(function (button) {
+                    button.addEventListener('click', function () { setInstanceHints(button.dataset.id); });
+                });
+            }
+
+            function renderQr(data) {
+                const qr = data && data.qrCode;
+                const pairing = data && data.pairingCode;
+                if (qr) {
+                    const src = qr.startsWith('data:') ? qr : 'data:image/png;base64,' + qr;
+                    els.qrPanel.innerHTML = '<img alt="WhatsApp QR code" src="' + src + '">';
+                } else if (pairing) {
+                    els.qrPanel.innerHTML = '<div><div class="hint">Pairing code</div><div class="mono" style="font-size:34px;color:var(--text);">' + escapeHtml(pairing) + '</div></div>';
+                } else {
+                    els.qrPanel.textContent = (data && data.message) || 'No QR or pairing code returned yet.';
+                }
+            }
+
+            function escapeHtml(value) {
+                return String(value).replace(/[&<>"']/g, function (char) {
+                    return {
+                        '&': '&amp;',
+                        '<': '&lt;',
+                        '>': '&gt;',
+                        '"': '&quot;',
+                        "'": '&#39;',
+                    }[char];
+                });
+            }
+
+            function copyText(text) {
+                navigator.clipboard.writeText(text).then(function () {
+                    setStatus('ok', 'Copied to clipboard');
+                }).catch(function () {
+                    setStatus('err', 'Could not copy to clipboard');
+                });
+            }
+
+            function addButtonRow(id, text) {
+                const row = document.createElement('div');
+                row.className = 'button-row';
+                row.innerHTML = '<input class="button-id" placeholder="id" value="' + escapeHtml(id || '') + '">' +
+                    '<input class="button-text" placeholder="Button text" value="' + escapeHtml(text || '') + '">' +
+                    '<button class="btn secondary remove-button-row" type="button">Remove</button>';
+                document.getElementById('button-rows').appendChild(row);
+                wireRemoveButton(row.querySelector('.remove-button-row'));
+            }
+
+            function wireRemoveButton(button) {
+                button.addEventListener('click', function () {
+                    const rows = document.querySelectorAll('#button-rows .button-row');
+                    if (rows.length <= 1) {
+                        showResponse('Interactive buttons', 'POST /api/instances/:id/send', { error: 'Keep at least one button row.' }, false, 0);
+                        return;
+                    }
+                    button.closest('.button-row').remove();
+                });
+            }
+
+            function collectButtons() {
+                return Array.prototype.slice.call(document.querySelectorAll('#button-rows .button-row')).map(function (row, index) {
+                    const id = row.querySelector('.button-id').value.trim() || 'button_' + (index + 1);
+                    const text = row.querySelector('.button-text').value.trim();
+                    return text ? { id, text } : null;
+                }).filter(Boolean);
+            }
+
+            async function loadInstances() {
+                const result = await callApi('List instances', 'GET', '/api/instances');
+                const instances = result.data && Array.isArray(result.data.instances) ? result.data.instances : [];
+                renderInstances(instances);
+                return instances;
+            }
+
+            document.querySelectorAll('.tab').forEach(function (tab) {
+                tab.addEventListener('click', function () {
+                    document.querySelectorAll('.tab').forEach(function (item) { item.classList.remove('active'); });
+                    document.querySelectorAll('.page').forEach(function (item) { item.classList.remove('active'); });
+                    tab.classList.add('active');
+                    document.getElementById('page-' + tab.dataset.page).classList.add('active');
+                });
+            });
+
+            els.apiKey.addEventListener('input', persistKey);
+            els.rememberKey.addEventListener('change', persistKey);
+            els.toggleKey.addEventListener('click', function () {
+                const isPassword = els.apiKey.type === 'password';
+                els.apiKey.type = isPassword ? 'text' : 'password';
+                els.toggleKey.textContent = isPassword ? 'Hide' : 'Show';
+            });
+
+            document.getElementById('create-form').addEventListener('submit', async function (event) {
+                event.preventDefault();
+                const body = {};
+                const id = document.getElementById('create-id').value.trim();
+                const name = document.getElementById('create-name').value.trim();
+                const webhookUrl = document.getElementById('create-webhook').value.trim();
+                if (id) body.id = id;
+                if (name) body.name = name;
+                if (webhookUrl) body.webhookUrl = webhookUrl;
+                const result = await callApi('Create instance', 'POST', '/api/instances', body);
+                if (result.ok && result.data && result.data.instance) {
+                    setInstanceHints(result.data.instance.id);
+                    await loadInstances();
+                }
+            });
+
+            document.getElementById('send-form').addEventListener('submit', async function (event) {
+                event.preventDefault();
+                const id = currentInstanceId('send-id');
+                const to = document.getElementById('send-to').value.trim();
+                const message = document.getElementById('send-message').value;
+                if (!id || !to || !message) {
+                    showResponse('Send message', 'POST /api/instances/:id/send', { error: 'Instance ID, recipient, and message are required.' }, false, 0);
+                    return;
+                }
+                await callApi('Send message', 'POST', '/api/instances/' + encodeURIComponent(id) + '/send', {
+                    to,
+                    message,
+                    typingSimulation: document.getElementById('typing-simulation').checked,
+                    delayEnabled: document.getElementById('delay-enabled').checked,
+                });
+            });
+
+            document.getElementById('sample-message').addEventListener('click', function () {
+                document.getElementById('send-message').value = 'Hello from the Wasup worker test console.';
+            });
+
+            document.querySelectorAll('.remove-button-row').forEach(wireRemoveButton);
+
+            document.getElementById('add-button-row').addEventListener('click', function () {
+                const count = document.querySelectorAll('#button-rows .button-row').length;
+                if (count >= 3) {
+                    showResponse('Interactive buttons', 'POST /api/instances/:id/send', { error: 'WhatsApp quick replies support up to 3 buttons.' }, false, 0);
+                    return;
+                }
+                addButtonRow('option_' + (count + 1), 'Option ' + (count + 1));
+            });
+
+            document.getElementById('sample-buttons').addEventListener('click', function () {
+                document.getElementById('buttons-message').value = 'Choose an option';
+                document.getElementById('buttons-footer').value = 'Wasup';
+                document.getElementById('button-rows').innerHTML = '';
+                addButtonRow('yes', 'Yes');
+                addButtonRow('no', 'No');
+            });
+
+            document.getElementById('buttons-form').addEventListener('submit', async function (event) {
+                event.preventDefault();
+                const id = currentInstanceId('buttons-id');
+                const to = document.getElementById('buttons-to').value.trim();
+                const text = document.getElementById('buttons-message').value.trim();
+                const footer = document.getElementById('buttons-footer').value.trim();
+                const buttons = collectButtons();
+                if (!id || !to || !text || buttons.length === 0) {
+                    showResponse('Interactive buttons', 'POST /api/instances/:id/send', { error: 'Instance ID, recipient, message, and at least one button are required.' }, false, 0);
+                    return;
+                }
+                await callApi('Interactive buttons', 'POST', '/api/instances/' + encodeURIComponent(id) + '/send', {
+                    to,
+                    text,
+                    buttons,
+                    footer,
+                });
+            });
+
+            document.querySelectorAll('[data-action]').forEach(function (button) {
+                button.addEventListener('click', async function () {
+                    const action = button.dataset.action;
+                    if (action === 'health') {
+                        const result = await callApi('Health', 'GET', '/api/health');
+                        renderMetrics(result.ok ? 'ok' : 'error', state.instances);
+                    }
+                    if (action === 'status') await callApi('Status', 'GET', '/api/status');
+                    if (action === 'instances-list') await loadInstances();
+                    if (action === 'connect') {
+                        const id = currentInstanceId('connect-id');
+                        if (!id) return showResponse('Connect', 'POST /api/instances/:id/connect', { error: 'Instance ID is required.' }, false, 0);
+                        const result = await callApi('Connect', 'POST', '/api/instances/' + encodeURIComponent(id) + '/connect', {});
+                        if (result.data) renderQr(result.data);
+                    }
+                    if (action === 'pair') {
+                        const id = currentInstanceId('connect-id');
+                        const phone = document.getElementById('pair-phone').value.trim();
+                        if (!id || !phone) return showResponse('Pair', 'POST /api/instances/:id/pair', { error: 'Instance ID and pairing phone are required.' }, false, 0);
+                        const result = await callApi('Pair', 'POST', '/api/instances/' + encodeURIComponent(id) + '/pair', { phoneNumber: phone });
+                        if (result.data) renderQr(result.data);
+                    }
+                    if (action === 'qr') {
+                        const id = currentInstanceId('connect-id');
+                        if (!id) return showResponse('QR', 'GET /api/instances/:id/qr', { error: 'Instance ID is required.' }, false, 0);
+                        const result = await callApi('QR', 'GET', '/api/instances/' + encodeURIComponent(id) + '/qr');
+                        if (result.data) renderQr(result.data);
+                    }
+                    if (action === 'connection') {
+                        const id = currentInstanceId('connect-id');
+                        if (!id) return showResponse('Connection status', 'GET /api/instances/:id/connection', { error: 'Instance ID is required.' }, false, 0);
+                        await callApi('Connection status', 'GET', '/api/instances/' + encodeURIComponent(id) + '/connection');
+                    }
+                    if (action === 'disconnect') {
+                        const id = currentInstanceId('connect-id');
+                        if (!id) return showResponse('Disconnect', 'POST /api/instances/:id/disconnect', { error: 'Instance ID is required.' }, false, 0);
+                        await callApi('Disconnect', 'POST', '/api/instances/' + encodeURIComponent(id) + '/disconnect', {});
+                    }
+                    if (action === 'logs') {
+                        const id = currentInstanceId('logs-id');
+                        const limit = document.getElementById('logs-limit').value || '50';
+                        if (!id) return showResponse('Logs', 'GET /api/instances/:id/logs', { error: 'Instance ID is required.' }, false, 0);
+                        await callApi('Logs', 'GET', '/api/instances/' + encodeURIComponent(id) + '/logs?limit=' + encodeURIComponent(limit));
+                    }
+                    if (action === 'messages') {
+                        const id = currentInstanceId('logs-id');
+                        if (!id) return showResponse('Messages', 'GET /api/instances/:id/messages', { error: 'Instance ID is required.' }, false, 0);
+                        await callApi('Messages', 'GET', '/api/instances/' + encodeURIComponent(id) + '/messages?limit=50');
+                    }
+                    if (action === 'anti-ban') {
+                        const id = currentInstanceId('logs-id');
+                        if (!id) return showResponse('Anti-ban', 'GET /api/instances/:id/anti-ban', { error: 'Instance ID is required.' }, false, 0);
+                        await callApi('Anti-ban', 'GET', '/api/instances/' + encodeURIComponent(id) + '/anti-ban');
+                    }
+                    if (action === 'copy-curl-list') {
+                        copyText('curl -sS -H "X-API-Key: YOUR_ORG_API_KEY" "' + baseUrl + '/api/instances"');
+                    }
+                    if (action === 'copy-curl-send') {
+                        copyText('curl -sS -X POST "' + baseUrl + '/api/instances/INSTANCE_ID/send" \\\n  -H "X-API-Key: YOUR_ORG_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d \'{"to":"60123456789","message":"Hello from Wasup"}\'');
+                    }
+                });
+            });
+
+            renderMetrics('--', []);
+            callApi('Health', 'GET', '/api/health').then(function (result) {
+                renderMetrics(result.ok ? 'ok' : 'error', []);
+            });
+        })();
     </script>
 </body>
 </html>

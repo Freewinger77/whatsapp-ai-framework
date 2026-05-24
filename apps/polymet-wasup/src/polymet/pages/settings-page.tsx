@@ -1,4 +1,27 @@
-import { ExternalLinkIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useClerk, useOrganization, useUser } from "@clerk/clerk-react";
+import { AlertTriangleIcon, CheckIcon, ExternalLinkIcon, Trash2Icon, UploadIcon } from "lucide-react";
+import { toast } from "sonner";
+import { REGION_OPTIONS } from "@/polymet/data/dashboard-data";
+import {
+  createBillingCheckout,
+  createBillingPortalSession,
+  getBillingEntitlements,
+  importProxyPool,
+  listProxyPool,
+  regionLabelToCode,
+  resetCustomerWorkspace,
+  type BillingEntitlementsResult,
+} from "@/polymet/lib/control-plane-api";
+import { isPlatformAdminEmail } from "@/polymet/lib/platform-admin";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 function Row({
   label,
@@ -10,21 +33,148 @@ function Row({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-6 border-b border-border/60 py-5 last:border-0">
-      <div>
+    <div className="flex flex-col gap-3 border-b border-border/60 py-5 last:border-0 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+      <div className="min-w-0">
         <div className="text-sm font-medium">{label}</div>
         {hint && <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="min-w-0 shrink-0 sm:text-right">{children}</div>
     </div>
   );
 }
 
 export function SettingsPage() {
+  const { user } = useUser();
+  const { signOut } = useClerk();
+  const { membership } = useOrganization();
+  const [region, setRegion] = useState<(typeof REGION_OPTIONS)[number]>("Finland");
+  const [proxyText, setProxyText] = useState("");
+  const [proxies, setProxies] = useState<Array<{ id: string; label: string | null; host: string; port: number; status: string; credential: string; instance_id: string | null }>>([]);
+  const [proxyMessage, setProxyMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [billing, setBilling] = useState<BillingEntitlementsResult | null>(null);
+  const [billingLoading, setBillingLoading] = useState(true);
+  const [billingActionLoading, setBillingActionLoading] = useState<"checkout" | "portal" | null>(null);
+  const regionCode = regionLabelToCode(region);
+  const isPlatformAdmin = isPlatformAdminEmail(user?.primaryEmailAddress?.emailAddress);
+  const canRequestReset = !!membership && membership.role.includes("owner");
+
+  const refreshProxies = async () => {
+    if (!isPlatformAdmin) {
+      setProxies([]);
+      return;
+    }
+
+    try {
+      const result = await listProxyPool(regionCode);
+      setProxies(result.proxies);
+    } catch {
+      setProxies([]);
+    }
+  };
+
+  useEffect(() => {
+    void refreshProxies();
+  }, [isPlatformAdmin, regionCode]);
+
+  useEffect(() => {
+    getBillingEntitlements()
+      .then(setBilling)
+      .catch(() => setBilling(null))
+      .finally(() => setBillingLoading(false));
+  }, []);
+
+  const startCheckout = async () => {
+    setBillingActionLoading("checkout");
+    try {
+      const returnBase = `${window.location.origin}/#/settings`;
+      const result = await createBillingCheckout({
+        instanceQuantity: 1,
+        successUrl: `${returnBase}?billing=success`,
+        cancelUrl: `${returnBase}?billing=cancelled`,
+      });
+      window.location.assign(result.checkoutUrl);
+    } catch (error) {
+      toast.error("Could not start checkout", {
+        description: error instanceof Error ? error.message : "Please try again shortly.",
+      });
+    } finally {
+      setBillingActionLoading(null);
+    }
+  };
+
+  const openBillingPortal = async () => {
+    setBillingActionLoading("portal");
+    try {
+      const result = await createBillingPortalSession({
+        returnUrl: `${window.location.origin}/#/settings`,
+      });
+      window.location.assign(result.portalUrl);
+    } catch (error) {
+      toast.error("Could not open billing portal", {
+        description: error instanceof Error ? error.message : "Please try again shortly.",
+      });
+    } finally {
+      setBillingActionLoading(null);
+    }
+  };
+
+  const submitProxies = async () => {
+    if (!isPlatformAdmin) return;
+
+    setLoading(true);
+    setProxyMessage("");
+    try {
+      const result = await importProxyPool({
+        regionCode,
+        proxies: proxyText,
+        providerName: "Webshare",
+        labelPrefix: `webshare-${regionCode}`,
+      });
+      setProxyMessage(`Imported ${result.imported} proxies${result.parseErrors.length ? ` with ${result.parseErrors.length} skipped lines` : ""}.`);
+      setProxyText("");
+      await refreshProxies();
+    } catch (error) {
+      setProxyMessage(error instanceof Error ? error.message : "Could not import proxies");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitCustomerReset = async () => {
+    if (deleteConfirmation !== "DELETE" || deleteLoading) return;
+
+    setDeleteLoading(true);
+    const toastId = toast.loading("Deleting workspace...", {
+      description: "Cleaning instances, proxies, VM resources, and account data.",
+    });
+
+    try {
+      const result = await resetCustomerWorkspace({ confirmation: "DELETE" });
+      toast.success("Workspace deleted", {
+        id: toastId,
+        description: `${result.instancesDeleted} instance${result.instancesDeleted === 1 ? "" : "s"} cleaned up. Signing out...`,
+      });
+      setDeleteOpen(false);
+      await signOut({ redirectUrl: "/#/sign-in" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Workspace reset failed";
+      toast.error("Workspace reset failed", {
+        id: toastId,
+        description: message,
+      });
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
       <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Manage billing and destructive workspace actions.
         </p>
@@ -34,34 +184,177 @@ export function SettingsPage() {
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
           Billing
         </h2>
-        <div className="rounded-xl border border-border/60 bg-card px-5">
-          <Row label="Stripe customer portal" hint="Update payment method, invoices, instance seats, and message credits.">
+        <div className="rounded-xl border border-border/60 bg-card px-4 sm:px-5">
+          <Row label="Plan" hint="Each paid WhatsApp instance seat is billed at $39/month.">
+            <div className="space-y-1 text-sm">
+              <div className="font-medium capitalize">
+                {billingLoading ? "Loading..." : billing?.billing.billing_status || "inactive"}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {billing
+                  ? `${billing.billing.active_instance_count} active / ${billing.billing.paid_instance_limit} paid seats`
+                  : "Billing state unavailable"}
+              </div>
+            </div>
+          </Row>
+          <Row label="Instance seats" hint="Buy another paid seat before creating more instances after the trial allowance is used.">
             <button
               type="button"
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
+              onClick={startCheckout}
+              disabled={billingActionLoading !== null}
+              className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-foreground px-3 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
             >
-              Manage billing
+              {billingActionLoading === "checkout" ? "Opening..." : "Add $39/month seat"}
+              <ExternalLinkIcon className="h-3.5 w-3.5" />
+            </button>
+          </Row>
+          <Row label="Stripe customer portal" hint="Update payment method, invoices, cancel, or manage subscription quantity.">
+            <button
+              type="button"
+              onClick={openBillingPortal}
+              disabled={billingActionLoading !== null}
+              className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium hover:bg-muted sm:w-auto"
+            >
+              {billingActionLoading === "portal" ? "Opening..." : "Manage billing"}
               <ExternalLinkIcon className="h-3.5 w-3.5" />
             </button>
           </Row>
         </div>
       </section>
 
+      {isPlatformAdmin && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            Proxy Pool
+          </h2>
+          <div className="rounded-xl border border-border/60 bg-card px-4 sm:px-5">
+            <Row label="Region" hint="Imported proxies are only offered to instances created in the matching hosting zone.">
+              <select
+                value={region}
+                onChange={(event) => setRegion(event.target.value as (typeof REGION_OPTIONS)[number])}
+                className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none sm:w-auto"
+              >
+                {REGION_OPTIONS.map((item) => (
+                  <option key={item}>{item}</option>
+                ))}
+              </select>
+            </Row>
+            <div className="border-b border-border/60 py-5">
+              <div className="mb-2 text-sm font-medium">Add Webshare proxies</div>
+              <p className="mb-3 text-xs text-muted-foreground">
+                Paste one per line as `host:port:user:pass`, `host:port`, or a full proxy URL. Credentials are redacted from list views.
+              </p>
+              <textarea
+                value={proxyText}
+                onChange={(event) => setProxyText(event.target.value)}
+                placeholder="proxy.example.com:8080:username:password"
+                className="min-h-28 w-full rounded-xl border border-border/60 bg-background p-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring/30"
+              />
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <span className="text-sm text-muted-foreground">{proxyMessage}</span>
+                <button
+                  type="button"
+                  onClick={submitProxies}
+                  disabled={loading || !proxyText.trim()}
+                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-foreground px-3 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                >
+                  {loading ? <CheckIcon className="h-3.5 w-3.5" /> : <UploadIcon className="h-3.5 w-3.5" />}
+                  {loading ? "Importing" : "Import proxies"}
+                </button>
+              </div>
+            </div>
+            <Row label={`${region} pool`} hint={`${proxies.filter((proxy) => proxy.status === "free").length} free of ${proxies.length} imported proxies.`}>
+              <div className="overflow-x-auto text-left text-xs text-muted-foreground sm:text-right">
+                {proxies.slice(0, 4).map((proxy) => (
+                  <div key={proxy.id} className="font-mono">
+                    {proxy.host}:{proxy.port} · {proxy.status}{proxy.instance_id ? " · assigned" : ""}
+                  </div>
+                ))}
+                {!proxies.length && <span>No proxies imported yet</span>}
+              </div>
+            </Row>
+          </div>
+        </section>
+      )}
+
       <section>
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
           Danger Zone
         </h2>
-        <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-5">
-          <Row label="Delete workspace" hint="This action is permanent">
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 sm:px-5">
+          <Row
+            label="Delete customer workspace"
+            hint="Permanently deletes instances, releases proxies, removes the worker VM, deletes workspace data, and closes this account."
+          >
             <button
               type="button"
-              className="h-9 rounded-md border border-destructive/40 bg-background px-3 text-sm font-medium text-destructive hover:bg-destructive/10"
+              onClick={() => setDeleteOpen(true)}
+              disabled={!canRequestReset}
+              className="h-9 w-full rounded-md border border-destructive/40 bg-background px-3 text-sm font-medium text-destructive hover:bg-destructive/10 sm:w-auto"
             >
-              Delete
+              Delete workspace
             </button>
+            {!canRequestReset && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Only workspace owners can delete the customer account.
+              </p>
+            )}
           </Row>
         </div>
       </section>
+
+      <Dialog open={deleteOpen} onOpenChange={(open) => !deleteLoading && setDeleteOpen(open)}>
+        <DialogContent className="border-destructive/40">
+          <DialogHeader>
+            <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+              <AlertTriangleIcon className="h-5 w-5" />
+            </div>
+            <DialogTitle>Delete this customer workspace?</DialogTitle>
+            <DialogDescription>
+              This permanently deletes the workspace, WhatsApp instances, worker VM,
+              logs, API keys, proxy assignments, organisation data, and your Clerk account.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-sm text-muted-foreground">
+              This does not delete Wasup platform infrastructure, Stripe products, or
+              imported proxy pool records. Assigned proxies are released back to the pool.
+            </div>
+            <label className="block text-sm font-medium" htmlFor="delete-confirmation">
+              Type <span className="font-mono text-destructive">DELETE</span> to confirm
+            </label>
+            <input
+              id="delete-confirmation"
+              value={deleteConfirmation}
+              onChange={(event) => setDeleteConfirmation(event.target.value)}
+              disabled={deleteLoading}
+              className="h-11 w-full rounded-xl border border-border bg-background px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-destructive/30 disabled:cursor-not-allowed disabled:opacity-60"
+              autoComplete="off"
+            />
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <button
+              type="button"
+              onClick={() => setDeleteOpen(false)}
+              disabled={deleteLoading}
+              className="inline-flex h-10 items-center justify-center rounded-lg border border-border px-4 text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submitCustomerReset}
+              disabled={deleteLoading || deleteConfirmation !== "DELETE"}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-destructive px-4 text-sm font-semibold text-destructive-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Trash2Icon className="h-4 w-4" />
+              {deleteLoading ? "Deleting..." : "Delete workspace"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

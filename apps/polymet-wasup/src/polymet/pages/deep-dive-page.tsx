@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { CalendarIcon, DownloadIcon, SearchIcon, XIcon } from "lucide-react";
 import {
-  INSTANCE_ACTIVITY_LOG,
-  INSTANCES,
-  LIVE_FEED,
+  type ActivityLogItem,
+  type Instance,
+  type LiveFeedItem,
 } from "@/polymet/data/dashboard-data";
+import { getDeepDive, listInstances } from "@/polymet/lib/control-plane-api";
 import { cn } from "@/lib/utils";
 
 type Mode = "conversations" | "logs";
@@ -17,14 +18,65 @@ export function DeepDivePage() {
   const [mode, setMode] = useState<Mode>(initialMode);
   const [instanceId, setInstanceId] = useState(initialInstanceId);
   const [query, setQuery] = useState("");
-  const [from, setFrom] = useState("2026-05-14T01:00");
-  const [to, setTo] = useState("2026-05-14T02:05");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [dateOpen, setDateOpen] = useState(false);
+  const [instances, setInstances] = useState<Instance[]>([]);
+  const [liveConversations, setLiveConversations] = useState<LiveFeedItem[]>([]);
+  const [liveLogs, setLiveLogs] = useState<ActivityLogItem[]>([]);
+  const [apiError, setApiError] = useState("");
+
+  useEffect(() => {
+    listInstances()
+      .then(setInstances)
+      .catch(() => setInstances([]));
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      getDeepDive({
+        type: mode === "conversations" ? "messages" : "logs",
+        instanceId,
+        search: query,
+        from,
+        to,
+      })
+        .then((result) => {
+          setLiveConversations(
+            result.messages.map((message) => ({
+              direction: message.direction === "outbound" ? "Sent" : "Received",
+              phone: message.phone || "Unknown",
+              text: message.body || "",
+              instanceId: message.instance_id || "unknown",
+              time: "Live",
+              timestamp: message.created_at.slice(0, 16),
+            })),
+          );
+          setLiveLogs(
+            result.logs.map((log) => ({
+              source: log.summary || log.event_type,
+              level: mapSeverity(log.severity),
+              instanceId: log.instance_id || "unknown",
+              time: "Live",
+              timestamp: log.created_at.slice(0, 16),
+            })),
+          );
+          setApiError("");
+        })
+        .catch((error) => {
+          setLiveConversations([]);
+          setLiveLogs([]);
+          setApiError(error instanceof Error ? error.message : "Could not load activity");
+        });
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [from, instanceId, mode, query, to]);
 
   const inRange = (timestamp: string) => (!from || timestamp >= from) && (!to || timestamp <= to);
 
   const filteredConversations = useMemo(() => {
-    return LIVE_FEED.filter((item) => {
+    return liveConversations.filter((item) => {
       const instanceMatch = instanceId === "all" || item.instanceId === instanceId;
       const timeMatch = inRange(item.timestamp);
       const searchMatch =
@@ -34,10 +86,10 @@ export function DeepDivePage() {
         item.direction.toLowerCase().includes(query.toLowerCase());
       return instanceMatch && timeMatch && searchMatch;
     });
-  }, [from, instanceId, query, to]);
+  }, [from, instanceId, liveConversations, query, to]);
 
   const filteredLogs = useMemo(() => {
-    return INSTANCE_ACTIVITY_LOG.filter((item) => {
+    return liveLogs.filter((item) => {
       const instanceMatch = instanceId === "all" || item.instanceId === instanceId;
       const timeMatch = inRange(item.timestamp);
       const searchMatch =
@@ -46,7 +98,7 @@ export function DeepDivePage() {
         item.level.toLowerCase().includes(query.toLowerCase());
       return instanceMatch && timeMatch && searchMatch;
     });
-  }, [from, instanceId, query, to]);
+  }, [from, instanceId, liveLogs, query, to]);
 
   const exportText = () => {
     const lines = mode === "conversations"
@@ -62,24 +114,24 @@ export function DeepDivePage() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Deep Dive</h1>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Deep Dive</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Search conversations and logs globally, or filter down to one live instance.
           </p>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="inline-flex w-fit rounded-lg border border-border/60 bg-muted/40 p-1 text-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="inline-flex w-full rounded-lg border border-border/60 bg-muted/40 p-1 text-sm sm:w-fit">
           {(["conversations", "logs"] as const).map((item) => (
             <button
               key={item}
               onClick={() => setMode(item)}
               className={cn(
-                "rounded-md px-3 py-1.5 capitalize transition-colors",
+                "flex-1 rounded-md px-3 py-1.5 capitalize transition-colors sm:flex-none",
                 mode === item
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
@@ -93,10 +145,10 @@ export function DeepDivePage() {
         <select
           value={instanceId}
           onChange={(event) => setInstanceId(event.target.value)}
-          className="h-10 min-w-44 rounded-lg border border-border/60 bg-background px-3 text-sm outline-none"
+          className="h-10 w-full rounded-lg border border-border/60 bg-background px-3 text-sm outline-none sm:w-auto sm:min-w-44"
         >
           <option value="all">All instances</option>
-          {INSTANCES.map((instance) => (
+          {instances.map((instance) => (
             <option key={instance.id} value={instance.id}>
               {instance.name}
             </option>
@@ -107,7 +159,7 @@ export function DeepDivePage() {
           <button
             type="button"
             onClick={() => setDateOpen((open) => !open)}
-            className="inline-flex h-10 items-center gap-2 rounded-lg border border-border/60 bg-background px-3 text-sm hover:bg-muted"
+            className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-border/60 bg-background px-3 text-sm hover:bg-muted sm:w-auto"
           >
             <CalendarIcon className="h-4 w-4" />
             <span>{formatDateRange(from, to)}</span>
@@ -120,7 +172,7 @@ export function DeepDivePage() {
                 className="fixed inset-0 z-30 cursor-default"
                 onClick={() => setDateOpen(false)}
               />
-              <div className="absolute left-0 top-full z-40 mt-2 w-[min(92vw,360px)] rounded-2xl border border-border bg-background p-4 shadow-xl animate-pop-in">
+              <div className="fixed left-3 right-3 top-32 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl animate-pop-in sm:absolute sm:left-0 sm:right-auto sm:top-full sm:mt-2 sm:w-[min(92vw,360px)]">
                 <div className="mb-3 flex items-center justify-between">
                   <div className="font-semibold">Date range</div>
                   <button
@@ -156,7 +208,7 @@ export function DeepDivePage() {
           )}
         </div>
 
-        <div className="relative min-w-[220px] flex-1">
+        <div className="relative min-w-0 flex-1">
           <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             value={query}
@@ -173,7 +225,7 @@ export function DeepDivePage() {
         <button
           type="button"
           onClick={exportText}
-          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-border/60 bg-background px-3 text-sm font-medium hover:bg-muted"
+          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-border/60 bg-background px-3 text-sm font-medium hover:bg-muted sm:w-auto"
         >
           <DownloadIcon className="h-4 w-4" />
           Export
@@ -183,33 +235,42 @@ export function DeepDivePage() {
       <div className="text-xs text-muted-foreground">
         {instanceId === "all"
           ? `${mode} across all instances.`
-          : `${mode} filtered to ${INSTANCES.find((item) => item.id === instanceId)?.name}.`}
+          : `${mode} filtered to ${instances.find((item) => item.id === instanceId)?.name || "selected instance"}.`}
       </div>
+
+      {apiError && (
+        <div className="rounded-2xl border border-red-200 bg-red-50/70 p-4 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+          {apiError}
+        </div>
+      )}
 
       {mode === "conversations" ? (
         <section className="rounded-xl border border-border/60 bg-card p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex items-center justify-between gap-3">
             <h2 className="text-base font-semibold">Conversations</h2>
             <span className="text-sm text-muted-foreground">{filteredConversations.length} events</span>
           </div>
           <div className="divide-y divide-border/60">
+            {filteredConversations.length === 0 && (
+              <div className="py-12 text-center text-sm text-muted-foreground">No conversations found.</div>
+            )}
             {filteredConversations.map((event, index) => {
-              const instance = INSTANCES.find((item) => item.id === event.instanceId);
+              const instance = instances.find((item) => item.id === event.instanceId);
               return (
                 <div
                   key={`${event.phone}-${event.time}-${index}`}
                   className="group relative py-4 first:pt-0 last:pb-0"
                 >
-                  <div className="relative rounded-xl transition-all duration-200 group-hover:z-20 group-hover:-mx-3 group-hover:-my-2 group-hover:bg-card group-hover:p-3 group-hover:shadow-xl">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
+                    <div className="relative rounded-xl transition-all duration-200 group-hover:z-20 group-hover:bg-card sm:group-hover:-mx-3 sm:group-hover:-my-2 sm:group-hover:p-3 sm:group-hover:shadow-xl">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+                    <div className="min-w-0">
                       <div className="text-sm font-semibold">
                         <span className={event.direction === "Sent" ? "italic" : ""}>{event.direction}</span>{" "}
                         {event.phone}
                       </div>
                       <p className="mt-1 max-h-10 overflow-hidden text-sm text-muted-foreground transition-all duration-300 group-hover:max-h-40">{event.text}</p>
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <Link to={`/instances/${event.instanceId}`} className="rounded-full bg-muted px-2.5 py-1 hover:text-foreground">
                         {instance?.name ?? event.instanceId}
                       </Link>
@@ -225,17 +286,20 @@ export function DeepDivePage() {
         </section>
       ) : (
         <section className="rounded-xl border border-border/60 bg-card p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex items-center justify-between gap-3">
             <h2 className="text-base font-semibold">Logs</h2>
             <span className="text-sm text-muted-foreground">{filteredLogs.length} records</span>
           </div>
           <div className="divide-y divide-border/60">
+            {filteredLogs.length === 0 && (
+              <div className="py-12 text-center text-sm text-muted-foreground">No logs found.</div>
+            )}
             {filteredLogs.map((item, index) => {
-              const instance = INSTANCES.find((entry) => entry.id === item.instanceId);
+              const instance = instances.find((entry) => entry.id === item.instanceId);
               return (
                 <div
                   key={`${item.source}-${index}`}
-                  className="group relative grid grid-cols-[1fr_140px_130px_150px] items-start gap-4 py-4 text-sm first:pt-0 last:pb-0"
+                  className="group relative grid gap-2 py-4 text-sm first:pt-0 last:pb-0 sm:grid-cols-[minmax(0,1fr)_140px_110px_150px] sm:gap-4"
                 >
                   <span className="relative rounded-xl transition-all duration-200 group-hover:z-20 group-hover:-mx-3 group-hover:-my-2 group-hover:bg-card group-hover:p-3 group-hover:shadow-xl">
                     <span className="block max-h-10 overflow-hidden transition-all duration-300 group-hover:max-h-40">{item.source}</span>
@@ -271,4 +335,10 @@ function levelTagClass(level: string) {
     level === "High" && "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
     level === "Low" && "bg-zinc-100 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300"
   );
+}
+
+function mapSeverity(severity: string): ActivityLogItem["level"] {
+  if (severity === "critical" || severity === "error") return "Critical";
+  if (severity === "warning") return "High";
+  return "Low";
 }

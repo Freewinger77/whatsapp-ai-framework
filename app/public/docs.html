@@ -43,7 +43,7 @@
         .panel p { margin: 0.35rem 0; color: var(--muted); font-size: 0.875rem; line-height: 1.5; }
         .row { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; margin-top: 0.75rem; }
         label { display: block; font-size: 0.75rem; color: var(--muted); margin-bottom: 0.25rem; }
-        input[type="password"], input[type="text"] {
+        input[type="text"] {
             width: min(100%, 280px);
             padding: 0.5rem 0.65rem;
             border-radius: 6px;
@@ -52,7 +52,10 @@
             color: var(--text);
             font-size: 0.875rem;
         }
-        button {
+        a.button {
+            display: inline-flex;
+            align-items: center;
+            text-decoration: none;
             padding: 0.5rem 1rem;
             border-radius: 6px;
             border: none;
@@ -62,10 +65,7 @@
             font-size: 0.875rem;
             cursor: pointer;
         }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
-        button.secondary { background: #3f3f46; color: var(--text); }
-        .err { color: var(--err); font-size: 0.8rem; margin-top: 0.5rem; }
-        .ok { color: var(--accent); font-size: 0.8rem; margin-top: 0.5rem; }
+        a.button.secondary { background: #3f3f46; color: var(--text); }
         .mono {
             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
             font-size: 0.75rem;
@@ -87,25 +87,10 @@
         <div class="panel" id="auth-panel">
             <h1>This deployment</h1>
             <p><strong>Base URL</strong> for API calls on this tab: <span class="mono" style="display:inline;padding:0.15rem 0.4rem;border-radius:4px;" id="base-display"></span></p>
-            <p>All <code>/api/...</code> routes expect <code>X-API-Key</code> (or <code>Authorization: Bearer …</code>) when the server has <code>API_KEY</code> set — including create/delete instance and send message.</p>
-            <div class="row">
-                <div>
-                    <label for="doc-pw">Reveal key password</label>
-                    <input type="password" id="doc-pw" autocomplete="off" placeholder="Password">
-                </div>
-                <button type="button" id="btn-unlock">Reveal API key</button>
-            </div>
-            <div id="unlock-msg"></div>
-            <div id="secret-block" style="display:none;">
-                <p style="margin-top:0.75rem"><strong>API key</strong> (this region only)</p>
-                <div class="mono" id="api-key-display"></div>
-                <div class="actions">
-                    <button type="button" class="secondary" id="btn-copy-key">Copy key</button>
-                    <button type="button" class="secondary" id="btn-copy-curl-list">Copy curl (list instances)</button>
-                    <button type="button" class="secondary" id="btn-copy-curl-send">Copy curl (send message)</button>
-                </div>
-                <p class="mono" id="curl-list" style="margin-top:0.75rem"></p>
-                <p class="mono" id="curl-send"></p>
+            <p>All <code>/api/...</code> routes expect <code>X-API-Key</code> or <code>Authorization: Bearer &lt;key&gt;</code>. Copy your org <code>sk-prod...</code> or <code>sk-dev...</code> key from the Wasup dashboard Connection page; this worker page never reveals deployment secrets.</p>
+            <div class="actions">
+                <a class="button" href="/test">Open test console</a>
+                <a class="button secondary" href="/api/openapi.yaml" target="_blank" rel="noreferrer">OpenAPI YAML</a>
             </div>
         </div>
     </div>
@@ -117,59 +102,6 @@
         (function () {
             const base = window.location.origin;
             document.getElementById('base-display').textContent = base;
-
-            const pw = document.getElementById('doc-pw');
-            const btn = document.getElementById('btn-unlock');
-            const msg = document.getElementById('unlock-msg');
-            const secret = document.getElementById('secret-block');
-            const keyEl = document.getElementById('api-key-display');
-            const curlList = document.getElementById('curl-list');
-            const curlSend = document.getElementById('curl-send');
-
-            let unlockedKey = '';
-
-            function setMsg(text, isErr) {
-                msg.textContent = text || '';
-                msg.className = text ? (isErr ? 'err' : 'ok') : '';
-            }
-
-            btn.addEventListener('click', async function () {
-                setMsg('');
-                btn.disabled = true;
-                try {
-                    const r = await fetch('/api/docs/unlock', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ password: pw.value }),
-                    });
-                    const data = await r.json().catch(function () { return {}; });
-                    if (!r.ok) {
-                        setMsg(data.error || 'Unlock failed', true);
-                        secret.style.display = 'none';
-                        return;
-                    }
-                    unlockedKey = data.apiKey || '';
-                    keyEl.textContent = unlockedKey || '(no API_KEY on this server — open access)';
-                    const b = data.baseUrl || base;
-                    curlList.textContent = 'curl -sS -H "X-API-Key: ' + (unlockedKey || 'YOUR_KEY') + '" "' + b + '/api/instances"';
-                    curlSend.textContent = 'curl -sS -X POST "' + b + '/api/instances/INSTANCE_ID/send" \\\n  -H "X-API-Key: ' + (unlockedKey || 'YOUR_KEY') + '" -H "Content-Type: application/json" \\\n  -d \'{"to":"447700900000@s.whatsapp.net","message":"Hello"}\'';
-                    secret.style.display = 'block';
-                    setMsg('Unlocked for this tab. Do not share in screenshots.', false);
-                } catch (e) {
-                    setMsg(e.message || 'Network error', true);
-                } finally {
-                    btn.disabled = false;
-                }
-            });
-
-            function copy(t) {
-                if (!t) return;
-                navigator.clipboard.writeText(t).catch(function () {});
-            }
-
-            document.getElementById('btn-copy-key').addEventListener('click', function () { copy(unlockedKey); });
-            document.getElementById('btn-copy-curl-list').addEventListener('click', function () { copy(curlList.textContent); });
-            document.getElementById('btn-copy-curl-send').addEventListener('click', function () { copy(curlSend.textContent); });
         })();
     </script>
 </body>

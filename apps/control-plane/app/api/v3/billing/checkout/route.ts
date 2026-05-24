@@ -23,6 +23,9 @@ export async function POST(req: Request) {
 
   const body = parsed.data;
   const orgId = body.orgId || principal.orgId;
+  if (orgId !== principal.orgId && principal.role !== 'owner' && principal.role !== 'admin') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
   const appUrl = getWasupAppUrl(req);
   const instancePrice = process.env.STRIPE_INSTANCE_PRICE_ID;
   const creditPrice = process.env.STRIPE_MESSAGE_CREDIT_PRICE_ID;
@@ -53,15 +56,18 @@ export async function POST(req: Request) {
     success_url: body.successUrl || `${appUrl}/dashboard?billing=success`,
     cancel_url: body.cancelUrl || `${appUrl}/dashboard?billing=cancelled`,
     allow_promotion_codes: true,
+    client_reference_id: orgId,
     subscription_data: {
       metadata: {
         wasupOrgId: orgId,
-        wasupCreatedBy: principal.actorId
+        wasupCreatedBy: principal.actorId,
+        wasupPlanKey: 'instance-seat'
       }
     },
     metadata: {
       wasupOrgId: orgId,
-      wasupKind: 'subscription_checkout'
+      wasupKind: 'subscription_checkout',
+      wasupPlanKey: 'instance-seat'
     }
   });
 

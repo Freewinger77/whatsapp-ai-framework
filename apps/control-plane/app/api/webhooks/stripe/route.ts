@@ -20,11 +20,6 @@ export async function POST(req: Request) {
     );
   }
 
-  const recorded = await recordStripeEvent(event);
-  if (recorded.duplicate) {
-    return NextResponse.json({ success: true, duplicate: true });
-  }
-
   switch (event.type) {
     case 'checkout.session.completed': {
       const session = event.data.object as Stripe.Checkout.Session;
@@ -49,6 +44,7 @@ export async function POST(req: Request) {
       break;
   }
 
+  await recordStripeEvent(event);
   return NextResponse.json({ success: true });
 }
 

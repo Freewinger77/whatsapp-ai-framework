@@ -23,7 +23,7 @@
   "dependencies": {
     "@azure/storage-blob": "^12.31.0",
     "axios": "^1.6.0",
-    "baileys": "^7.0.0-rc11",
+    "baileys": "^7.0.0-rc12",
     "baileys_helper": "^1.0.6",
     "baileys-antiban": "^3.8.6",
     "dotenv": "^16.3.1",
