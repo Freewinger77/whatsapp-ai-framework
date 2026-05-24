@@ -26,6 +26,14 @@ const __dirname = dirname(__filename);
 
 // Instance Manager
 import { InstanceManager } from './src/utils/instance-manager.js';
+import axios from 'axios';
+import {
+    getDeploymentDefaultProxy,
+    redactProxy,
+    createProxyAgent,
+    parseProxyConfig,
+    parseFlexibleProxyInput,
+} from './src/utils/proxy.js';
 
 // ========================================
 // CONFIGURATION
@@ -35,7 +43,19 @@ const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.API_KEY || ''; // Optional API key for external access
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const DEFAULT_WEBHOOK_URL = process.env.DEFAULT_WEBHOOK_URL || process.env.N8N_WEBHOOK_URL || '';
+const ALLOW_PUBLIC_DASHBOARD = ['true', '1', 'yes'].includes(
+    (process.env.ALLOW_PUBLIC_DASHBOARD || '').toLowerCase()
+);
+const DOCS_REVEAL_PASSWORD = process.env.DOCS_REVEAL_PASSWORD || ADMIN_PASSWORD || '';
 const VALID_BEHAVIOR_PROFILES = new Set(['bot-native', 'notification-balanced', 'notification-max']);
+const MAX_MESSAGE_LENGTH = 4096;
+const MAX_BUTTONS = 3;
+const MAX_BUTTON_TEXT_LENGTH = 20;
+const WASUP_WORKER_SHARED_SECRET = process.env.WASUP_WORKER_SHARED_SECRET || '';
+const WASUP_WORKER_MODE = (process.env.WASUP_WORKER_MODE || 'multi').toLowerCase();
+const REGION_CODE = process.env.REGION_CODE || null;
+const WASUP_ORG_ID = process.env.WASUP_ORG_ID || null;
+const WASUP_DATA_DIR = process.env.WASUP_DATA_DIR || null;
 
 // ========================================
 // STATE MANAGEMENT
@@ -59,9 +79,104 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+let _openapiCache = null;
+function loadOpenapiYaml() {
+    if (_openapiCache !== null) return _openapiCache;
+    try {
+        _openapiCache = fsSync.readFileSync(path.join(__dirname, 'openapi.yaml'), 'utf8');
+    } catch (err) {
+        console.error('[OpenAPI] Failed to read openapi.yaml:', err.message);
+        _openapiCache = '';
+    }
+    return _openapiCache;
+}
+
+function buildDynamicOpenapiYaml(req) {
+    const yaml = loadOpenapiYaml();
+    if (!yaml) return null;
+
+    const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString().split(',')[0].trim();
+    const host = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`).toString().split(',')[0].trim();
+    const baseUrl = `${proto}://${host}`;
+    const region = REGION_CODE || null;
+
+    const dynamicServers = [
+        'servers:',
+        `  - url: ${baseUrl}`,
+        `    description: ${region ? `Region "${region}"` : 'This deployment'}`,
+        '',
+    ].join('\n');
+
+    return yaml.replace(
+        /^servers:[\s\S]*?(?=^[a-zA-Z][a-zA-Z0-9_-]*:)/m,
+        dynamicServers
+    );
+}
+
+function getPublicBaseUrl(req) {
+    const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString().split(',')[0].trim();
+    const host = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`).toString().split(',')[0].trim();
+    return `${proto}://${host}`;
+}
+
 app.get('/openapi.yaml', (req, res) => {
-    res.type('application/yaml');
-    res.sendFile(path.join(__dirname, 'openapi.yaml'));
+    const rewritten = buildDynamicOpenapiYaml(req);
+    if (!rewritten) {
+        return res.status(500).type('text/plain').send('# openapi.yaml unavailable');
+    }
+    res.type('application/yaml').send(rewritten);
+});
+
+app.get('/api/openapi.yaml', (req, res) => {
+    const rewritten = buildDynamicOpenapiYaml(req);
+    if (!rewritten) {
+        return res.status(500).type('text/plain').send('# openapi.yaml unavailable');
+    }
+    res.type('application/yaml').send(rewritten);
+});
+
+app.get('/docs', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'docs.html'));
+});
+
+app.get('/api/docs/config', (req, res) => {
+    res.json({
+        success: true,
+        unlockEnabled: Boolean(DOCS_REVEAL_PASSWORD),
+        apiKeyConfigured: Boolean(API_KEY),
+        region: REGION_CODE,
+    });
+});
+
+app.post('/api/docs/unlock', (req, res) => {
+    try {
+        if (!DOCS_REVEAL_PASSWORD) {
+            return res.status(503).json({
+                success: false,
+                error: 'Docs key reveal is not configured on this deployment',
+            });
+        }
+        const submitted = String(req.body?.password || '').trim();
+        if (submitted !== DOCS_REVEAL_PASSWORD) {
+            return res.status(401).json({ success: false, error: 'Invalid password' });
+        }
+        res.json({
+            success: true,
+            baseUrl: getPublicBaseUrl(req),
+            apiKey: API_KEY || '',
+            regionCode: REGION_CODE,
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/test', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'test.html'));
+});
+
+app.get('/playground', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'test.html'));
 });
 
 // CORS for API access
@@ -83,39 +198,433 @@ app.use((req, res, next) => {
  * Authenticate API requests
  * Supports: API Key (X-API-Key header) or Bearer token (Authorization header)
  */
-function authenticateAPI(req, res, next) {
-    // If no API key is configured, skip auth (for local development)
-    if (!API_KEY) {
-        return next();
+function getRequestOrigin(req) {
+    const forwardedProto = req.headers['x-forwarded-proto'];
+    const forwardedHost = req.headers['x-forwarded-host'];
+    const protocol = (Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto || req.protocol || 'http')
+        .split(',')[0]
+        .trim();
+    const host = (Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost || req.headers.host || '')
+        .split(',')[0]
+        .trim();
+    return host ? `${protocol}://${host}` : '';
+}
+
+function isSameOriginDashboardRequest(req) {
+    if (!ALLOW_PUBLIC_DASHBOARD) {
+        return false;
     }
-    
-    const apiKey = req.headers['x-api-key'];
-    const authHeader = req.headers.authorization;
-    
-    if (apiKey === API_KEY) {
-        return next();
+
+    if (req.headers['sec-fetch-site'] === 'same-origin') {
+        return true;
     }
-    
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-        const token = authHeader.substring(7);
-        if (token === API_KEY) {
-            return next();
+
+    const requestOrigin = getRequestOrigin(req);
+    if (!requestOrigin) {
+        return false;
+    }
+
+    if (req.headers.origin && req.headers.origin === requestOrigin) {
+        return true;
+    }
+
+    if (req.headers.referer) {
+        try {
+            return new URL(req.headers.referer).origin === requestOrigin;
+        } catch (error) {
+            return false;
         }
     }
-    
-    // Check admin password as fallback
-    if (ADMIN_PASSWORD && authHeader === `Bearer ${ADMIN_PASSWORD}`) {
+
+    return false;
+}
+
+function extractAuthToken(req) {
+    const apiKey = req.headers['x-api-key'];
+    if (apiKey) return apiKey;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        return authHeader.substring(7);
+    }
+    return null;
+}
+
+function resolveRouteInstanceId(req) {
+    if (req.params?.id) return req.params.id;
+    const bodyId = req.body?.instanceId || req.body?.instance_id;
+    if (bodyId) return String(bodyId);
+    return null;
+}
+
+function authenticateAPI(req, res, next) {
+    if (req.path === '/health' || req.path.startsWith('/internal') || req.path.startsWith('/docs')) {
         return next();
     }
-    
-    res.status(401).json({ 
-        error: 'Unauthorized', 
-        message: 'Valid API key required. Use X-API-Key header or Authorization: Bearer <key>' 
+
+    const openApi = !API_KEY;
+    if (openApi) {
+        req.auth = { type: 'open' };
+        return next();
+    }
+
+    if (isSameOriginDashboardRequest(req)) {
+        req.auth = { type: 'dashboard' };
+        return next();
+    }
+
+    const token = extractAuthToken(req);
+
+    if (API_KEY && token === API_KEY) {
+        req.auth = { type: 'deployment' };
+        return next();
+    }
+
+    if (ADMIN_PASSWORD && token === ADMIN_PASSWORD) {
+        req.auth = { type: 'admin' };
+        return next();
+    }
+
+    if (token && instanceManager) {
+        const routeInstanceId = resolveRouteInstanceId(req);
+        const match = instanceManager.verifyApiKeyAccess(token, routeInstanceId);
+        if (match) {
+            req.auth = { type: 'instance', instanceId: match.instanceId };
+            return next();
+        }
+
+        // Allow instance key on routes without :id if it maps to exactly one instance
+        if (!routeInstanceId) {
+            const anyMatch = instanceManager.verifyApiKeyAccess(token);
+            if (anyMatch) {
+                req.auth = { type: 'instance', instanceId: anyMatch.instanceId };
+                return next();
+            }
+        }
+    }
+
+    res.status(401).json({
+        error: 'Unauthorized',
+        message: 'Valid deployment API key or per-instance wsp_v3_* key required.',
     });
 }
 
+function authorizeInstanceScope(req, res, next) {
+    if (!req.auth || ['deployment', 'admin', 'dashboard', 'open', 'internal'].includes(req.auth.type)) {
+        return next();
+    }
+    if (req.auth.type === 'instance') {
+        const routeId = req.params.id;
+        if (routeId && routeId !== req.auth.instanceId) {
+            return res.status(403).json({
+                error: 'Forbidden',
+                message: 'This API key is scoped to a different instance.',
+            });
+        }
+    }
+    next();
+}
+
+function authenticateInternal(req, res, next) {
+    if (!WASUP_WORKER_SHARED_SECRET) {
+        return res.status(503).json({ error: 'Internal API not configured' });
+    }
+    const secret = req.headers['x-wasup-worker-secret'] || extractAuthToken(req);
+    if (secret !== WASUP_WORKER_SHARED_SECRET) {
+        return res.status(401).json({ error: 'Unauthorized internal call' });
+    }
+    req.auth = { type: 'internal' };
+    next();
+}
+
+function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeText(value) {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeHttpUrl(value, fieldName, errors) {
+    const url = normalizeText(value);
+    if (!url) {
+        errors.push(`${fieldName}.url is required`);
+        return '';
+    }
+
+    try {
+        const parsed = new URL(url);
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+            errors.push(`${fieldName}.url must start with http:// or https://`);
+            return '';
+        }
+        return parsed.toString();
+    } catch (error) {
+        errors.push(`${fieldName}.url must be a valid URL`);
+        return '';
+    }
+}
+
+function normalizeLinkField(body, errors) {
+    const rawLink = body.link ?? body.linkUrl;
+    if (rawLink === undefined || rawLink === null || rawLink === '') {
+        return null;
+    }
+
+    if (typeof rawLink === 'string') {
+        const url = normalizeHttpUrl(rawLink, 'link', errors);
+        return url ? { url } : null;
+    }
+
+    if (!isPlainObject(rawLink)) {
+        errors.push('link must be a URL string or an object with url');
+        return null;
+    }
+
+    const url = normalizeHttpUrl(rawLink.url, 'link', errors);
+    return url ? {
+        url,
+        label: normalizeText(rawLink.label || rawLink.text || rawLink.title)
+    } : null;
+}
+
+function normalizeCtaUrlField(body, errors) {
+    const rawCta = body.ctaUrl ?? body.urlButton ?? body.linkButton;
+    if (rawCta === undefined || rawCta === null || rawCta === '') {
+        return null;
+    }
+
+    if (typeof rawCta === 'string') {
+        const url = normalizeHttpUrl(rawCta, 'ctaUrl', errors);
+        return url ? { url, label: 'Open link' } : null;
+    }
+
+    if (!isPlainObject(rawCta)) {
+        errors.push('ctaUrl must be a URL string or an object with url and label/text');
+        return null;
+    }
+
+    const url = normalizeHttpUrl(rawCta.url, 'ctaUrl', errors);
+    const label = normalizeText(rawCta.label || rawCta.text || rawCta.title || 'Open link');
+    if (label.length > 25) {
+        errors.push('ctaUrl label/text must be 25 characters or fewer');
+    }
+
+    return url ? { url, label: label || 'Open link' } : null;
+}
+
+function normalizeButtonsField(body, errors) {
+    if (body.buttons === undefined || body.buttons === null) {
+        return [];
+    }
+
+    if (!Array.isArray(body.buttons)) {
+        errors.push('buttons must be an array');
+        return [];
+    }
+
+    if (body.buttons.length > MAX_BUTTONS) {
+        errors.push(`buttons supports at most ${MAX_BUTTONS} items`);
+    }
+
+    const seenIds = new Set();
+    return body.buttons.slice(0, MAX_BUTTONS).map((button, index) => {
+        if (!isPlainObject(button)) {
+            errors.push(`buttons[${index}] must be an object`);
+            return null;
+        }
+
+        const text = normalizeText(button.text || button.title || button.label);
+        const id = normalizeText(button.id || button.buttonId || text.toLowerCase().replace(/[^a-z0-9]+/g, '_'));
+
+        if (!text) {
+            errors.push(`buttons[${index}].text is required`);
+        } else if (text.length > MAX_BUTTON_TEXT_LENGTH) {
+            errors.push(`buttons[${index}].text must be ${MAX_BUTTON_TEXT_LENGTH} characters or fewer`);
+        }
+
+        if (!id) {
+            errors.push(`buttons[${index}].id is required`);
+        } else if (id.length > MAX_BUTTON_ID_LENGTH) {
+            errors.push(`buttons[${index}].id must be ${MAX_BUTTON_ID_LENGTH} characters or fewer`);
+        } else if (seenIds.has(id)) {
+            errors.push(`buttons[${index}].id must be unique`);
+        }
+
+        seenIds.add(id);
+        return text && id ? { id, text } : null;
+    }).filter(Boolean);
+}
+
+function parseMessagePayload(body) {
+    const errors = [];
+    const rawText = body.message ?? body.text;
+    let text = normalizeText(rawText);
+    const link = normalizeLinkField(body, errors);
+    const ctaUrl = normalizeCtaUrlField(body, errors);
+    const buttons = normalizeButtonsField(body, errors);
+    const footer = normalizeText(body.footer);
+
+    if (rawText !== undefined && typeof rawText !== 'string') {
+        errors.push('message/text must be a string');
+    }
+    if (text.length > MAX_MESSAGE_LENGTH) {
+        errors.push(`message/text must be ${MAX_MESSAGE_LENGTH} characters or fewer`);
+    }
+    if (body.linkPreview !== undefined && typeof body.linkPreview !== 'boolean') {
+        errors.push('linkPreview must be a boolean when provided');
+    }
+
+    if (!text) {
+        if (link?.label) {
+            text = link.label;
+        } else if (ctaUrl?.label) {
+            text = ctaUrl.label;
+        } else if (link?.url || ctaUrl?.url) {
+            text = 'Open this link';
+        } else if (buttons.length > 0) {
+            text = 'Please choose an option';
+        }
+    }
+
+    if (!text && !link?.url && !ctaUrl?.url && buttons.length === 0) {
+        errors.push('Missing message content: provide message/text, link, ctaUrl, or buttons');
+    }
+
+    if (errors.length > 0) {
+        return { errors };
+    }
+
+    return {
+        messagePayload: {
+            text,
+            link,
+            ctaUrl,
+            buttons,
+            footer,
+            linkPreview: body.linkPreview !== false
+        }
+    };
+}
+
+function parseReactionPayload(body) {
+    const errors = [];
+    const to = normalizeText(body.to || body.to_phone);
+    const emoji = body.emoji ?? body.reaction ?? '';
+
+    if (typeof emoji !== 'string') {
+        errors.push('emoji must be a string');
+    }
+
+    let key = body.key;
+    if (!key) {
+        const messageId = normalizeText(body.messageId || body.message_id || body.id);
+        if (!messageId) {
+            errors.push('messageId or key is required');
+        }
+        if (!to) {
+            errors.push('to is required when key is not provided');
+        }
+
+        key = {
+            id: messageId,
+            fromMe: Boolean(body.fromMe ?? body.from_me ?? false)
+        };
+
+        const participant = normalizeText(body.participant);
+        if (participant) {
+            key.participant = participant;
+        }
+        const remoteJid = normalizeText(body.remoteJid || body.remote_jid);
+        if (remoteJid) {
+            key.remoteJid = remoteJid;
+        }
+    } else if (!isPlainObject(key) || !normalizeText(key.id)) {
+        errors.push('key must be an object with id');
+    }
+
+    if (errors.length > 0) {
+        return { errors };
+    }
+
+    return { to, emoji, key };
+}
+
+function parseSendOptions(body) {
+    const { messagePayload, errors } = parseMessagePayload(body);
+    if (errors) {
+        return { errors };
+    }
+
+    if (body.behaviorProfile !== undefined && !VALID_BEHAVIOR_PROFILES.has(body.behaviorProfile)) {
+        return {
+            errors: [`behaviorProfile must be one of: ${Array.from(VALID_BEHAVIOR_PROFILES).join(', ')}`]
+        };
+    }
+
+    const options = { messagePayload };
+    const optionFields = [
+        'behaviorProfile',
+        'typingSimulation',
+        'delayEnabled',
+        'phoneNotificationsEnabled',
+        'notificationGraceMs',
+        'contactName',
+        'skipContactSave'
+    ];
+
+    for (const field of optionFields) {
+        if (body[field] !== undefined) {
+            options[field] = body[field];
+        }
+    }
+
+    return { options, messagePayload };
+}
+
+app.get('/api/dashboard-config', (req, res) => {
+    res.json({
+        success: true,
+        allowPublicDashboard: ALLOW_PUBLIC_DASHBOARD,
+        dashboardRequiresApiKey: !!API_KEY && !ALLOW_PUBLIC_DASHBOARD
+    });
+});
+
+app.get('/api/health', (req, res) => {
+    const instances = instanceManager?.getAllInstances?.() || [];
+    const connectedCount = instances.filter(i => i.status === 'connected').length;
+    res.json({
+        status: 'ok',
+        uptime: process.uptime(),
+        workerMode: WASUP_WORKER_MODE,
+        region: REGION_CODE,
+        dataDir: WASUP_DATA_DIR,
+        instances: {
+            total: instances.length,
+            connected: connectedCount,
+        },
+    });
+});
+
+app.use('/api/internal', authenticateInternal);
+app.post('/api/internal/heartbeat', (req, res) => {
+    res.json({
+        success: true,
+        orgId: WASUP_ORG_ID,
+        region: REGION_CODE,
+        workerMode: WASUP_WORKER_MODE,
+        instances: instanceManager.getAllInstances().map(i => ({
+            id: i.id,
+            status: i.status,
+            phone: i.connectedPhone,
+            proxySource: i.proxy?.source,
+            apiKey: i.apiKey,
+        })),
+    });
+});
+
 // Apply authentication to all API routes
 app.use('/api', authenticateAPI);
+app.use('/api/instances/:id', authorizeInstanceScope);
 
 // ========================================
 // INSTANCE MANAGEMENT API
@@ -127,6 +636,16 @@ app.use('/api', authenticateAPI);
  */
 app.get('/api/instances', (req, res) => {
     try {
+        if (req.auth?.type === 'instance') {
+            const inst = instanceManager.getInstance(req.auth.instanceId);
+            const instances = inst ? [inst.getStatus()] : [];
+            return res.json({
+                success: true,
+                count: instances.length,
+                instances,
+            });
+        }
+
         const instances = instanceManager.getAllInstances();
         res.json({ 
             success: true, 
@@ -145,13 +664,26 @@ app.get('/api/instances', (req, res) => {
  */
 app.post('/api/instances', async (req, res) => {
     try {
-        const { id, name, webhookUrl, antiBanSettings } = req.body;
+        const {
+            id,
+            name,
+            webhookUrl,
+            antiBanSettings,
+            apiKey,
+            generateApiKey,
+        } = req.body;
+
+        if (req.auth?.type === 'instance') {
+            return res.status(403).json({ error: 'Instance-scoped API keys cannot create instances' });
+        }
         
         const instance = await instanceManager.createInstance({
             id,
             name,
             webhookUrl,
-            antiBanSettings
+            antiBanSettings,
+            apiKey,
+            generateApiKey: generateApiKey === true || generateApiKey === 'true',
         });
         
         broadcastToAll({
@@ -163,6 +695,36 @@ app.post('/api/instances', async (req, res) => {
             success: true, 
             instance 
         });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/instances/:id/api-key/rotate
+ */
+app.post('/api/instances/:id/api-key/rotate', async (req, res) => {
+    try {
+        if (req.auth?.type === 'instance' && req.auth.instanceId !== req.params.id) {
+            return res.status(403).json({ error: 'Forbidden for this instance key' });
+        }
+        const result = await instanceManager.rotateInstanceApiKey(req.params.id);
+        res.json({ success: true, ...result, showOnce: true });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * DELETE /api/instances/:id/api-key
+ */
+app.delete('/api/instances/:id/api-key', async (req, res) => {
+    try {
+        if (req.auth?.type === 'instance') {
+            return res.status(403).json({ error: 'Use deployment key to clear instance API keys' });
+        }
+        const result = await instanceManager.clearInstanceApiKey(req.params.id);
+        res.json({ success: true, ...result });
     } catch (error) {
         res.status(400).json({ error: error.message });
     }
@@ -385,39 +947,21 @@ app.get('/api/instances/:id/qr', (req, res) => {
  */
 app.post('/api/instances/:id/send', async (req, res) => {
     try {
-        const {
-            to,
-            message,
-            behaviorProfile,
-            typingSimulation,
-            delayEnabled,
-            phoneNotificationsEnabled,
-            notificationGraceMs,
-            contactName,
-            skipContactSave
-        } = req.body;
+        const { to } = req.body;
         
-        if (!to || !message) {
-            return res.status(400).json({ error: 'Missing required fields: to, message' });
+        if (!to) {
+            return res.status(400).json({ error: 'Missing required field: to' });
         }
-        if (behaviorProfile !== undefined && !VALID_BEHAVIOR_PROFILES.has(behaviorProfile)) {
+
+        const { options, messagePayload, errors } = parseSendOptions(req.body);
+        if (errors) {
             return res.status(400).json({
-                error: 'Invalid behaviorProfile',
-                allowedProfiles: Array.from(VALID_BEHAVIOR_PROFILES)
+                error: 'Invalid send payload',
+                details: errors
             });
         }
         
-        // Build options for per-message behavior override
-        const options = {};
-        if (behaviorProfile !== undefined) options.behaviorProfile = behaviorProfile;
-        if (typingSimulation !== undefined) options.typingSimulation = typingSimulation;
-        if (delayEnabled !== undefined) options.delayEnabled = delayEnabled;
-        if (phoneNotificationsEnabled !== undefined) options.phoneNotificationsEnabled = phoneNotificationsEnabled;
-        if (notificationGraceMs !== undefined) options.notificationGraceMs = notificationGraceMs;
-        if (contactName !== undefined) options.contactName = contactName;
-        if (skipContactSave !== undefined) options.skipContactSave = skipContactSave;
-        
-        const result = await instanceManager.sendMessage(req.params.id, to, message, options);
+        const result = await instanceManager.sendMessage(req.params.id, to, messagePayload.text, options);
         
         res.json({ 
             success: true, 
@@ -425,6 +969,349 @@ app.post('/api/instances/:id/send', async (req, res) => {
         });
     } catch (error) {
         res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/instances/:id/send/interactive
+ * Alias for interactive-capable sends. Uses the same payload as /send,
+ * but is easier to discover in OpenAPI and smoke checks.
+ */
+app.post('/api/instances/:id/send/interactive', async (req, res) => {
+    try {
+        const { to } = req.body;
+
+        if (!to) {
+            return res.status(400).json({ error: 'Missing required field: to' });
+        }
+
+        const { options, messagePayload, errors } = parseSendOptions(req.body);
+        if (errors) {
+            return res.status(400).json({
+                error: 'Invalid send payload',
+                details: errors
+            });
+        }
+
+        const result = await instanceManager.sendMessage(req.params.id, to, messagePayload.text, options);
+
+        res.json({
+            success: true,
+            result
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/instances/:id/react
+ * React to a WhatsApp message
+ * Body: { to, messageId, emoji, fromMe?, participant?, key? }
+ */
+app.post('/api/instances/:id/react', async (req, res) => {
+    try {
+        const parsed = parseReactionPayload(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({
+                error: 'Invalid reaction payload',
+                details: parsed.errors
+            });
+        }
+
+        const result = await instanceManager.sendReaction(req.params.id, parsed.to, {
+            emoji: parsed.emoji,
+            key: parsed.key
+        });
+
+        res.json({ success: true, result });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/react
+ * React via auto-selected or from_phone matched instance
+ */
+app.post('/api/react', async (req, res) => {
+    try {
+        const parsed = parseReactionPayload(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({
+                error: 'Invalid reaction payload',
+                details: parsed.errors
+            });
+        }
+
+        const fromPhone = req.body.from_phone || req.body.from;
+        const instances = instanceManager.getAllInstances();
+        let matchedInstance = null;
+
+        if (fromPhone) {
+            const normalizedFrom = normalizePhone(fromPhone);
+            matchedInstance = instances.find((instance) => {
+                if (!instance.connectedPhone || instance.status !== 'connected') return false;
+                const normalizedConnected = normalizePhone(instance.connectedPhone);
+                return normalizedConnected.endsWith(normalizedFrom)
+                    || normalizedFrom.endsWith(normalizedConnected)
+                    || normalizedConnected === normalizedFrom;
+            });
+
+            if (!matchedInstance) {
+                return res.status(400).json({
+                    error: `No connected instance found for phone number: ${fromPhone}`
+                });
+            }
+        } else {
+            matchedInstance = instances.find((instance) => instance.status === 'connected');
+            if (!matchedInstance) {
+                return res.status(400).json({ error: 'No connected instances available' });
+            }
+        }
+
+        const result = await instanceManager.sendReaction(matchedInstance.id, parsed.to, {
+            emoji: parsed.emoji,
+            key: parsed.key
+        });
+
+        res.json({
+            success: true,
+            instanceId: matchedInstance.id,
+            result
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// ========================================
+// PROXY CONFIGURATION API
+// ========================================
+
+app.get('/api/proxy', (req, res) => {
+    const cfg = getDeploymentDefaultProxy();
+    const pool = instanceManager.getProxyPoolStatus();
+    res.json({
+        success: true,
+        region: process.env.REGION_CODE || null,
+        deploymentDefault: redactProxy(cfg),
+        deploymentDefaultConfigured: !!cfg,
+        pool,
+    });
+});
+
+app.get('/api/proxy/pool', (req, res) => {
+    const pool = instanceManager.getProxyPoolStatus();
+    res.json({
+        success: true,
+        enabled: pool.enabled,
+        pool,
+        message: pool.enabled
+            ? undefined
+            : 'No PROXY_POOL configured. Pool auto-assignment is off.',
+    });
+});
+
+app.post('/api/proxy/pool/reconcile', async (req, res) => {
+    try {
+        const result = await instanceManager.reconcileProxyPool();
+        broadcastToAll({ type: 'proxy_pool_reconciled', data: result });
+        res.json({
+            success: true,
+            message: `Pool reconciled: ${result.reassigned.length} reassigned, ${result.orphaned.length} orphaned.`,
+            ...result,
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/proxy/pool/entries', async (req, res) => {
+    try {
+        const body = req.body || {};
+        let inputs;
+        if (Array.isArray(body.entries)) {
+            inputs = body.entries;
+        } else if (body.url || body.shorthand || body.host) {
+            inputs = [body.shorthand || body.url || body];
+        } else {
+            return res.status(400).json({
+                error: 'Missing proxy. Provide url, shorthand (host:port:user:pass), {host,port,...}, or entries: [...]',
+            });
+        }
+
+        const results = [];
+        for (const inp of inputs) {
+            try {
+                const r = await instanceManager.addProxyToPool(inp);
+                results.push({ ok: true, added: r.added, slot: r.slot });
+            } catch (err) {
+                results.push({ ok: false, error: err.message });
+            }
+        }
+
+        let reconciled = null;
+        if (body.reconcile !== false) {
+            reconciled = await instanceManager.reconcileProxyPool();
+        }
+
+        const pool = instanceManager.getProxyPoolStatus();
+        broadcastToAll({ type: 'proxy_pool_updated', data: pool });
+        res.status(201).json({ success: results.every(r => r.ok), results, reconciled, pool });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+app.delete('/api/proxy/pool/entries/:slotId', async (req, res) => {
+    try {
+        const slotId = decodeURIComponent(req.params.slotId);
+        const confirm = req.query.confirm === 'true' || req.query.confirm === '1';
+        const current = instanceManager.getProxyPoolStatus();
+        const entry = (current.entries || []).find(e => e.id === slotId);
+        if (!entry) {
+            return res.status(404).json({ error: `Pool slot ${slotId} not found` });
+        }
+        if (entry.assignedTo && !confirm) {
+            return res.status(409).json({
+                error: 'Slot is currently in use',
+                slotId,
+                assignedTo: entry.assignedTo,
+                hint: 'Re-call with ?confirm=true to remove anyway.',
+            });
+        }
+
+        const result = await instanceManager.removeProxyFromPool(slotId);
+        broadcastToAll({ type: 'proxy_pool_updated', data: result.pool });
+        res.json({ success: true, ...result });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+app.post('/api/proxy/test', async (req, res) => {
+    try {
+        let cfg;
+        if (req.body?.url || req.body?.shorthand || req.body?.host) {
+            cfg = parseFlexibleProxyInput(req.body.shorthand || req.body.url || req.body);
+        } else {
+            cfg = getDeploymentDefaultProxy();
+        }
+        if (!cfg) {
+            return res.status(400).json({ error: 'No proxy configured and none supplied in request body.' });
+        }
+
+        const target = req.body?.target || 'https://web.whatsapp.com/';
+        const agent = createProxyAgent(cfg);
+        const start = Date.now();
+        const response = await axios.get(target, {
+            httpsAgent: agent,
+            httpAgent: agent,
+            timeout: 15000,
+            validateStatus: () => true,
+            maxRedirects: 0,
+        });
+
+        res.json({
+            success: true,
+            proxy: redactProxy(cfg),
+            target,
+            responseStatus: response.status,
+            elapsedMs: Date.now() - start,
+        });
+    } catch (error) {
+        res.status(502).json({ success: false, error: error.message, code: error.code || null });
+    }
+});
+
+app.get('/api/instances/:id/proxy', (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) return res.status(404).json({ error: 'Instance not found' });
+        res.json({ success: true, proxy: instance.getProxyStatus() });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.put('/api/instances/:id/proxy', async (req, res) => {
+    try {
+        const body = req.body || {};
+        let proxyArg;
+        if (body.enabled === false) {
+            proxyArg = { enabled: false };
+        } else if (body.url || body.shorthand || body.host) {
+            const cfg = parseFlexibleProxyInput(body.shorthand || body.url || body);
+            if (!cfg) {
+                return res.status(400).json({ error: 'Invalid proxy config' });
+            }
+            proxyArg = {
+                enabled: true,
+                type: cfg.type,
+                host: cfg.host,
+                port: cfg.port,
+                username: cfg.username,
+                password: cfg.password,
+            };
+        } else {
+            proxyArg = null;
+        }
+
+        const result = await instanceManager.setInstanceProxy(req.params.id, proxyArg);
+        broadcastToAll({
+            type: 'instance_updated',
+            data: instanceManager.getInstance(req.params.id).getStatus(),
+        });
+        res.json({ success: true, proxy: result, message: 'Proxy updated. Instance will reconnect if it was online.' });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+app.post('/api/instances/:id/proxy/verify', async (req, res) => {
+    try {
+        const result = await instanceManager.verifyInstanceProxy(req.params.id, req.body?.target);
+        res.json({ success: true, ...result });
+    } catch (error) {
+        res.status(404).json({ error: error.message });
+    }
+});
+
+app.delete('/api/instances/:id/proxy', async (req, res) => {
+    try {
+        const result = await instanceManager.setInstanceProxy(req.params.id, null);
+        broadcastToAll({
+            type: 'instance_updated',
+            data: instanceManager.getInstance(req.params.id).getStatus(),
+        });
+        res.json({ success: true, proxy: result, message: 'Per-instance proxy override cleared.' });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+app.get('/api/instances/:id/connection', (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) return res.status(404).json({ error: 'Instance not found' });
+
+        const status = instance.getStatus();
+        const uptime = status.connectedAt
+            ? Math.floor((Date.now() - new Date(status.connectedAt).getTime()) / 1000)
+            : null;
+
+        res.json({
+            success: true,
+            status: status.status,
+            phone: status.connectedPhone || null,
+            connectedAt: status.connectedAt || null,
+            uptime,
+            pairingCode: status.pairingCode || null,
+            proxy: status.proxy || null,
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 
@@ -454,36 +1341,18 @@ app.post('/api/send', async (req, res) => {
         // Support both new format (from_phone, to_phone) and legacy format (from, to)
         const fromPhone = req.body.from_phone || req.body.from;
         const toPhone = req.body.to_phone || req.body.to;
-        const {
-            message,
-            behaviorProfile,
-            typingSimulation,
-            delayEnabled,
-            phoneNotificationsEnabled,
-            notificationGraceMs,
-            contactName,
-            skipContactSave
-        } = req.body;
         
-        if (!toPhone || !message) {
-            return res.status(400).json({ error: 'Missing required fields: to_phone, message' });
+        if (!toPhone) {
+            return res.status(400).json({ error: 'Missing required field: to_phone' });
         }
-        if (behaviorProfile !== undefined && !VALID_BEHAVIOR_PROFILES.has(behaviorProfile)) {
+
+        const { options, messagePayload, errors } = parseSendOptions(req.body);
+        if (errors) {
             return res.status(400).json({
-                error: 'Invalid behaviorProfile',
-                allowedProfiles: Array.from(VALID_BEHAVIOR_PROFILES)
+                error: 'Invalid send payload',
+                details: errors
             });
         }
-        
-        // Build options for per-message behavior override
-        const options = {};
-        if (behaviorProfile !== undefined) options.behaviorProfile = behaviorProfile;
-        if (typingSimulation !== undefined) options.typingSimulation = typingSimulation;
-        if (delayEnabled !== undefined) options.delayEnabled = delayEnabled;
-        if (phoneNotificationsEnabled !== undefined) options.phoneNotificationsEnabled = phoneNotificationsEnabled;
-        if (notificationGraceMs !== undefined) options.notificationGraceMs = notificationGraceMs;
-        if (contactName !== undefined) options.contactName = contactName;
-        if (skipContactSave !== undefined) options.skipContactSave = skipContactSave;
         
         let targetInstanceId = null;
         let matchedInstance = null;
@@ -548,7 +1417,7 @@ app.post('/api/send', async (req, res) => {
             targetInstanceId = matchedInstance.id;
         }
         
-        const result = await instanceManager.sendMessage(targetInstanceId, toPhone, message, options);
+        const result = await instanceManager.sendMessage(targetInstanceId, toPhone, messagePayload.text, options);
         
         // Determine status based on actual result
         let status = 'sent';
@@ -561,8 +1430,9 @@ app.post('/api/send', async (req, res) => {
             created_at: new Date().toISOString(),
             from_phone: normalizePhone(matchedInstance.connectedPhone),
             to_phone: normalizePhone(toPhone),
-            message: message,
-            status: status
+            message: result.messageText || messagePayload.text,
+            status: status,
+            interactive: result.interactive
         }]);
     } catch (error) {
         // Check if error indicates a ban or connection issue
@@ -839,24 +1709,6 @@ app.put('/api/instances/:id/webhook', async (req, res) => {
 // ========================================
 
 /**
- * GET /api/health
- * Health check
- */
-app.get('/api/health', (req, res) => {
-    const instances = instanceManager.getAllInstances();
-    const connectedCount = instances.filter(i => i.status === 'connected').length;
-    
-    res.json({ 
-        status: 'ok', 
-        uptime: process.uptime(),
-        instances: {
-            total: instances.length,
-            connected: connectedCount
-        }
-    });
-});
-
-/**
  * GET /api/status
  * Get overall system status (backward compatible)
  */
@@ -1091,7 +1943,7 @@ wss.on('connection', (ws, req) => {
     // Initialize client state
     wsClients.set(ws, {
         subscribedInstances: new Set(),
-        authenticated: !API_KEY // Auto-auth if no API key configured
+        authenticated: !API_KEY || ALLOW_PUBLIC_DASHBOARD // Auto-auth if dashboard auth is disabled
     });
     
     // Send initial data
@@ -1100,7 +1952,7 @@ wss.on('connection', (ws, req) => {
         type: 'init',
         data: {
             instances,
-            requiresAuth: !!API_KEY
+            requiresAuth: !!API_KEY && !ALLOW_PUBLIC_DASHBOARD
         }
     }));
     
@@ -1202,7 +2054,7 @@ server.listen(PORT, async () => {
 
 🌐 Web UI:      http://localhost:${PORT}
 🔌 API Base:    http://localhost:${PORT}/api
-🔐 Auth:        ${API_KEY ? 'API Key Required' : 'Open (set API_KEY in .env for production)'}
+🔐 Auth:        ${API_KEY ? (ALLOW_PUBLIC_DASHBOARD ? 'API Key Required (dashboard bypass enabled)' : 'API Key Required') : 'Open (set API_KEY in .env for production)'}
 
 API Endpoints:
   POST   /api/instances              Create new instance
@@ -1217,7 +2069,15 @@ API Endpoints:
   GET    /api/instances/:id/qr          Get QR code
   
   POST   /api/instances/:id/send        Send message via specific instance
+  POST   /api/instances/:id/send/interactive  Send native interactive message
+  POST   /api/instances/:id/react       React to a message
   POST   /api/send                      Send message (by 'from' phone or instanceId)
+  POST   /api/react                     React to a message (auto-select instance)
+  GET    /api/proxy                     Deployment proxy + pool summary
+  GET    /api/instances/:id/proxy       Instance proxy status (poll)
+  PUT    /api/instances/:id/proxy       Attach proxy (URL or Webshare shorthand)
+  DELETE /api/instances/:id/proxy       Detach proxy override
+  POST   /api/instances/:id/proxy/verify  Verify egress IP through proxy
   GET    /api/numbers                   List all connected phone numbers
   
   GET    /api/instances/:id/logs        Get activity logs
@@ -1261,14 +2121,17 @@ Initializing...
     console.log(`[Server] Ready! ${instanceManager.getAllInstances().length} instances loaded.`);
 });
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-    console.log('\n\n🛑 Shutting down...');
+// Graceful shutdown (Docker / K8s SIGTERM)
+async function gracefulShutdown(signal) {
+    console.log(`\n\n🛑 ${signal} received — shutting down...`);
     if (instanceManager) {
         await instanceManager.shutdown();
     }
     process.exit(0);
-});
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 process.on('uncaughtException', (error) => {
     console.error('Uncaught Exception:', error);

@@ -3,578 +3,921 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp API Tester</title>
+    <title>WhatsApp Playground</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
+        :root {
+            --bg: #0f1115;
+            --panel: #171a21;
+            --panel-border: rgba(255, 255, 255, 0.08);
+            --text: #e7e9ee;
+            --muted: rgba(231, 233, 238, 0.62);
+            --accent: #59dcb5;
+            --accent-soft: rgba(89, 220, 181, 0.12);
+            --danger: #f87171;
+            --success: #59dcb5;
+            --warning: #fbbf24;
         }
-        
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        html, body {
+            min-height: 100dvh;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Outfit', sans-serif;
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            min-height: 100vh;
-            color: #e4e4e4;
-            padding: 20px;
+            padding: 24px 16px 48px;
         }
-        
+
         .container {
-            max-width: 800px;
+            max-width: 980px;
             margin: 0 auto;
         }
-        
-        h1 {
-            text-align: center;
-            margin-bottom: 10px;
-            color: #25d366;
-        }
-        
-        .subtitle {
-            text-align: center;
-            color: #888;
-            margin-bottom: 30px;
-            font-size: 14px;
-        }
-        
-        .card {
-            background: #1f2937;
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-        }
-        
-        .card-title {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 16px;
-            color: #25d366;
+
+        .topbar {
             display: flex;
             align-items: center;
-            gap: 8px;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
         }
-        
-        .form-group {
-            margin-bottom: 16px;
-        }
-        
-        label {
-            display: block;
-            margin-bottom: 6px;
-            font-size: 13px;
-            color: #9ca3af;
-            font-weight: 500;
-        }
-        
-        input, textarea, select {
-            width: 100%;
-            padding: 12px;
-            border: 1px solid #374151;
-            border-radius: 8px;
-            background: #111827;
-            color: #e4e4e4;
+
+        .back-link {
+            color: var(--muted);
+            text-decoration: none;
             font-size: 14px;
-            transition: border-color 0.2s, box-shadow 0.2s;
         }
-        
-        input:focus, textarea:focus, select:focus {
-            outline: none;
-            border-color: #25d366;
-            box-shadow: 0 0 0 3px rgba(37, 211, 102, 0.1);
+
+        .back-link:hover { color: var(--text); }
+
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -0.03em;
         }
-        
-        textarea {
-            min-height: 100px;
-            resize: vertical;
+
+        .subtitle {
+            color: var(--muted);
+            font-size: 14px;
+            margin-top: 6px;
+            max-width: 62ch;
+            line-height: 1.5;
         }
-        
-        .row {
+
+        .grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 16px;
         }
-        
-        @media (max-width: 600px) {
-            .row {
-                grid-template-columns: 1fr;
-            }
+
+        @media (max-width: 768px) {
+            .grid { grid-template-columns: 1fr; }
         }
-        
-        .btn {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 8px;
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: 18px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--accent);
+            margin-bottom: 14px;
+        }
+
+        .form-group { margin-bottom: 14px; }
+
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        input, textarea, select {
+            width: 100%;
+            padding: 11px 12px;
+            border: 1px solid var(--panel-border);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--text);
             font-size: 14px;
+            font-family: inherit;
+        }
+
+        input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            min-width: 16px;
+            padding: 0;
+            margin: 0;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: rgba(89, 220, 181, 0.45);
+            box-shadow: 0 0 0 3px rgba(89, 220, 181, 0.08);
+        }
+
+        input[readonly] {
+            opacity: 0.72;
+            cursor: not-allowed;
+        }
+
+        textarea {
+            min-height: 96px;
+            resize: vertical;
+        }
+
+        .hint {
+            margin-top: 6px;
+            font-size: 12px;
+            color: var(--muted);
+            line-height: 1.45;
+        }
+
+        .preset-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+
+        .preset-btn, .btn {
+            border: 1px solid var(--panel-border);
+            border-radius: 999px;
+            padding: 8px 14px;
+            font-size: 13px;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.2s;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
+            transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+            font-family: inherit;
         }
-        
-        .btn-primary {
-            background: #25d366;
-            color: #000;
+
+        .preset-btn {
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--text);
         }
-        
-        .btn-primary:hover {
-            background: #20bd5a;
+
+        .preset-btn:hover, .btn:hover:not(:disabled) {
             transform: translateY(-1px);
+            border-color: rgba(89, 220, 181, 0.35);
         }
-        
-        .btn-primary:disabled {
-            background: #1a9149;
+
+        .preset-btn:active, .btn:active:not(:disabled) {
+            transform: scale(0.98);
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: #08110d;
+            border-color: transparent;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--text);
+        }
+
+        .btn:disabled {
+            opacity: 0.55;
             cursor: not-allowed;
             transform: none;
         }
-        
-        .btn-secondary {
-            background: #374151;
-            color: #e4e4e4;
-        }
-        
-        .btn-secondary:hover {
-            background: #4b5563;
-        }
-        
-        .btn-group {
+
+        .btn-row {
             display: flex;
-            gap: 12px;
-            margin-top: 20px;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 16px;
         }
-        
-        .response-box {
-            background: #111827;
-            border: 1px solid #374151;
-            border-radius: 8px;
-            padding: 16px;
-            font-family: 'Monaco', 'Menlo', monospace;
+
+        .checkbox-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 36px;
+            padding: 8px 12px;
+            border: 1px solid var(--panel-border);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .checkbox-row label {
+            margin: 0;
+            text-transform: none;
+            letter-spacing: 0;
             font-size: 13px;
+            color: var(--text);
+            font-weight: 500;
+            cursor: pointer;
+            flex: 1;
+        }
+
+        .options-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        @media (max-width: 640px) {
+            .options-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .payload-preview, .response-box, .curl-box {
+            background: rgba(0, 0, 0, 0.22);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            padding: 14px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.5;
             white-space: pre-wrap;
-            word-break: break-all;
-            max-height: 400px;
-            overflow-y: auto;
-            min-height: 100px;
+            word-break: break-word;
+            overflow: auto;
+            max-height: 320px;
         }
-        
-        .response-box.success {
-            border-color: #25d366;
-            background: rgba(37, 211, 102, 0.1);
-        }
-        
-        .response-box.error {
-            border-color: #ef4444;
-            background: rgba(239, 68, 68, 0.1);
-        }
-        
+
+        .response-box.success { border-color: rgba(89, 220, 181, 0.45); }
+        .response-box.error { border-color: rgba(248, 113, 113, 0.45); }
+
         .status-bar {
             display: flex;
             align-items: center;
             gap: 8px;
-            margin-bottom: 12px;
+            margin-bottom: 10px;
             font-size: 13px;
+            color: var(--muted);
         }
-        
-        .status-indicator {
-            width: 10px;
-            height: 10px;
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
-            background: #6b7280;
+            background: rgba(255, 255, 255, 0.25);
         }
-        
-        .status-indicator.success { background: #25d366; }
-        .status-indicator.error { background: #ef4444; }
-        .status-indicator.loading { background: #f59e0b; animation: pulse 1s infinite; }
-        
+
+        .status-dot.success { background: var(--success); }
+        .status-dot.error { background: var(--danger); }
+        .status-dot.loading { background: var(--warning); animation: pulse 1s infinite; }
+
         @keyframes pulse {
             0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+            50% { opacity: 0.45; }
         }
-        
-        .quick-actions {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-top: 12px;
+
+        .history-item {
+            border-top: 1px solid var(--panel-border);
+            padding: 12px 0;
+            font-size: 13px;
         }
-        
-        .quick-btn {
-            padding: 6px 12px;
-            background: #374151;
-            border: none;
-            border-radius: 6px;
-            color: #e4e4e4;
-            font-size: 12px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        
-        .quick-btn:hover {
-            background: #4b5563;
-        }
-        
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .checkbox-group input[type="checkbox"] {
-            width: auto;
-        }
-        
-        .options-row {
-            display: flex;
-            gap: 24px;
-            flex-wrap: wrap;
-        }
-        
-        .hint {
-            font-size: 11px;
-            color: #6b7280;
-            margin-top: 4px;
-        }
-        
-        .divider {
-            height: 1px;
-            background: #374151;
-            margin: 20px 0;
-        }
-        
-        .back-link {
+
+        .history-item:first-child { border-top: none; padding-top: 0; }
+
+        .badge {
             display: inline-flex;
             align-items: center;
-            gap: 6px;
-            color: #9ca3af;
-            text-decoration: none;
-            font-size: 14px;
-            margin-bottom: 20px;
-        }
-        
-        .back-link:hover {
-            color: #25d366;
-        }
-        
-        .history-item {
-            background: #111827;
-            border: 1px solid #374151;
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 8px;
-            font-size: 12px;
-        }
-        
-        .history-item .time {
-            color: #6b7280;
-        }
-        
-        .history-item .status {
-            display: inline-block;
             padding: 2px 8px;
-            border-radius: 4px;
+            border-radius: 999px;
             font-size: 11px;
-            font-weight: 600;
+            font-weight: 700;
+            letter-spacing: 0.04em;
         }
-        
-        .history-item .status.success {
-            background: rgba(37, 211, 102, 0.2);
-            color: #25d366;
-        }
-        
-        .history-item .status.error {
-            background: rgba(239, 68, 68, 0.2);
-            color: #ef4444;
+
+        .badge.success { background: var(--accent-soft); color: var(--accent); }
+        .badge.error { background: rgba(248, 113, 113, 0.12); color: var(--danger); }
+
+        .section-note {
+            padding: 12px 14px;
+            border-radius: 12px;
+            background: rgba(89, 220, 181, 0.08);
+            border: 1px solid rgba(89, 220, 181, 0.16);
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.5;
+            margin-bottom: 14px;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <a href="/" class="back-link">← Back to Dashboard</a>
-        
-        <h1>📱 WhatsApp API Tester</h1>
-        <p class="subtitle">Test the /api/send endpoint with custom parameters</p>
-        
-        <!-- Configuration Card -->
-        <div class="card">
-            <div class="card-title">⚙️ Configuration</div>
-            
-            <div class="form-group">
-                <label>Base API URL</label>
-                <input type="text" id="baseUrl" placeholder="http://localhost:3000">
-                <div class="hint">Leave empty to use current origin (window.location.origin)</div>
-            </div>
-            
-            <div class="form-group">
-                <label>API Key (optional)</label>
-                <input type="password" id="apiKey" placeholder="Enter API key if required">
+        <div class="topbar">
+            <div>
+                <a href="/" class="back-link">Back to dashboard</a>
+                <h1>WhatsApp Playground</h1>
+                <p class="subtitle" data-marker="interactive-message-playground">
+                    Test plain text, link previews, CTA URL buttons, and quick reply buttons through the worker API.
+                </p>
             </div>
         </div>
-        
-        <!-- Message Card -->
+
         <div class="card">
-            <div class="card-title">📨 Send Message</div>
-            
-            <div class="row">
+            <div class="card-title">Connection</div>
+            <div class="grid">
                 <div class="form-group">
-                    <label>From Phone (your connected number)</label>
-                    <input type="text" id="fromPhone" placeholder="60123456789">
-                    <div class="hint">Leave empty to use first connected instance</div>
+                    <label for="baseUrl">Base URL</label>
+                    <input type="text" id="baseUrl" readonly>
+                    <div class="hint">Locked to the current worker origin.</div>
                 </div>
-                
                 <div class="form-group">
-                    <label>To Phone *</label>
+                    <label for="apiKey">API Key</label>
+                    <input type="password" id="apiKey" placeholder="Only needed when worker auth is enabled">
+                </div>
+            </div>
+            <div class="grid">
+                <div class="form-group">
+                    <label for="sendMode">Send Route</label>
+                    <select id="sendMode">
+                        <option value="interactive">Instance interactive send</option>
+                        <option value="instance">Instance send</option>
+                        <option value="global">Global /api/send</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="instanceId">Instance</label>
+                    <select id="instanceId">
+                        <option value="">Loading instances...</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Message</div>
+            <div class="section-note">
+                Buttons and CTA links always send as native WhatsApp interactive messages through baileys_helpers.
+            </div>
+
+            <div class="preset-row">
+                <button type="button" class="preset-btn" onclick="loadTextExample()">Plain text</button>
+                <button type="button" class="preset-btn" onclick="loadLinkExample()">Link preview</button>
+                <button type="button" class="preset-btn" onclick="loadCtaExample()">CTA link button</button>
+                <button type="button" class="preset-btn" onclick="loadButtonExample()">Reply buttons</button>
+            </div>
+
+            <div class="grid">
+                <div class="form-group">
+                    <label for="fromPhone">From Phone</label>
+                    <input type="text" id="fromPhone" placeholder="60123456789">
+                    <div class="hint">Only used for global /api/send. Leave empty to use the first connected instance.</div>
+                </div>
+                <div class="form-group">
+                    <label for="toPhone">To Phone</label>
                     <input type="text" id="toPhone" placeholder="60198765432" required>
                 </div>
             </div>
-            
+
             <div class="form-group">
-                <label>Message *</label>
+                <label for="message">Message</label>
                 <textarea id="message" placeholder="Type your message here...">Hello! This is a test message.</textarea>
             </div>
-            
-            <div class="divider"></div>
-            
-            <div class="card-title" style="margin-top: 0;">🛡️ Anti-Ban Options</div>
-            
-            <div class="row">
+
+            <div class="grid">
                 <div class="form-group">
-                    <label>Contact Name (for new contacts)</label>
-                    <input type="text" id="contactName" placeholder="Unknown User">
-                    <div class="hint">Leave empty for auto-generated name</div>
+                    <label for="linkUrl">Link URL</label>
+                    <input type="url" id="linkUrl" placeholder="https://example.com/demo">
                 </div>
-                
                 <div class="form-group">
-                    <label>&nbsp;</label>
-                    <div class="options-row">
-                        <div class="checkbox-group">
-                            <input type="checkbox" id="typingSimulation" checked>
-                            <label for="typingSimulation" style="margin: 0;">Typing Simulation</label>
-                        </div>
-                        <div class="checkbox-group">
-                            <input type="checkbox" id="delayEnabled" checked>
-                            <label for="delayEnabled" style="margin: 0;">Human Delays</label>
-                        </div>
-                        <div class="checkbox-group">
-                            <input type="checkbox" id="skipContactSave">
-                            <label for="skipContactSave" style="margin: 0;">Skip Contact Save</label>
-                        </div>
-                    </div>
+                    <label for="ctaUrl">CTA URL</label>
+                    <input type="url" id="ctaUrl" placeholder="https://example.com/book">
                 </div>
             </div>
-            
-            <div class="btn-group">
-                <button class="btn btn-primary" id="sendBtn" onclick="sendMessage()">
-                    <span id="sendBtnText">🚀 Send Message</span>
+
+            <div class="grid">
+                <div class="form-group">
+                    <label for="ctaLabel">CTA Label</label>
+                    <input type="text" id="ctaLabel" placeholder="Book now" maxlength="25">
+                </div>
+                <div class="form-group">
+                    <label for="buttonsText">Quick Reply Buttons</label>
+                    <input type="text" id="buttonsText" placeholder="Yes, No, Talk to human">
+                    <div class="hint">Comma-separated. Max 3 buttons, 20 characters each.</div>
+                </div>
+            </div>
+
+            <div class="options-grid">
+                <div class="checkbox-row">
+                    <input type="checkbox" id="linkPreview" checked>
+                    <label for="linkPreview">Enable link preview</label>
+                </div>
+
+                <div class="checkbox-row">
+                    <input type="checkbox" id="typingSimulation" checked>
+                    <label for="typingSimulation">Typing simulation</label>
+                </div>
+
+                <div class="checkbox-row">
+                    <input type="checkbox" id="delayEnabled" checked>
+                    <label for="delayEnabled">Human delays</label>
+                </div>
+
+                <div class="checkbox-row">
+                    <input type="checkbox" id="skipContactSave">
+                    <label for="skipContactSave">Skip contact save</label>
+                </div>
+            </div>
+
+            <div class="btn-row">
+                <button type="button" class="btn btn-primary" id="sendBtn" onclick="sendMessage()">
+                    <span id="sendBtnText">Send test message</span>
                 </button>
-                <button class="btn btn-secondary" onclick="clearForm()">Clear</button>
-            </div>
-            
-            <div class="quick-actions">
-                <span style="color: #6b7280; font-size: 12px;">Quick Messages:</span>
-                <button class="quick-btn" onclick="setMessage('Hello!')">Hello!</button>
-                <button class="quick-btn" onclick="setMessage('Hi, how are you?')">How are you?</button>
-                <button class="quick-btn" onclick="setMessage('Testing 1-2-3')">Test 123</button>
-                <button class="quick-btn" onclick="setMessage('👋')">Wave</button>
+                <button type="button" class="btn btn-secondary" onclick="clearForm()">Clear</button>
             </div>
         </div>
-        
-        <!-- Response Card -->
+
         <div class="card">
-            <div class="card-title">📋 Response</div>
-            
+            <div class="card-title">Reaction</div>
+            <div class="section-note">
+                React to an existing WhatsApp message using its message ID. Use an empty emoji to remove a reaction.
+            </div>
+
+            <div class="grid">
+                <div class="form-group">
+                    <label for="reactToPhone">Chat Phone</label>
+                    <input type="text" id="reactToPhone" placeholder="60198765432">
+                </div>
+                <div class="form-group">
+                    <label for="reactMessageId">Message ID</label>
+                    <input type="text" id="reactMessageId" placeholder="3EB0...">
+                    <div class="hint">Copy from instance logs or webhook payload key.id.</div>
+                </div>
+            </div>
+
+            <div class="grid">
+                <div class="form-group">
+                    <label for="reactEmoji">Emoji</label>
+                    <input type="text" id="reactEmoji" value="👍" maxlength="8">
+                </div>
+                <div class="form-group">
+                    <label for="reactFromPhone">From Phone (optional)</label>
+                    <input type="text" id="reactFromPhone" placeholder="Uses selected instance if empty">
+                </div>
+            </div>
+
+            <div class="options-grid">
+                <div class="checkbox-row">
+                    <input type="checkbox" id="reactFromMe">
+                    <label for="reactFromMe">Target message was sent by this instance</label>
+                </div>
+            </div>
+
+            <div class="preset-row">
+                <button type="button" class="preset-btn" onclick="setReactionEmoji('👍')">Thumbs up</button>
+                <button type="button" class="preset-btn" onclick="setReactionEmoji('❤️')">Heart</button>
+                <button type="button" class="preset-btn" onclick="setReactionEmoji('😂')">Laugh</button>
+                <button type="button" class="preset-btn" onclick="setReactionEmoji('')">Remove reaction</button>
+            </div>
+
+            <div class="btn-row">
+                <button type="button" class="btn btn-primary" id="reactBtn" onclick="sendReaction()">
+                    <span id="reactBtnText">Send reaction</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <div class="card-title">Payload Preview</div>
+                <div class="payload-preview" id="payloadPreview">Payload preview will appear here.</div>
+            </div>
+            <div class="card">
+                <div class="card-title">API Request</div>
+                <div class="curl-box" id="curlPreview">Request preview will appear here.</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Response</div>
             <div class="status-bar">
-                <div class="status-indicator" id="statusIndicator"></div>
+                <div class="status-dot" id="statusIndicator"></div>
                 <span id="statusText">Ready to send</span>
             </div>
-            
             <div class="response-box" id="responseBox">Waiting for request...</div>
         </div>
-        
-        <!-- History Card -->
+
         <div class="card">
-            <div class="card-title">📜 Request History</div>
+            <div class="card-title">Request History</div>
             <div id="historyContainer">
-                <p style="color: #6b7280; font-size: 13px;">No requests yet</p>
+                <p class="hint">No requests yet</p>
             </div>
-            <button class="btn btn-secondary" onclick="clearHistory()" style="margin-top: 12px;">Clear History</button>
+            <div class="btn-row">
+                <button type="button" class="btn btn-secondary" onclick="clearHistory()">Clear history</button>
+            </div>
         </div>
     </div>
-    
+
     <script>
-        // Load saved settings on page load
-        document.addEventListener('DOMContentLoaded', () => {
-            const savedBaseUrl = localStorage.getItem('wa_test_baseUrl');
+        const state = {
+            instances: []
+        };
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            const origin = window.location.origin;
+            document.getElementById('baseUrl').value = origin;
+
+            const params = new URLSearchParams(window.location.search);
             const savedApiKey = localStorage.getItem('wa_test_apiKey');
             const savedFromPhone = localStorage.getItem('wa_test_fromPhone');
-            
-            if (savedBaseUrl) document.getElementById('baseUrl').value = savedBaseUrl;
             if (savedApiKey) document.getElementById('apiKey').value = savedApiKey;
             if (savedFromPhone) document.getElementById('fromPhone').value = savedFromPhone;
-            
+
+            await loadInstances(params.get('instance'));
+            wireInputs();
+            updatePayloadPreview();
             loadHistory();
         });
-        
-        // Save settings when changed
-        document.getElementById('baseUrl').addEventListener('change', (e) => {
-            localStorage.setItem('wa_test_baseUrl', e.target.value);
-        });
-        document.getElementById('apiKey').addEventListener('change', (e) => {
-            localStorage.setItem('wa_test_apiKey', e.target.value);
-        });
-        document.getElementById('fromPhone').addEventListener('change', (e) => {
-            localStorage.setItem('wa_test_fromPhone', e.target.value);
-        });
-        
-        function setMessage(msg) {
-            document.getElementById('message').value = msg;
+
+        function wireInputs() {
+            [
+                'fromPhone', 'toPhone', 'message', 'linkUrl', 'ctaUrl', 'ctaLabel',
+                'buttonsText', 'linkPreview', 'typingSimulation',
+                'delayEnabled', 'skipContactSave', 'sendMode', 'instanceId', 'apiKey'
+            ].forEach((id) => {
+                const element = document.getElementById(id);
+                element?.addEventListener('input', updatePayloadPreview);
+                element?.addEventListener('change', updatePayloadPreview);
+            });
+
+            document.getElementById('apiKey').addEventListener('change', (event) => {
+                localStorage.setItem('wa_test_apiKey', event.target.value);
+            });
+            document.getElementById('fromPhone').addEventListener('change', (event) => {
+                localStorage.setItem('wa_test_fromPhone', event.target.value);
+            });
+            document.getElementById('message').addEventListener('keydown', (event) => {
+                if (event.ctrlKey && event.key === 'Enter') sendMessage();
+            });
         }
-        
+
+        async function loadInstances(preferredInstanceId) {
+            const select = document.getElementById('instanceId');
+            try {
+                const response = await fetch('/api/instances', { headers: buildAuthHeaders() });
+                const data = await response.json();
+                state.instances = Array.isArray(data.instances) ? data.instances : (Array.isArray(data) ? data : []);
+                if (state.instances.length === 0) {
+                    select.innerHTML = '<option value="">No instances found</option>';
+                    return;
+                }
+
+                select.innerHTML = state.instances.map((instance) => {
+                    const label = `${instance.name || instance.id} (${instance.status || 'unknown'})`;
+                    return `<option value="${instance.id}">${label}</option>`;
+                }).join('');
+
+                const preferred = preferredInstanceId && state.instances.some((item) => item.id === preferredInstanceId)
+                    ? preferredInstanceId
+                    : state.instances.find((item) => item.status === 'connected')?.id || state.instances[0].id;
+                select.value = preferred;
+
+                const connected = state.instances.find((item) => item.id === preferred);
+                if (connected?.connectedPhone) {
+                    document.getElementById('fromPhone').value = connected.connectedPhone;
+                }
+            } catch (error) {
+                select.innerHTML = '<option value="">Failed to load instances</option>';
+            }
+        }
+
+        function buildAuthHeaders() {
+            const headers = {};
+            const apiKey = document.getElementById('apiKey').value.trim();
+            if (apiKey) headers['X-API-Key'] = apiKey;
+            return headers;
+        }
+
+        function parseButtons(value) {
+            return value
+                .split(',')
+                .map((text) => text.trim())
+                .filter(Boolean)
+                .slice(0, 3)
+                .map((text, index) => ({
+                    id: `choice_${index + 1}`,
+                    text
+                }));
+        }
+
+        function buildPayloadCore() {
+            const message = document.getElementById('message').value.trim();
+            const linkUrl = document.getElementById('linkUrl').value.trim();
+            const ctaUrl = document.getElementById('ctaUrl').value.trim();
+            const ctaLabel = document.getElementById('ctaLabel').value.trim();
+            const buttons = parseButtons(document.getElementById('buttonsText').value);
+            const contactName = document.getElementById('contactName')?.value?.trim?.() || '';
+
+            const payload = {
+                message,
+                typingSimulation: document.getElementById('typingSimulation').checked,
+                delayEnabled: document.getElementById('delayEnabled').checked,
+                skipContactSave: document.getElementById('skipContactSave').checked,
+                linkPreview: document.getElementById('linkPreview').checked
+            };
+
+            if (contactName) payload.contactName = contactName;
+            if (linkUrl) payload.link = { url: linkUrl };
+            if (ctaUrl) payload.ctaUrl = { url: ctaUrl, label: ctaLabel || 'Open link' };
+            if (buttons.length > 0) payload.buttons = buttons;
+            return payload;
+        }
+
+        function resolveRequest() {
+            const baseUrl = document.getElementById('baseUrl').value || window.location.origin;
+            const sendMode = document.getElementById('sendMode').value;
+            const instanceId = document.getElementById('instanceId').value;
+            const toPhone = document.getElementById('toPhone').value.trim();
+            const fromPhone = document.getElementById('fromPhone').value.trim();
+            const payload = buildPayloadCore();
+
+            if (sendMode === 'global') {
+                return {
+                    url: `${baseUrl}/api/send`,
+                    body: {
+                        ...payload,
+                        to_phone: toPhone,
+                        ...(fromPhone ? { from_phone: fromPhone } : {})
+                    }
+                };
+            }
+
+            if (!instanceId) {
+                throw new Error('Select an instance for instance-scoped sends');
+            }
+
+            return {
+                url: `${baseUrl}/api/instances/${encodeURIComponent(instanceId)}/send${sendMode === 'interactive' ? '/interactive' : ''}`,
+                body: {
+                    ...payload,
+                    to: toPhone
+                }
+            };
+        }
+
+        function updatePayloadPreview() {
+            try {
+                const request = resolveRequest();
+                document.getElementById('payloadPreview').textContent = JSON.stringify(request.body, null, 2);
+                document.getElementById('curlPreview').textContent = [
+                    `curl -X POST '${request.url}' \\`,
+                    `  -H 'Content-Type: application/json' \\`,
+                    document.getElementById('apiKey').value.trim() ? `  -H 'X-API-Key: <your-key>' \\` : '',
+                    `  -d '${JSON.stringify(request.body)}'`
+                ].filter(Boolean).join('\n');
+            } catch (error) {
+                document.getElementById('payloadPreview').textContent = error.message;
+                document.getElementById('curlPreview').textContent = 'Fix the form to preview the request.';
+            }
+        }
+
+        function loadTextExample() {
+            document.getElementById('message').value = 'Hello! This is a plain text test.';
+            document.getElementById('linkUrl').value = '';
+            document.getElementById('ctaUrl').value = '';
+            document.getElementById('ctaLabel').value = '';
+            document.getElementById('buttonsText').value = '';
+            updatePayloadPreview();
+        }
+
+        function loadLinkExample() {
+            document.getElementById('message').value = 'Here is the booking page.';
+            document.getElementById('linkUrl').value = 'https://example.com/booking';
+            document.getElementById('ctaUrl').value = '';
+            document.getElementById('ctaLabel').value = '';
+            document.getElementById('buttonsText').value = '';
+            updatePayloadPreview();
+        }
+
+        function loadCtaExample() {
+            document.getElementById('message').value = 'Ready to book your slot?';
+            document.getElementById('linkUrl').value = '';
+            document.getElementById('ctaUrl').value = 'https://example.com/book';
+            document.getElementById('ctaLabel').value = 'Book now';
+            document.getElementById('buttonsText').value = '';
+            updatePayloadPreview();
+        }
+
+        function loadButtonExample() {
+            document.getElementById('message').value = 'Choose an option and reply with the number.';
+            document.getElementById('linkUrl').value = '';
+            document.getElementById('ctaUrl').value = '';
+            document.getElementById('ctaLabel').value = '';
+            document.getElementById('buttonsText').value = 'Pricing, Demo, Human';
+            updatePayloadPreview();
+        }
+
         function clearForm() {
             document.getElementById('toPhone').value = '';
-            document.getElementById('message').value = 'Hello! This is a test message.';
-            document.getElementById('contactName').value = '';
+            loadTextExample();
             document.getElementById('typingSimulation').checked = true;
             document.getElementById('delayEnabled').checked = true;
             document.getElementById('skipContactSave').checked = false;
+            updatePayloadPreview();
         }
-        
+
         function setStatus(status, text) {
-            const indicator = document.getElementById('statusIndicator');
-            const statusText = document.getElementById('statusText');
-            const responseBox = document.getElementById('responseBox');
-            
-            indicator.className = 'status-indicator ' + status;
-            statusText.textContent = text;
-            responseBox.className = 'response-box ' + (status === 'error' ? 'error' : status === 'success' ? 'success' : '');
+            document.getElementById('statusIndicator').className = `status-dot ${status}`;
+            document.getElementById('statusText').textContent = text;
+            document.getElementById('responseBox').className = `response-box ${status === 'error' ? 'error' : status === 'success' ? 'success' : ''}`;
         }
-        
-        async function sendMessage() {
+
+        function setReactionEmoji(emoji) {
+            document.getElementById('reactEmoji').value = emoji;
+        }
+
+        function resolveReactionRequest() {
             const baseUrl = document.getElementById('baseUrl').value || window.location.origin;
-            const apiKey = document.getElementById('apiKey').value;
-            const fromPhone = document.getElementById('fromPhone').value;
-            const toPhone = document.getElementById('toPhone').value;
-            const message = document.getElementById('message').value;
-            const contactName = document.getElementById('contactName').value;
-            const typingSimulation = document.getElementById('typingSimulation').checked;
-            const delayEnabled = document.getElementById('delayEnabled').checked;
-            const skipContactSave = document.getElementById('skipContactSave').checked;
-            
-            if (!toPhone || !message) {
-                setStatus('error', 'Missing required fields');
-                document.getElementById('responseBox').textContent = 'Error: Please fill in To Phone and Message fields';
+            const instanceId = document.getElementById('instanceId').value;
+            const to = document.getElementById('reactToPhone').value.trim() || document.getElementById('toPhone').value.trim();
+            const messageId = document.getElementById('reactMessageId').value.trim();
+            const fromPhone = document.getElementById('reactFromPhone').value.trim() || document.getElementById('fromPhone').value.trim();
+
+            const body = {
+                to,
+                messageId,
+                emoji: document.getElementById('reactEmoji').value,
+                fromMe: document.getElementById('reactFromMe').checked
+            };
+
+            if (instanceId) {
+                return {
+                    url: `${baseUrl}/api/instances/${encodeURIComponent(instanceId)}/react`,
+                    body
+                };
+            }
+
+            return {
+                url: `${baseUrl}/api/react`,
+                body: {
+                    ...body,
+                    ...(fromPhone ? { from_phone: fromPhone } : {})
+                }
+            };
+        }
+
+        async function sendReaction() {
+            let request;
+            try {
+                request = resolveReactionRequest();
+            } catch (error) {
+                setStatus('error', 'Invalid reaction form');
+                document.getElementById('responseBox').textContent = error.message;
                 return;
             }
-            
-            const sendBtn = document.getElementById('sendBtn');
-            const sendBtnText = document.getElementById('sendBtnText');
-            sendBtn.disabled = true;
-            sendBtnText.textContent = '⏳ Sending...';
-            setStatus('loading', 'Sending message...');
-            
-            const payload = {
-                to_phone: toPhone,
-                message: message,
-                typingSimulation,
-                delayEnabled,
-                skipContactSave
-            };
-            
-            if (fromPhone) payload.from_phone = fromPhone;
-            if (contactName) payload.contactName = contactName;
-            
-            const headers = {
-                'Content-Type': 'application/json'
-            };
-            
-            if (apiKey) {
-                headers['X-API-Key'] = apiKey;
+
+            if (!request.body.to || !request.body.messageId) {
+                setStatus('error', 'Missing reaction fields');
+                document.getElementById('responseBox').textContent = 'Fill in Chat Phone and Message ID.';
+                return;
             }
-            
+
+            const reactBtn = document.getElementById('reactBtn');
+            const reactBtnText = document.getElementById('reactBtnText');
+            reactBtn.disabled = true;
+            reactBtnText.textContent = 'Sending reaction...';
+            setStatus('loading', 'Sending reaction...');
+
+            const headers = {
+                'Content-Type': 'application/json',
+                ...buildAuthHeaders()
+            };
+
             const startTime = Date.now();
-            
             try {
-                const response = await fetch(`${baseUrl}/api/send`, {
+                const response = await fetch(request.url, {
                     method: 'POST',
                     headers,
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify(request.body)
                 });
-                
                 const elapsed = Date.now() - startTime;
                 const data = await response.json();
-                
+
                 if (response.ok) {
-                    setStatus('success', `Success (${elapsed}ms)`);
+                    setStatus('success', `Reaction sent (${elapsed}ms)`);
                     document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
-                    addToHistory(toPhone, message, true, elapsed);
                 } else {
                     setStatus('error', `Error ${response.status} (${elapsed}ms)`);
                     document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
-                    addToHistory(toPhone, message, false, elapsed, data.error);
+                }
+            } catch (error) {
+                setStatus('error', 'Reaction request failed');
+                document.getElementById('responseBox').textContent = `Error: ${error.message}`;
+            } finally {
+                reactBtn.disabled = false;
+                reactBtnText.textContent = 'Send reaction';
+            }
+        }
+
+        async function sendMessage() {
+            let request;
+            try {
+                request = resolveRequest();
+            } catch (error) {
+                setStatus('error', 'Invalid form');
+                document.getElementById('responseBox').textContent = error.message;
+                return;
+            }
+
+            const toPhone = request.body.to || request.body.to_phone;
+            if (!toPhone || (!request.body.message && !request.body.link && !request.body.ctaUrl && !request.body.buttons?.length)) {
+                setStatus('error', 'Missing required fields');
+                document.getElementById('responseBox').textContent = 'Fill in To Phone and at least one message, link, CTA, or button field.';
+                return;
+            }
+
+            const sendBtn = document.getElementById('sendBtn');
+            const sendBtnText = document.getElementById('sendBtnText');
+            sendBtn.disabled = true;
+            sendBtnText.textContent = 'Sending...';
+            setStatus('loading', 'Sending message...');
+
+            const headers = {
+                'Content-Type': 'application/json',
+                ...buildAuthHeaders()
+            };
+
+            const startTime = Date.now();
+            try {
+                const response = await fetch(request.url, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(request.body)
+                });
+                const elapsed = Date.now() - startTime;
+                const data = await response.json();
+
+                if (response.ok) {
+                    setStatus('success', `Success (${elapsed}ms)`);
+                    document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
+                    addToHistory(toPhone, request.body.message || '[interactive]', true, elapsed);
+                } else {
+                    setStatus('error', `Error ${response.status} (${elapsed}ms)`);
+                    document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
+                    addToHistory(toPhone, request.body.message || '[interactive]', false, elapsed, data.error);
                 }
             } catch (error) {
                 const elapsed = Date.now() - startTime;
                 setStatus('error', 'Request failed');
-                document.getElementById('responseBox').textContent = `Error: ${error.message}\n\nMake sure the API server is running at: ${baseUrl}`;
-                addToHistory(toPhone, message, false, elapsed, error.message);
+                document.getElementById('responseBox').textContent = `Error: ${error.message}`;
+                addToHistory(toPhone, request.body.message || '[interactive]', false, elapsed, error.message);
             } finally {
                 sendBtn.disabled = false;
-                sendBtnText.textContent = '🚀 Send Message';
+                sendBtnText.textContent = 'Send test message';
             }
         }
-        
+
         function addToHistory(to, message, success, elapsed, error = null) {
             const history = JSON.parse(localStorage.getItem('wa_test_history') || '[]');
-            history.unshift({
-                to,
-                message: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
-                success,
-                elapsed,
-                error,
-                time: new Date().toLocaleTimeString()
-            });
-            
-            // Keep only last 10 items
+            history.unshift({ to, message, success, elapsed, error, time: new Date().toLocaleTimeString() });
             if (history.length > 10) history.pop();
-            
             localStorage.setItem('wa_test_history', JSON.stringify(history));
             loadHistory();
         }
-        
+
         function loadHistory() {
             const history = JSON.parse(localStorage.getItem('wa_test_history') || '[]');
             const container = document.getElementById('historyContainer');
-            
             if (history.length === 0) {
-                container.innerHTML = '<p style="color: #6b7280; font-size: 13px;">No requests yet</p>';
+                container.innerHTML = '<p class="hint">No requests yet</p>';
                 return;
             }
-            
-            container.innerHTML = history.map(item => `
+
+            container.innerHTML = history.map((item) => `
                 <div class="history-item">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                        <span class="status ${item.success ? 'success' : 'error'}">${item.success ? 'SUCCESS' : 'FAILED'}</span>
-                        <span class="time">${item.time} (${item.elapsed}ms)</span>
+                    <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:6px;">
+                        <span class="badge ${item.success ? 'success' : 'error'}">${item.success ? 'SUCCESS' : 'FAILED'}</span>
+                        <span class="hint">${item.time} (${item.elapsed}ms)</span>
                     </div>
                     <div><strong>To:</strong> ${item.to}</div>
                     <div><strong>Message:</strong> ${item.message}</div>
-                    ${item.error ? `<div style="color: #ef4444;"><strong>Error:</strong> ${item.error}</div>` : ''}
+                    ${item.error ? `<div style="color:var(--danger);"><strong>Error:</strong> ${item.error}</div>` : ''}
                 </div>
             `).join('');
         }
-        
+
         function clearHistory() {
             localStorage.removeItem('wa_test_history');
             loadHistory();
         }
-        
-        // Allow Ctrl+Enter to send
-        document.getElementById('message').addEventListener('keydown', (e) => {
-            if (e.ctrlKey && e.key === 'Enter') {
-                sendMessage();
-            }
-        });
     </script>
 </body>
 </html>

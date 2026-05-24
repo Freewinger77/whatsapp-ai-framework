@@ -43,6 +43,95 @@ curl -X POST http://localhost:3000/api/send \
   }'
 ```
 
+## Links, CTA URLs, and Buttons
+
+The send endpoints accept link and button-style payloads. Plain text stays backward compatible: existing `{ "to": "...", "message": "..." }` calls still work.
+
+Quick reply and CTA URL buttons are sent as **native WhatsApp interactive buttons** via `baileys_helpers`.
+
+### Text With URL Preview
+
+```bash
+curl -X POST http://localhost:3000/api/instances/wa_abc123/send \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "to": "60123456789",
+    "message": "Here is the booking page.",
+    "link": { "url": "https://example.com/booking" },
+    "linkPreview": true
+  }'
+```
+
+The API appends the URL if it is not already in `message`, then lets Baileys generate the WhatsApp link preview. Set `"linkPreview": false` to send the URL without preview metadata.
+
+### Native Quick Reply Buttons
+
+```bash
+curl -X POST http://localhost:3000/api/instances/wa_abc123/send/interactive \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "to": "60123456789",
+    "message": "Choose an option:",
+    "buttons": [
+      { "id": "pricing", "text": "Pricing" },
+      { "id": "demo", "text": "Demo" },
+      { "id": "human", "text": "Human" }
+    ]
+  }'
+```
+
+### Native CTA URL Button
+
+```bash
+curl -X POST http://localhost:3000/api/instances/wa_abc123/send/interactive \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "to": "60123456789",
+    "message": "Ready to book?",
+    "ctaUrl": {
+      "label": "Book now",
+      "url": "https://example.com/book"
+    }
+  }'
+```
+
+## Reactions
+
+React to an existing WhatsApp message by message ID. Use an empty emoji to remove a reaction.
+
+### React via Specific Instance
+
+```bash
+curl -X POST http://localhost:3000/api/instances/wa_abc123/react \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "to": "60123456789",
+    "messageId": "3EB0123456789ABCDEF",
+    "emoji": "👍",
+    "fromMe": false
+  }'
+```
+
+### React via Auto-Selected Instance
+
+```bash
+curl -X POST http://localhost:3000/api/react \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "from_phone": "60198765432",
+    "to": "60123456789",
+    "messageId": "3EB0123456789ABCDEF",
+    "emoji": "❤️"
+  }'
+```
+
+You can also pass a full Baileys `key` object instead of `messageId` + `fromMe`.
+
 ## Phone Number Format
 
 | Format | Example | Valid? |

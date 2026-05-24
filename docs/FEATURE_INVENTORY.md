@@ -87,7 +87,7 @@
 | Feature | Description | Status |
 |---------|-------------|--------|
 | QR Code Authentication | Browser-based QR display (no terminal required) | ✅ |
-| Auto-Reconnection | 5-second retry on disconnect | ✅ |
+| Auto-Reconnection | Guarded per-instance retry with bounded backoff for recoverable disconnects | ✅ |
 | Credential Persistence | Multi-file auth state in `auth_info/` | ✅ |
 | Connection State Management | 3 states: disconnected → connecting → connected | ✅ |
 | Phone Number Extraction | Auto-display connected number | ✅ |
@@ -118,6 +118,9 @@
 | 30-Second Timeout | Prevents hanging on slow n8n | ✅ |
 | Human Handoff Check | Respects `skip: true` from n8n | ✅ |
 | Multilingual Error Messages | EN/BM/Mandarin fallback replies | ✅ |
+| Link Preview Sending | Text messages can include previewable URLs via Baileys | ✅ |
+| Native Interactive Buttons | Quick replies and CTA URLs via `baileys_helpers` native interactive flow | ✅ |
+| Message Reactions | React to messages by message ID via `/api/react` endpoints | ✅ |
 
 **Message Payload to n8n:**
 ```javascript

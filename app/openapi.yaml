@@ -342,7 +342,11 @@ paths:
     post:
       tags: [Messaging]
       summary: Send message via instance
-      description: Send a WhatsApp message through a specific instance
+      description: |
+        Send a WhatsApp message through a specific instance.
+
+        Plain text remains backward compatible. Link previews use Baileys text messages with URL preview support.
+        Quick reply and CTA URL buttons are sent as native WhatsApp interactive buttons via `baileys_helpers`.
       requestBody:
         required: true
         content:
@@ -357,8 +361,23 @@ paths:
                   example: '60123456789'
                 message:
                   type: string
-                  description: Message text to send
+                  description: Message text to send. Required unless link, ctaUrl, or buttons are supplied.
                   example: Hello! How can I help you today?
+                link:
+                  $ref: '#/components/schemas/SendLink'
+                ctaUrl:
+                  $ref: '#/components/schemas/CtaUrl'
+                buttons:
+                  $ref: '#/components/schemas/QuickReplyButtons'
+                linkPreview:
+                  type: boolean
+                  description: Enable Baileys URL preview generation for text messages that contain a URL
+                  default: true
+                  example: true
+                footer:
+                  type: string
+                  description: Optional footer text for interactive messages
+                  example: Wasup API
                 behaviorProfile:
                   $ref: '#/components/schemas/BehaviorProfile'
                 typingSimulation:
@@ -394,11 +413,72 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
 
+  /api/instances/{instanceId}/send/interactive:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    post:
+      tags: [Messaging]
+      summary: Send interactive-capable message via instance
+      description: |
+        Alias for `/api/instances/{instanceId}/send` with examples focused on links, CTA links, and native quick reply buttons.
+
+        Quick reply and CTA URL buttons are delivered as native WhatsApp interactive messages through `baileys_helpers`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            examples:
+              linkPreview:
+                summary: Text with URL preview
+                value:
+                  to: '60123456789'
+                  message: Here is the booking page.
+                  link:
+                    url: https://example.com/booking
+                  linkPreview: true
+              quickReplyNative:
+                summary: Native quick reply buttons
+                value:
+                  to: '60123456789'
+                  message: Choose an option and reply with the number.
+                  buttons:
+                    - id: pricing
+                      text: Pricing
+                    - id: demo
+                      text: Demo
+                    - id: human
+                      text: Human
+              ctaNative:
+                summary: Native CTA URL button
+                value:
+                  to: '60123456789'
+                  message: Ready to book?
+                  ctaUrl:
+                    label: Book now
+                    url: https://example.com/book
+            schema:
+              $ref: '#/components/schemas/InteractiveSendRequest'
+      responses:
+        '200':
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  result:
+                    $ref: '#/components/schemas/SendResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
   /api/send:
     post:
       tags: [Messaging]
       summary: Send message (auto-select instance)
-      description: Send a message using a specific instance or auto-select first connected one
+      description: Send a text, link, or native interactive message using a matching connected phone number or the first connected instance.
       requestBody:
         required: true
         content:
@@ -418,6 +498,15 @@ paths:
                 message:
                   type: string
                   example: Hello!
+                link:
+                  $ref: '#/components/schemas/SendLink'
+                ctaUrl:
+                  $ref: '#/components/schemas/CtaUrl'
+                buttons:
+                  $ref: '#/components/schemas/QuickReplyButtons'
+                linkPreview:
+                  type: boolean
+                  default: true
                 behaviorProfile:
                   $ref: '#/components/schemas/BehaviorProfile'
                 typingSimulation:
@@ -452,6 +541,168 @@ paths:
                     $ref: '#/components/schemas/SendResult'
         '400':
           $ref: '#/components/responses/BadRequest'
+
+  /api/instances/{instanceId}/react:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    post:
+      tags: [Messaging]
+      summary: React to a message via instance
+      description: |
+        Send or remove a reaction emoji on an existing WhatsApp message.
+
+        Provide either a full Baileys `key` object or the shorthand fields `messageId`, `to`, and optional `fromMe`.
+        Use an empty `emoji` string to remove a reaction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReactionRequest'
+            examples:
+              reactToIncoming:
+                summary: React to an incoming message
+                value:
+                  to: '60123456789'
+                  messageId: 3EB0123456789ABCDEF
+                  emoji: '👍'
+                  fromMe: false
+              removeReaction:
+                summary: Remove a reaction
+                value:
+                  to: '60123456789'
+                  messageId: 3EB0123456789ABCDEF
+                  emoji: ''
+      responses:
+        '200':
+          description: Reaction sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  result:
+                    $ref: '#/components/schemas/ReactionResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/react:
+    post:
+      tags: [Messaging]
+      summary: React to a message (auto-select instance)
+      description: |
+        React to a message using a connected instance matched by `from_phone`, or the first connected instance if omitted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/ReactionRequest'
+                - type: object
+                  properties:
+                    from_phone:
+                      type: string
+                      description: Connected sender phone number used to pick the instance
+                      example: '60198765432'
+      responses:
+        '200':
+          description: Reaction sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  instanceId:
+                    type: string
+                    example: wa_xxx
+                  result:
+                    $ref: '#/components/schemas/ReactionResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/proxy:
+    get:
+      tags: [Proxy]
+      summary: Deployment proxy and pool summary
+      responses:
+        '200':
+          description: Proxy deployment info
+
+  /api/proxy/pool:
+    get:
+      tags: [Proxy]
+      summary: Proxy pool state
+      responses:
+        '200':
+          description: Pool slots and assignments
+
+  /api/instances/{instanceId}/proxy:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    get:
+      tags: [Proxy]
+      summary: Get instance proxy status
+      description: Poll override, effective, active (live socket) proxy state.
+      responses:
+        '200':
+          description: Proxy status
+    put:
+      tags: [Proxy]
+      summary: Attach proxy to instance
+      description: Accepts proxy URL or Webshare shorthand `host:port:user:pass`. Reconnects if online.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                  example: http://user:pass@212.212.18.198:6849
+                shorthand:
+                  type: string
+                  example: 212.212.18.198:6849:user:pass
+                enabled:
+                  type: boolean
+                  description: Set false to force direct connection
+      responses:
+        '200':
+          description: Proxy updated
+    delete:
+      tags: [Proxy]
+      summary: Detach proxy override
+      description: Clears API override and re-claims a pool slot if available.
+      responses:
+        '200':
+          description: Proxy cleared
+
+  /api/instances/{instanceId}/proxy/verify:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    post:
+      tags: [Proxy]
+      summary: Verify egress IP through instance proxy
+      responses:
+        '200':
+          description: Egress probe result
+
+  /api/instances/{instanceId}/connection:
+    parameters:
+      - $ref: '#/components/parameters/instanceId'
+    get:
+      tags: [Instances]
+      summary: Poll connection status
+      description: Lightweight status endpoint including proxy snapshot.
+      responses:
+        '200':
+          description: Connection status
 
   # ==========================================
   # BEHAVIOR SETTINGS
@@ -874,6 +1125,10 @@ components:
           type: string
           format: date-time
           nullable: true
+        hasSavedCredentials:
+          type: boolean
+          description: True when the instance has a local Baileys credential file. Does not expose credential contents.
+          example: true
         webhookUrl:
           type: string
           example: https://your-api.com/webhook
@@ -883,6 +1138,22 @@ components:
           $ref: '#/components/schemas/AntiBanSettings'
         antiBanHealth:
           $ref: '#/components/schemas/AntiBanHealth'
+        autoReconnect:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+              example: true
+            attempts:
+              type: integer
+              example: 1
+            maxAttempts:
+              type: integer
+              example: 8
+            nextAttemptAt:
+              type: string
+              format: date-time
+              nullable: true
         createdAt:
           type: string
           format: date-time
@@ -987,6 +1258,147 @@ components:
               type: integer
               example: 8
 
+    SendLink:
+      oneOf:
+        - type: string
+          format: uri
+          example: https://example.com/booking
+        - type: object
+          required: [url]
+          properties:
+            url:
+              type: string
+              format: uri
+              example: https://example.com/booking
+            label:
+              type: string
+              description: Optional label shown on the CTA button
+              example: Booking page
+
+    CtaUrl:
+      oneOf:
+        - type: string
+          format: uri
+          example: https://example.com/book
+        - type: object
+          required: [url]
+          properties:
+            url:
+              type: string
+              format: uri
+              example: https://example.com/book
+            label:
+              type: string
+              maxLength: 25
+              description: Label shown on the native CTA button
+              example: Book now
+
+    QuickReplyButtons:
+      type: array
+      maxItems: 3
+      description: Native quick reply buttons sent through `baileys_helpers`.
+      items:
+        type: object
+        required: [id, text]
+        properties:
+          id:
+            type: string
+            maxLength: 256
+            example: pricing
+          text:
+            type: string
+            maxLength: 20
+            example: Pricing
+
+    InteractiveSendRequest:
+      type: object
+      required: [to]
+      properties:
+        to:
+          type: string
+          description: Phone number with country code
+          example: '60123456789'
+        message:
+          type: string
+          description: Message text. Required unless link, ctaUrl, or buttons are supplied.
+          example: Choose an option.
+        link:
+          $ref: '#/components/schemas/SendLink'
+        ctaUrl:
+          $ref: '#/components/schemas/CtaUrl'
+        buttons:
+          $ref: '#/components/schemas/QuickReplyButtons'
+        linkPreview:
+          type: boolean
+          default: true
+        footer:
+          type: string
+          example: Wasup API
+
+    ReactionRequest:
+      type: object
+      required: [to]
+      properties:
+        to:
+          type: string
+          description: Chat phone number with country code
+          example: '60123456789'
+        messageId:
+          type: string
+          description: WhatsApp message ID to react to. Required unless `key` is provided.
+          example: 3EB0123456789ABCDEF
+        emoji:
+          type: string
+          description: Reaction emoji. Use an empty string to remove the reaction.
+          example: '👍'
+        reaction:
+          type: string
+          description: Alias for `emoji`
+          example: '👍'
+        fromMe:
+          type: boolean
+          description: Whether the target message was sent by this instance
+          default: false
+        participant:
+          type: string
+          description: Group participant JID when reacting in a group chat
+        remoteJid:
+          type: string
+          description: Override remote JID for the message key
+        key:
+          type: object
+          description: Full Baileys message key object
+          properties:
+            id:
+              type: string
+            fromMe:
+              type: boolean
+            remoteJid:
+              type: string
+            participant:
+              type: string
+
+    ReactionResult:
+      type: object
+      properties:
+        sent:
+          type: boolean
+          example: true
+        emoji:
+          type: string
+          example: '👍'
+        key:
+          type: object
+          properties:
+            id:
+              type: string
+            fromMe:
+              type: boolean
+            remoteJid:
+              type: string
+            participant:
+              type: string
+
     SendResult:
       type: object
       properties:
@@ -1009,6 +1421,24 @@ components:
         waitTime:
           type: integer
           description: Time to wait before retry (if rate limited)
+        messageText:
+          type: string
+          description: Final text sent to WhatsApp
+        interactive:
+          type: object
+          properties:
+            requestedTypes:
+              type: array
+              items:
+                type: string
+              example: [link, buttons]
+            mode:
+              type: string
+              example: native_interactive
+            limitations:
+              type: array
+              items:
+                type: string
 
     LogEntry:
       type: object

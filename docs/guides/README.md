@@ -13,6 +13,9 @@ Complete documentation for the WhatsApp Multi-Instance API.
 | [Anti-Ban Settings](./anti-ban-settings.md) | Protect accounts from being banned |
 | [Authentication](./authentication.md) | Secure your API with API keys |
 | [WebSocket Events](./websocket-events.md) | Real-time updates and events |
+| [wasup2 Smoke Watchdog](./wasup2-smoke-watchdog.md) | Recurring fallback worker health checks |
+| [Reconnect Hardening Runbook](./reconnect-hardening-runbook.md) | Root causes, prevention controls, and old north rollout plan |
+| [Wasup v3 Worker Platform](./wasup-v3-worker-platform.md) | Docker, proxy pool, API keys, `/docs`, control plane integration |
 
 ## For readme.com
 
@@ -30,6 +33,8 @@ Import these guides in the following order for the best documentation structure:
 ### Category: Advanced
 6. `anti-ban-settings.md` - Rate limiting and behavior
 7. `websocket-events.md` - Real-time events
+8. `wasup2-smoke-watchdog.md` - Fallback worker smoke watchdog
+9. `reconnect-hardening-runbook.md` - Reconnect hardening and rollout runbook
 
 ## API Reference
 

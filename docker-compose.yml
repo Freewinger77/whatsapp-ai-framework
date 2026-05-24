@@ -1,0 +1,35 @@
+# Local / VM docker deployment for Wasup WhatsApp worker
+services:
+  wasup-worker:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    image: wasup-worker:local
+    container_name: wasup-worker
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    env_file:
+      - ./app/.env
+    environment:
+      WASUP_DATA_DIR: /data
+      WASUP_WORKER_MODE: ${WASUP_WORKER_MODE:-multi}
+      WASUP_INSTANCE_ID: ${WASUP_INSTANCE_ID:-}
+      WASUP_ORG_ID: ${WASUP_ORG_ID:-}
+      REGION_CODE: ${REGION_CODE:-local}
+      PROXY_POOL: ${PROXY_POOL:-}
+      API_KEY: ${API_KEY:-}
+      WASUP_API_KEY_PEPPER: ${WASUP_API_KEY_PEPPER:-}
+      WASUP_WORKER_SHARED_SECRET: ${WASUP_WORKER_SHARED_SECRET:-}
+      ALLOW_PUBLIC_DASHBOARD: ${ALLOW_PUBLIC_DASHBOARD:-true}
+    volumes:
+      - wasup-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  wasup-data:

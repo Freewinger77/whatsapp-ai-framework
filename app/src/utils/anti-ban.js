@@ -8,6 +8,8 @@
  * - Time-of-day adjustments
  */
 
+import { sendInteractiveViaHelper } from './interactive-sender.js';
+
 // Default rate limits (can be updated dynamically)
 let RATE_LIMITS = {
     messagesPerHour: 200,
@@ -511,7 +513,8 @@ async function safeSendMessageDirect(socket, jid, message, incomingText, antiBan
         typingSimulation = true, 
         delayEnabled = true,
         messageKey = null,
-        simulateReading = true
+        simulateReading = true,
+        relayMessage = null
     } = options;
     
     // Check rate limits
@@ -527,7 +530,9 @@ async function safeSendMessageDirect(socket, jid, message, incomingText, antiBan
     }
 
     // Get message text for delay calculation
-    const messageText = typeof message === 'string' ? message : (message.text || '');
+    const messageText = typeof message === 'string'
+        ? message
+        : (message.__wasupMessageText || message.text || '');
 
     let delayMs = 0;
     
@@ -555,7 +560,19 @@ async function safeSendMessageDirect(socket, jid, message, incomingText, antiBan
 
     // Send the message
     const messageObj = typeof message === 'string' ? { text: message } : message;
-    await socket.sendMessage(jid, messageObj);
+    if (messageObj?.__wasupInteractiveContent) {
+        await sendInteractiveViaHelper(socket, jid, messageObj.__wasupInteractiveContent);
+    } else if (messageObj?.__wasupRelayContent) {
+        if (typeof relayMessage !== 'function') {
+            throw new Error('Raw Baileys relay is not configured for this message type');
+        }
+        await relayMessage(socket, jid, messageObj.__wasupRelayContent, {
+            mode: messageObj.__wasupRelayMode || null
+        });
+    } else {
+        const { __wasupMessageText, __wasupRelayContent, __wasupInteractiveContent, ...sendableMessage } = messageObj || {};
+        await socket.sendMessage(jid, sendableMessage);
+    }
 
     // Record the message for rate limiting
     antiBanManager.recordMessage(jid);

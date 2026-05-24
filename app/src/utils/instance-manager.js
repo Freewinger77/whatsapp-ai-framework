@@ -17,8 +17,23 @@ import QRCode from 'qrcode';
 import NodeCache from 'node-cache';
 import pino from 'pino';
 import WebSocket from 'ws';
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from 'baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, generateWAMessageFromContent } from 'baileys';
 import { AntiBanManager, safeSendMessage, delay } from './anti-ban.js';
+import { buildWhatsAppMessage } from './message-builder.js';
+import { buildNativeFlowRelayPlan } from './interactive-native.js';
+import {
+    createProxyAgent,
+    parseProxyConfig,
+    redactProxy,
+    resolveEffectiveProxy,
+} from './proxy.js';
+import { ProxyPoolManager } from './proxy-pool.js';
+import {
+    buildApiKeyMetaFromPlaintext,
+    generateInstanceApiKey,
+    redactApiKeyMeta,
+    verifyApiKeyForInstance,
+} from './instance-api-keys.js';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
@@ -49,15 +64,118 @@ function normalizePhone(phone) {
     return phone.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
 }
 
-// Base paths
-const INSTANCES_FOLDER = path.join(__dirname, '../../instances');
+// Base paths (WASUP_DATA_DIR for Docker/K8s persistent volume)
+const DATA_ROOT = process.env.WASUP_DATA_DIR
+    ? path.resolve(process.env.WASUP_DATA_DIR)
+    : path.join(__dirname, '../../instances');
+const INSTANCES_FOLDER = DATA_ROOT;
 const INSTANCES_DB_FILE = path.join(INSTANCES_FOLDER, 'instances.json');
+const PROXY_POOL_FILE = path.join(INSTANCES_FOLDER, 'proxy-pool.json');
+
+const WORKER_MODE = (process.env.WASUP_WORKER_MODE || 'multi').toLowerCase();
+const FIXED_INSTANCE_ID = process.env.WASUP_INSTANCE_ID || process.env.INSTANCE_ID || null;
 
 // Global default webhook URL (from environment)
 const DEFAULT_WEBHOOK_URL = process.env.DEFAULT_WEBHOOK_URL || process.env.N8N_WEBHOOK_URL || '';
 const WA_VERSION_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 let cachedWaSocketVersion = null;
 let cachedWaSocketVersionAt = 0;
+
+function parseEnvBoolean(value, fallback) {
+    if (value === undefined || value === null || value === '') return fallback;
+    return !['0', 'false', 'no', 'off'].includes(String(value).trim().toLowerCase());
+}
+
+function parseEnvInteger(value, fallback, min = 0) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, parsed);
+}
+
+const AUTO_RECONNECT_ENABLED = parseEnvBoolean(process.env.WA_AUTO_RECONNECT_ENABLED, true);
+const AUTO_RECONNECT_MAX_ATTEMPTS = parseEnvInteger(process.env.WA_RECONNECT_MAX_ATTEMPTS, 8, 0);
+const AUTO_RECONNECT_BASE_DELAY_MS = parseEnvInteger(process.env.WA_RECONNECT_BASE_DELAY_MS, 5000, 1000);
+const AUTO_RECONNECT_MAX_DELAY_MS = Math.max(
+    AUTO_RECONNECT_BASE_DELAY_MS,
+    parseEnvInteger(process.env.WA_RECONNECT_MAX_DELAY_MS, 120000, 1000)
+);
+const AUTO_RECONNECT_WATCHDOG_DELAY_MS = Math.max(
+    AUTO_RECONNECT_MAX_DELAY_MS,
+    parseEnvInteger(process.env.WA_RECONNECT_WATCHDOG_DELAY_MS, 300000, 1000)
+);
+const AUTO_RECONNECT_JITTER_RATIO = 0.2;
+
+const RECOVERABLE_DISCONNECT_CODES = new Set([
+    DisconnectReason.connectionClosed,
+    DisconnectReason.connectionLost,
+    DisconnectReason.connectionReplaced,
+    DisconnectReason.timedOut,
+    DisconnectReason.restartRequired,
+    408,
+    428,
+    440,
+    503,
+    515
+].filter(Number.isFinite));
+
+const NON_RECOVERABLE_DISCONNECT_CODES = new Set([
+    DisconnectReason.loggedOut,
+    401
+].filter(Number.isFinite));
+
+function getDisconnectInfo(lastDisconnect) {
+    const error = lastDisconnect?.error;
+    const rawStatusCode = error?.output?.statusCode ?? error?.statusCode ?? error?.code;
+    const numericStatusCode = Number(rawStatusCode);
+    const statusCode = Number.isFinite(numericStatusCode) ? numericStatusCode : undefined;
+    const reasonName = Object.entries(DisconnectReason)
+        .find(([, value]) => value === statusCode)?.[0] || 'unknown';
+    const message = error?.message || error?.output?.payload?.message || '';
+
+    return { statusCode, reasonName, message };
+}
+
+function isRecoverableDisconnect(info) {
+    if (NON_RECOVERABLE_DISCONNECT_CODES.has(info.statusCode)) return false;
+    if (/logged\s*out|invalid\s*auth|bad\s*session/i.test(info.message || '')) return false;
+    if (info.statusCode === undefined) return true;
+    if (info.statusCode >= 500) return true;
+    return RECOVERABLE_DISCONNECT_CODES.has(info.statusCode);
+}
+
+function describeDisconnect(info) {
+    if (info.statusCode === DisconnectReason.restartRequired || info.statusCode === 515) {
+        return 'WhatsApp requested a socket restart';
+    }
+    if (
+        info.statusCode === DisconnectReason.connectionReplaced ||
+        info.statusCode === 440 ||
+        /replaced|conflict/i.test(info.message || '')
+    ) {
+        return 'WhatsApp connection was replaced';
+    }
+    if (
+        info.statusCode === DisconnectReason.timedOut ||
+        info.statusCode === DisconnectReason.connectionLost ||
+        info.statusCode === 408
+    ) {
+        return 'WhatsApp connection timed out or was lost';
+    }
+    if (info.statusCode === DisconnectReason.connectionClosed || info.statusCode === 428) {
+        return 'WhatsApp connection closed';
+    }
+    if (info.statusCode >= 500) {
+        return 'WhatsApp service returned a transient stream error';
+    }
+    return 'WhatsApp connection closed unexpectedly';
+}
+
+function calculateReconnectDelayMs(attempt) {
+    const exponentialDelay = AUTO_RECONNECT_BASE_DELAY_MS * (2 ** Math.max(0, attempt - 1));
+    const cappedDelay = Math.min(exponentialDelay, AUTO_RECONNECT_MAX_DELAY_MS);
+    const jitter = cappedDelay * AUTO_RECONNECT_JITTER_RATIO * Math.random();
+    return Math.round(cappedDelay + jitter);
+}
 
 const BEHAVIOR_PROFILE_DEFAULTS = {
     'bot-native': {
@@ -126,6 +244,31 @@ async function getLatestWaSocketVersion(instanceId) {
     }
 }
 
+function truncateForLog(value, maxLength = 500) {
+    if (value === undefined || value === null) return '';
+    let text;
+    if (typeof value === 'string') {
+        text = value;
+    } else {
+        try {
+            text = JSON.stringify(value);
+        } catch (error) {
+            text = String(value);
+        }
+    }
+    return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function formatErrorForLog(error) {
+    const parts = [];
+    if (error?.message) parts.push(error.message);
+    if (error?.code) parts.push(`code=${error.code}`);
+    if (error?.output?.statusCode) parts.push(`statusCode=${error.output.statusCode}`);
+    if (error?.response?.status) parts.push(`httpStatus=${error.response.status}`);
+    if (error?.response?.data) parts.push(`response=${truncateForLog(error.response.data)}`);
+    return parts.join(' | ') || String(error);
+}
+
 /**
  * Single WhatsApp Instance
  */
@@ -135,6 +278,13 @@ class WhatsAppInstance {
         this.name = config.name || `Instance ${config.id}`;
         this.webhookUrl = config.webhookUrl || '';
         this.createdAt = config.createdAt || new Date().toISOString();
+
+        // Per-instance proxy (null = inherit deployment default or pool)
+        this.proxy = this._normalizeProxy(config.proxy);
+        this.apiKeyMeta = config.apiKeyMeta || null;
+        this._activeProxy = null;
+        this._activeProxyAgent = null;
+        this._activeProxyAt = null;
         
         // Connection state
         this.socket = null;
@@ -143,6 +293,9 @@ class WhatsAppInstance {
         this.connectedPhone = null;
         this.connectedAt = null;
         this.reconnectTimer = null;
+        this.reconnectAttempts = 0;
+        this.reconnectInFlight = false;
+        this.nextReconnectAt = null;
         this.intentionalDisconnect = false;
         
         // Message deduplication (prevent processing same message multiple times)
@@ -223,7 +376,8 @@ class WhatsAppInstance {
     /**
      * Start WhatsApp connection
      */
-    async connect() {
+    async connect(options = {}) {
+        const { autoReconnect = false } = options;
         console.log(`[Instance ${this.id}] connect() called, current status: ${this.status}`);
         
         if (this.status === 'connected') {
@@ -244,7 +398,11 @@ class WhatsAppInstance {
             }
             this.socket = null;
         }
-        this._clearReconnectTimer();
+        if (autoReconnect) {
+            this._clearReconnectTimer();
+        } else {
+            this._resetReconnectState();
+        }
         this.intentionalDisconnect = false;
         
         this.status = 'connecting';
@@ -259,6 +417,30 @@ class WhatsAppInstance {
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
             console.log(`[Instance ${this.id}] Auth state loaded`);
             const waSocketVersion = await getLatestWaSocketVersion(this.id);
+
+            const resolved = resolveEffectiveProxy(this.proxy);
+            this._activeProxy = resolved;
+            this._activeProxyAgent = null;
+            this._activeProxyAt = null;
+            let proxyAgent = null;
+            if (resolved.config) {
+                try {
+                    proxyAgent = createProxyAgent(resolved.config);
+                    this._activeProxyAgent = proxyAgent;
+                    this._activeProxyAt = new Date().toISOString();
+                    const r = redactProxy(resolved.config);
+                    this._log(
+                        `Using ${resolved.source} proxy: ${r.type}://${r.username ? r.username + '@' : ''}${r.host}:${r.port}`,
+                        'info'
+                    );
+                } catch (err) {
+                    this._log(`Proxy agent creation failed, connecting direct: ${err.message}`, 'error');
+                    proxyAgent = null;
+                }
+            } else {
+                console.log(`[Instance ${this.id}] No proxy configured, direct connection`);
+                this._activeProxyAt = new Date().toISOString();
+            }
             
             // ========================================
             // ANTI-BAN: Baileys-recommended socket configuration
@@ -297,10 +479,12 @@ class WhatsAppInstance {
                 enableRecentMessageCache: true,
                 
                 // Don't print QR in terminal (we handle it via API)
-                printQRInTerminal: false
+                printQRInTerminal: false,
+
+                ...(proxyAgent && { agent: proxyAgent, fetchAgent: proxyAgent })
             });
             this.socket = socket;
-            console.log(`[Instance ${this.id}] Socket created with anti-ban config`);
+            console.log(`[Instance ${this.id}] Socket created with anti-ban config${proxyAgent ? ' (via proxy)' : ''}`);
             
             // Save credentials when updated
             socket.ev.on('creds.update', saveCreds);
@@ -325,32 +509,15 @@ class WhatsAppInstance {
                 
                 // Connection closed
                 if (connection === 'close') {
-                    const statusCode = lastDisconnect?.error?.output?.statusCode;
-                    const shouldReconnect = !this.intentionalDisconnect && statusCode !== DisconnectReason.loggedOut;
-                    
-                    console.log(`[Instance ${this.id}] Connection closed. Status:`, statusCode);
-                    this.status = 'disconnected';
-                    this.qrCode = null;
-                    this.connectedPhone = null;
-                    this.connectedAt = null;
-                    this._stopPresenceCycling();
-                    this._emitStatusChange();
-                    
-                    if (shouldReconnect) {
-                        const reason = statusCode === DisconnectReason.restartRequired
-                            ? 'WhatsApp requested a socket restart'
-                            : 'Connection lost';
-                        this._scheduleReconnect(`${reason} - reconnecting in 5 seconds...`);
-                    } else if (this.intentionalDisconnect) {
-                        this._log('Disconnected from WhatsApp (credentials kept)', 'info');
-                    } else {
-                        this._log('Logged out - scan QR code to reconnect', 'error');
-                    }
+                    this._handleConnectionClose(lastDisconnect, {
+                        relinkMessage: 'Logged out - scan QR code to reconnect'
+                    });
                 }
                 
                 // Connected successfully
                 if (connection === 'open') {
                     console.log(`[Instance ${this.id}] Connected!`);
+                    this._resetReconnectState();
                     this.status = 'connected';
                     this.qrCode = null;
                     this.connectedPhone = this.socket.user?.id?.split(':')[0] || 'Unknown';
@@ -470,7 +637,7 @@ class WhatsAppInstance {
             throw new Error('Already connected');
         }
 
-        this._clearReconnectTimer();
+        this._resetReconnectState();
         this.intentionalDisconnect = false;
 
         if (this.socket) {
@@ -504,30 +671,14 @@ class WhatsAppInstance {
                 const { connection, lastDisconnect } = update;
                 
                 if (connection === 'close') {
-                    const statusCode = lastDisconnect?.error?.output?.statusCode;
-                    const shouldReconnect = !this.intentionalDisconnect && statusCode !== DisconnectReason.loggedOut;
-                    
-                    this.status = 'disconnected';
-                    this.qrCode = null;
-                    this.pairingCode = null;
-                    this.connectedPhone = null;
-                    this.connectedAt = null;
-                    this._stopPresenceCycling();
-                    this._emitStatusChange();
-                    
-                    if (shouldReconnect) {
-                        const reason = statusCode === DisconnectReason.restartRequired
-                            ? 'WhatsApp requested a socket restart'
-                            : 'Connection lost';
-                        this._scheduleReconnect(`${reason} - reconnecting in 5 seconds...`);
-                    } else if (this.intentionalDisconnect) {
-                        this._log('Disconnected from WhatsApp (credentials kept)', 'info');
-                    } else {
-                        this._log('Logged out - pair again to reconnect', 'error');
-                    }
+                    this._handleConnectionClose(lastDisconnect, {
+                        clearPairingCode: true,
+                        relinkMessage: 'Logged out - pair again to reconnect'
+                    });
                 }
                 
                 if (connection === 'open') {
+                    this._resetReconnectState();
                     this.status = 'connected';
                     this.qrCode = null;
                     this.pairingCode = null;
@@ -580,7 +731,7 @@ class WhatsAppInstance {
     async disconnect(options = {}) {
         const { revoke = false } = options;
 
-        this._clearReconnectTimer();
+        this._resetReconnectState();
         this.intentionalDisconnect = true;
 
         // Stop presence cycling
@@ -615,19 +766,147 @@ class WhatsAppInstance {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
         }
+        this.nextReconnectAt = null;
     }
 
-    _scheduleReconnect(message) {
+    _resetReconnectState() {
         this._clearReconnectTimer();
-        this._log(message, 'warning');
+        this.reconnectAttempts = 0;
+        this.reconnectInFlight = false;
+    }
+
+    _handleConnectionClose(lastDisconnect, options = {}) {
+        const { clearPairingCode = false, relinkMessage = 'Logged out - scan QR code to reconnect' } = options;
+        const disconnectInfo = getDisconnectInfo(lastDisconnect);
+        const shouldReconnect = !this.intentionalDisconnect && isRecoverableDisconnect(disconnectInfo);
+
+        console.log(
+            `[Instance ${this.id}] Connection closed. Status: ${disconnectInfo.statusCode ?? 'unknown'}, ` +
+            `reason: ${disconnectInfo.reasonName}, message: ${disconnectInfo.message || '(none)'}`
+        );
+
+        this.status = 'disconnected';
+        this.qrCode = null;
+        if (clearPairingCode) {
+            this.pairingCode = null;
+        }
+        this.connectedPhone = null;
+        this.connectedAt = null;
+        this._stopPresenceCycling();
+        this._emitStatusChange();
+
+        if (shouldReconnect) {
+            this._scheduleReconnect(`${describeDisconnect(disconnectInfo)}; preserving credentials.`);
+        } else if (this.intentionalDisconnect) {
+            this._log('Disconnected from WhatsApp (credentials kept)', 'info');
+        } else {
+            this._resetReconnectState();
+            this._log(`${relinkMessage} (credentials preserved until manually cleared)`, 'error');
+        }
+    }
+
+    _scheduleReconnect(message, options = {}) {
+        const { delayMs = null } = options;
+
+        if (!AUTO_RECONNECT_ENABLED) {
+            this._log(`${message} Auto reconnect disabled by WA_AUTO_RECONNECT_ENABLED.`, 'warning');
+            return;
+        }
+
+        if (AUTO_RECONNECT_MAX_ATTEMPTS === 0) {
+            this._log(`${message} Auto reconnect has zero configured attempts.`, 'warning');
+            return;
+        }
+
+        if (this.intentionalDisconnect || this.status === 'connected') {
+            return;
+        }
+
+        if (this.reconnectTimer) {
+            this._log(`Auto reconnect already scheduled for ${this.nextReconnectAt}`, 'warning');
+            return;
+        }
+
+        if (this.reconnectInFlight || this.status === 'connecting') {
+            this._log('Auto reconnect already in progress; skipping duplicate schedule.', 'warning');
+            return;
+        }
+
+        const savedCredentials = this.hasSavedCredentials();
+        const burstLimitReached = this.reconnectAttempts >= AUTO_RECONNECT_MAX_ATTEMPTS;
+        if (burstLimitReached && !savedCredentials) {
+            this._log(
+                `Auto reconnect stopped after ${this.reconnectAttempts}/${AUTO_RECONNECT_MAX_ATTEMPTS} attempts. ` +
+                'Scan QR or use the connect endpoint to retry manually.',
+                'error'
+            );
+            return;
+        }
+
+        const attempt = this.reconnectAttempts + 1;
+        const waitMs = delayMs === null
+            ? (burstLimitReached ? AUTO_RECONNECT_WATCHDOG_DELAY_MS : calculateReconnectDelayMs(attempt))
+            : Math.max(0, delayMs);
+        this.reconnectAttempts = attempt;
+        this.nextReconnectAt = new Date(Date.now() + waitMs).toISOString();
+
+        this._log(
+            burstLimitReached
+                ? `${message} Auto reconnect burst limit reached; continuing saved-session watchdog attempt ${attempt} in ${Math.ceil(waitMs / 1000)}s.`
+                : `${message} Auto reconnect attempt ${attempt}/${AUTO_RECONNECT_MAX_ATTEMPTS} in ${Math.ceil(waitMs / 1000)}s.`,
+            'warning'
+        );
+
         this.reconnectTimer = setTimeout(() => {
-            this.reconnectTimer = null;
-            if (this.status !== 'connected' && !this.intentionalDisconnect) {
-                this.connect().catch(err => {
-                    this._log(`Reconnect failed: ${err.message}`, 'error');
-                });
+            this._runScheduledReconnect(attempt);
+        }, waitMs);
+    }
+
+    async _runScheduledReconnect(attempt) {
+        this.reconnectTimer = null;
+        this.nextReconnectAt = null;
+
+        if (!AUTO_RECONNECT_ENABLED || this.intentionalDisconnect || this.status === 'connected') {
+            return;
+        }
+
+        if (this.reconnectInFlight || this.status === 'connecting') {
+            this._log('Auto reconnect skipped because a connection attempt is already active.', 'warning');
+            return;
+        }
+
+        this.reconnectInFlight = true;
+        const attemptLabel = attempt > AUTO_RECONNECT_MAX_ATTEMPTS
+            ? `${attempt} (watchdog)`
+            : `${attempt}/${AUTO_RECONNECT_MAX_ATTEMPTS}`;
+        this._log(`Auto reconnect attempt ${attemptLabel} starting.`, 'info');
+
+        try {
+            await this.connect({ autoReconnect: true });
+        } catch (error) {
+            this._log(`Auto reconnect attempt ${attempt} failed: ${error.message}`, 'error');
+            if (!this.intentionalDisconnect && this.status !== 'connected') {
+                this._scheduleReconnect('Auto reconnect start failed; preserving credentials.');
             }
-        }, 5000);
+        } finally {
+            this.reconnectInFlight = false;
+        }
+    }
+
+    hasSavedCredentials() {
+        const credsFile = path.join(this.authFolder, 'creds.json');
+        try {
+            const stats = fsSync.statSync(credsFile);
+            return stats.isFile() && stats.size > 2;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    scheduleStartupReconnect(staggerMs = AUTO_RECONNECT_BASE_DELAY_MS) {
+        this._scheduleReconnect('Saved credentials found on startup; reconnecting.', {
+            delayMs: staggerMs
+        });
     }
     
     /**
@@ -734,7 +1013,9 @@ class WhatsAppInstance {
      */
     async sendMessage(to, text, options = {}) {
         if (this.status !== 'connected' || !this.socket) {
-            throw new Error('Instance not connected');
+            const reason = `Instance not connected (status=${this.status}, socket=${this.socket ? 'present' : 'missing'})`;
+            this._log(`Send blocked to ${to || 'unknown recipient'}: ${reason}`, 'error');
+            throw new Error(reason);
         }
         
         // Normalize phone number - remove +, spaces, dashes, etc.
@@ -772,14 +1053,97 @@ class WhatsAppInstance {
                 : this.behaviorSettings.notificationGraceMs,
         });
         
-        // Send with anti-ban protections
-        const result = await safeSendMessage(this.socket, jid, text, '', this.antiBanManager, behaviorOptions);
+        const builtMessage = buildWhatsAppMessage({
+            ...(options.messagePayload || {}),
+            text: options.messagePayload?.text ?? text
+        });
         
-        if (result.sent) {
-            this._log(`Sent to ${to}: ${text.substring(0, 50)}...`, 'success');
+        // Send with anti-ban protections
+        let result;
+        try {
+            result = await safeSendMessage(this.socket, jid, builtMessage.content, '', this.antiBanManager, {
+                ...behaviorOptions,
+                relayMessage: async (socket, targetJid, relayContent, relayOptions = {}) => {
+                    let content = relayContent;
+                    let additionalNodes = relayOptions.additionalNodes || [];
+
+                    if (relayOptions.mode === 'native_flow' || content?.interactiveMessage) {
+                        const isGroup = String(targetJid).endsWith('@g.us');
+                        const plan = buildNativeFlowRelayPlan(content, { jid: targetJid, isGroup });
+                        content = plan.relayContent;
+                        additionalNodes = plan.additionalNodes;
+                    }
+
+                    const waMessage = generateWAMessageFromContent(targetJid, content, {
+                        userJid: socket.user?.id
+                    });
+                    await socket.relayMessage(targetJid, waMessage.message, {
+                        messageId: waMessage.key.id,
+                        additionalNodes
+                    });
+                }
+            });
+        } catch (error) {
+            this._log(`Send failed to ${to}: ${formatErrorForLog(error)}`, 'error');
+            throw error;
         }
         
-        return result;
+        if (result.sent) {
+            this._log(`Sent to ${to}: ${builtMessage.logText.substring(0, 50)}...`, 'success');
+        } else {
+            this._log(`Send not sent to ${to}: ${result.reason || 'Unknown send failure'}`, 'warning');
+        }
+        
+        return {
+            ...result,
+            messageText: builtMessage.logText,
+            interactive: builtMessage.delivery
+        };
+    }
+
+    /**
+     * React to an existing WhatsApp message
+     * @param {string} to - Phone number or JID for the chat
+     * @param {{ emoji: string, key: object }} payload
+     */
+    async sendReaction(to, { emoji = '', key }) {
+        if (this.status !== 'connected' || !this.socket) {
+            const reason = `Instance not connected (status=${this.status}, socket=${this.socket ? 'present' : 'missing'})`;
+            this._log(`Reaction blocked for ${to || 'unknown recipient'}: ${reason}`, 'error');
+            throw new Error(reason);
+        }
+
+        if (!key?.id) {
+            throw new Error('Reaction key.id is required');
+        }
+
+        const normalizedTo = to.includes('@') ? to : to.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
+        const jid = normalizedTo.includes('@') ? normalizedTo : `${normalizedTo}@s.whatsapp.net`;
+        const reactionKey = {
+            ...key,
+            remoteJid: key.remoteJid || jid
+        };
+
+        try {
+            await this.socket.sendMessage(jid, {
+                react: {
+                    text: emoji,
+                    key: reactionKey
+                }
+            });
+        } catch (error) {
+            this._log(`Reaction failed on ${key.id}: ${formatErrorForLog(error)}`, 'error');
+            throw error;
+        }
+
+        const label = emoji ? emoji : '(removed)';
+        this._log(`Reaction ${label} applied to message ${key.id}`, 'success');
+
+        return {
+            sent: true,
+            emoji,
+            key: reactionKey
+        };
     }
     
     /**
@@ -1121,20 +1485,28 @@ class WhatsAppInstance {
             const reply = response.data?.reply || response.data?.message || response.data?.text;
             
             if (reply) {
-                const result = await safeSendMessage(
-                    this.socket, 
-                    from, 
-                    reply, 
-                    messageContent.text, 
-                    this.antiBanManager,
-                    {
-                        ...behavior,
-                        messageKey: msg.key,  // Pass message key for read receipt simulation
-                        simulateReading: !phoneNotificationsOn
-                    }
-                );
+                let result;
+                try {
+                    result = await safeSendMessage(
+                        this.socket, 
+                        from, 
+                        reply, 
+                        messageContent.text, 
+                        this.antiBanManager,
+                        {
+                            ...behavior,
+                            messageKey: msg.key,  // Pass message key for read receipt simulation
+                            simulateReading: !phoneNotificationsOn
+                        }
+                    );
+                } catch (error) {
+                    this._log(`Reply failed to ${phoneNumber}: ${formatErrorForLog(error)}`, 'error');
+                    throw error;
+                }
                 if (result.sent) {
                     this._log(`Replied to ${phoneNumber}: ${reply.substring(0, 50)}...`, 'success');
+                } else {
+                    this._log(`Reply not sent to ${phoneNumber}: ${result.reason || 'Unknown reply failure'}`, 'warning');
                 }
             } else {
                 try {
@@ -1229,6 +1601,165 @@ class WhatsAppInstance {
     }
     
     /**
+     * Get the proxy state for API responses.
+     */
+    getProxyStatus() {
+        const resolved = resolveEffectiveProxy(this.proxy);
+        let override = null;
+        if (this.proxy) {
+            if (this.proxy.enabled === false) {
+                override = { enabled: false };
+            } else {
+                override = {
+                    enabled: true,
+                    origin: this.proxy.source || 'api',
+                    ...redactProxy(this.proxy),
+                };
+            }
+        }
+
+        let active = null;
+        if (this._activeProxy && (this.status === 'connected' || this.status === 'connecting')) {
+            active = {
+                source: this._activeProxy.source,
+                proxy: redactProxy(this._activeProxy.config),
+                boundAt: this._activeProxyAt,
+            };
+        }
+
+        return {
+            override,
+            effective: redactProxy(resolved.config),
+            source: resolved.source,
+            active,
+        };
+    }
+
+    async verifyProxy(target = 'https://api.ipify.org?format=json') {
+        const axios = (await import('axios')).default;
+        const resolved = resolveEffectiveProxy(this.proxy);
+        const agent = resolved.config ? createProxyAgent(resolved.config) : null;
+
+        const start = Date.now();
+        try {
+            const response = await axios.get(target, {
+                httpAgent: agent || undefined,
+                httpsAgent: agent || undefined,
+                timeout: 15000,
+                validateStatus: () => true,
+            });
+            const elapsedMs = Date.now() - start;
+            let egressIp = null;
+            if (response.data && typeof response.data === 'object' && response.data.ip) {
+                egressIp = response.data.ip;
+            } else if (typeof response.data === 'string') {
+                egressIp = response.data.trim();
+            }
+            return {
+                success: response.status >= 200 && response.status < 300,
+                target,
+                elapsedMs,
+                httpStatus: response.status,
+                egressIp,
+                proxySource: resolved.source,
+                proxy: redactProxy(resolved.config),
+                active: (this._activeProxy && (this.status === 'connected' || this.status === 'connecting'))
+                    ? {
+                        source: this._activeProxy.source,
+                        proxy: redactProxy(this._activeProxy.config),
+                        boundAt: this._activeProxyAt,
+                    }
+                    : null,
+            };
+        } catch (error) {
+            return {
+                success: false,
+                target,
+                elapsedMs: Date.now() - start,
+                error: error.message,
+                code: error.code || null,
+                proxySource: resolved.source,
+                proxy: redactProxy(resolved.config),
+            };
+        }
+    }
+
+    _normalizeProxy(input, defaultSource = 'api') {
+        if (!input) return null;
+        if (input.enabled === false) return { enabled: false };
+        try {
+            const cfg = parseProxyConfig(input.url || input);
+            if (!cfg) return null;
+            return {
+                enabled: true,
+                source: input.source || defaultSource,
+                type: cfg.type,
+                host: cfg.host,
+                port: cfg.port,
+                username: cfg.username,
+                password: cfg.password,
+            };
+        } catch (err) {
+            console.warn(`[Instance ${this.id}] Dropping invalid persisted proxy config: ${err.message}`);
+            return null;
+        }
+    }
+
+    async updateProxy(newProxy, opts = {}) {
+        const source = opts.source || 'api';
+
+        if (newProxy === null || newProxy === undefined) {
+            this.proxy = null;
+            this._log('Proxy override cleared (inheriting deployment default or pool)', 'info');
+        } else if (newProxy.enabled === false) {
+            this.proxy = { enabled: false };
+            this._log('Proxy explicitly disabled for this instance', 'info');
+        } else {
+            const cfg = parseProxyConfig(newProxy.url || newProxy);
+            if (!cfg) {
+                throw new Error('Invalid proxy config: need url or {type,host,port}');
+            }
+            this.proxy = {
+                enabled: true,
+                source,
+                type: cfg.type,
+                host: cfg.host,
+                port: cfg.port,
+                username: cfg.username,
+                password: cfg.password,
+            };
+            const originLabel = source === 'pool' ? 'pool-assigned' : 'override';
+            this._log(
+                `Proxy ${originLabel}: ${cfg.type}://${cfg.username ? cfg.username + '@' : ''}${cfg.host}:${cfg.port}`,
+                'info'
+            );
+        }
+
+        if (opts.skipReconnect) return this.getProxyStatus();
+        if (this.status === 'connected' || this.status === 'connecting') {
+            this._log('Reconnecting to apply new proxy config...', 'warning');
+            try {
+                if (this.socket) {
+                    try { this.socket.ev.removeAllListeners(); } catch (_) {}
+                    try { this.socket.end(); } catch (_) {}
+                    this.socket = null;
+                }
+                this.status = 'disconnected';
+                this._emitStatusChange();
+                setTimeout(() => {
+                    this.connect().catch(err => {
+                        this._log(`Reconnect after proxy change failed: ${err.message}`, 'error');
+                    });
+                }, 500);
+            } catch (err) {
+                this._log(`Failed to bounce socket for proxy change: ${err.message}`, 'error');
+            }
+        }
+
+        return this.getProxyStatus();
+    }
+
+    /**
      * Get instance status
      */
     getStatus() {
@@ -1240,10 +1771,19 @@ class WhatsAppInstance {
             pairingCode: this.pairingCode || null,
             connectedPhone: this.connectedPhone,
             connectedAt: this.connectedAt,
+            hasSavedCredentials: this.hasSavedCredentials(),
             webhookUrl: this.webhookUrl || null,
             behaviorSettings: this.behaviorSettings,
             antiBanSettings: this.antiBanSettings,
             antiBanHealth: this.antiBanManager.getHealth(),
+            autoReconnect: {
+                enabled: AUTO_RECONNECT_ENABLED,
+                attempts: this.reconnectAttempts,
+                maxAttempts: AUTO_RECONNECT_MAX_ATTEMPTS,
+                nextAttemptAt: this.nextReconnectAt
+            },
+            proxy: this.getProxyStatus(),
+            apiKey: redactApiKeyMeta(this.apiKeyMeta),
             createdAt: this.createdAt
         };
     }
@@ -1258,6 +1798,8 @@ class WhatsAppInstance {
             webhookUrl: this.webhookUrl,
             behaviorSettings: this.behaviorSettings,
             antiBanSettings: this.antiBanSettings,
+            proxy: this.proxy,
+            apiKeyMeta: this.apiKeyMeta,
             createdAt: this.createdAt
         };
     }
@@ -1281,6 +1823,13 @@ class WhatsAppInstance {
         if (this.onLog) {
             this.onLog(this.id, entry);
         }
+
+        const logFile = path.join(this.logsFolder, `${entry.timestamp.slice(0, 10)}.jsonl`);
+        fs.mkdir(this.logsFolder, { recursive: true })
+            .then(() => fs.appendFile(logFile, `${JSON.stringify(entry)}\n`))
+            .catch(error => {
+                console.error(`[Instance ${this.id}] Could not persist activity log:`, error.message);
+            });
         
         const emoji = { info: 'ℹ️', success: '✅', warning: '⚠️', error: '❌' };
         console.log(`${emoji[level] || ''} [${this.id}] ${message}`);
@@ -1305,6 +1854,7 @@ class InstanceManager {
         this.onStatusChange = null;
         this.onMessage = null;
         this.onLog = null;
+        this.proxyPool = new ProxyPoolManager(null);
     }
     
     /**
@@ -1313,12 +1863,190 @@ class InstanceManager {
     async init() {
         // Ensure instances folder exists
         await fs.mkdir(INSTANCES_FOLDER, { recursive: true });
+
+        await this._loadOrSeedProxyPool();
         
         // Load existing instances from DB
         await this._loadInstances();
+
+        if (this.proxyPool.isEnabled()) {
+            await this._reconcileProxyPool({ emit: false });
+            console.log(
+                `[InstanceManager] Proxy pool ready: ${this.proxyPool.getStatus().used}/${this.proxyPool.size()} slots in use`
+            );
+        }
+
+        if (WORKER_MODE === 'single-instance' && FIXED_INSTANCE_ID && this.instances.size === 0) {
+            console.log(`[InstanceManager] Single-instance mode — bootstrapping ${FIXED_INSTANCE_ID}`);
+            await this.createInstance({
+                id: FIXED_INSTANCE_ID,
+                name: process.env.WASUP_INSTANCE_NAME || FIXED_INSTANCE_ID,
+            });
+        }
         
-        console.log(`[InstanceManager] Initialized with ${this.instances.size} instances`);
+        console.log(`[InstanceManager] Initialized with ${this.instances.size} instances (mode=${WORKER_MODE}, data=${INSTANCES_FOLDER})`);
         return this;
+    }
+
+    async _loadOrSeedProxyPool() {
+        try {
+            if (fsSync.existsSync(PROXY_POOL_FILE)) {
+                const raw = await fs.readFile(PROXY_POOL_FILE, 'utf8');
+                const data = JSON.parse(raw);
+                const entries = Array.isArray(data) ? data : (data.entries || []);
+                this.proxyPool = new ProxyPoolManager(entries);
+                console.log(`[InstanceManager] Loaded ${this.proxyPool.size()} proxy-pool entries from disk`);
+                return;
+            }
+        } catch (err) {
+            console.warn(`[InstanceManager] Failed to read proxy-pool.json: ${err.message}`);
+        }
+
+        const envValue = process.env.PROXY_POOL || '';
+        if (envValue) {
+            this.proxyPool = new ProxyPoolManager(envValue);
+            if (this.proxyPool.size() > 0) {
+                await this._saveProxyPool();
+                console.log(`[InstanceManager] Seeded proxy-pool.json from PROXY_POOL env (${this.proxyPool.size()} entries)`);
+            }
+        }
+    }
+
+    async _saveProxyPool() {
+        try {
+            const data = { entries: this.proxyPool.serialize(), savedAt: new Date().toISOString() };
+            await fs.writeFile(PROXY_POOL_FILE, JSON.stringify(data, null, 2));
+        } catch (err) {
+            console.error('[InstanceManager] Failed to save proxy-pool.json:', err);
+            throw err;
+        }
+    }
+
+    async addProxyToPool(input) {
+        const result = this.proxyPool.addEntry(input);
+        if (result.added) {
+            await this._saveProxyPool();
+            console.log(`[InstanceManager] Added pool slot: ${result.slot.id}`);
+        }
+        return {
+            ...result,
+            pool: this.proxyPool.getStatus(),
+        };
+    }
+
+    async removeProxyFromPool(slotId) {
+        const result = this.proxyPool.removeEntry(slotId);
+        if (!result.removed) {
+            return { removed: false, pool: this.proxyPool.getStatus() };
+        }
+        await this._saveProxyPool();
+        if (result.wasAssignedTo) {
+            await this._reconcileProxyPool({ emit: true });
+        }
+        return {
+            removed: true,
+            wasAssignedTo: result.wasAssignedTo,
+            pool: this.proxyPool.getStatus(),
+        };
+    }
+
+    async _reconcileProxyPool({ emit = true } = {}) {
+        const instanceList = Array.from(this.instances.values()).map(i => ({
+            id: i.id,
+            proxy: i.proxy,
+            createdAt: i.createdAt,
+        }));
+
+        const { reassigned, orphaned } = this.proxyPool.reconcile(instanceList);
+
+        for (const orphanId of orphaned) {
+            const inst = this.instances.get(orphanId);
+            if (!inst) continue;
+            inst._log('Proxy slot no longer in pool — clearing', 'warning');
+            await inst.updateProxy(null, { skipReconnect: false });
+        }
+
+        for (const { instanceId, slot } of reassigned) {
+            const inst = this.instances.get(instanceId);
+            if (!inst) continue;
+            await inst.updateProxy(
+                {
+                    enabled: true,
+                    type: slot.type,
+                    host: slot.host,
+                    port: slot.port,
+                    username: slot.username,
+                    password: slot.password,
+                },
+                { source: 'pool' }
+            );
+        }
+
+        if (orphaned.length || reassigned.length) {
+            await this._saveInstances();
+        }
+
+        return {
+            reassigned: reassigned.map(r => r.instanceId),
+            orphaned,
+            pool: this.proxyPool.getStatus(),
+        };
+    }
+
+    async reconcileProxyPool() {
+        return this._reconcileProxyPool({ emit: true });
+    }
+
+    getProxyPoolStatus() {
+        return this.proxyPool.getStatus();
+    }
+
+    async setInstanceProxy(id, proxy) {
+        const instance = this.instances.get(id);
+        if (!instance) {
+            throw new Error(`Instance ${id} not found`);
+        }
+
+        if (proxy === null || proxy === undefined) {
+            this.proxyPool.releaseSlot(id);
+            const slot = this.proxyPool.isEnabled() ? this.proxyPool.claimSlot(id) : null;
+            if (slot) {
+                const result = await instance.updateProxy(
+                    {
+                        enabled: true,
+                        type: slot.type,
+                        host: slot.host,
+                        port: slot.port,
+                        username: slot.username,
+                        password: slot.password,
+                    },
+                    { source: 'pool' }
+                );
+                await this._saveInstances();
+                return result;
+            }
+            const result = await instance.updateProxy(null);
+            await this._saveInstances();
+            return result;
+        }
+
+        if (proxy.enabled === false) {
+            this.proxyPool.releaseSlot(id);
+            const result = await instance.updateProxy({ enabled: false });
+            await this._saveInstances();
+            return result;
+        }
+
+        this.proxyPool.releaseSlot(id);
+        const result = await instance.updateProxy(proxy, { source: 'api' });
+        await this._saveInstances();
+        return result;
+    }
+
+    async verifyInstanceProxy(id, target) {
+        const instance = this.instances.get(id);
+        if (!instance) throw new Error(`Instance ${id} not found`);
+        return await instance.verifyProxy(target);
     }
     
     /**
@@ -1328,9 +2056,50 @@ class InstanceManager {
         const id = config.id || this._generateId();
         
         console.log(`[InstanceManager] Creating instance: ${id}`);
+
+        if (WORKER_MODE === 'single-instance' && this.instances.size >= 1) {
+            throw new Error('Single-instance worker mode allows only one instance');
+        }
         
         if (this.instances.has(id)) {
             throw new Error(`Instance ${id} already exists`);
+        }
+
+        let apiKeyMeta = config.apiKeyMeta || null;
+        let issuedApiKey = null;
+        if (config.apiKey) {
+            apiKeyMeta = buildApiKeyMetaFromPlaintext(config.apiKey);
+            if (!apiKeyMeta) throw new Error('Invalid apiKey format');
+            issuedApiKey = config.apiKey;
+        } else if (config.generateApiKey) {
+            const generated = generateInstanceApiKey();
+            apiKeyMeta = {
+                publicId: generated.publicId,
+                salt: generated.salt,
+                secretHash: generated.secretHash,
+                hint: generated.hint,
+                format: 'wsp_v3',
+            };
+            issuedApiKey = generated.key;
+        }
+
+        let proxyConfig = config.proxy || null;
+        if (!proxyConfig && this.proxyPool.isEnabled()) {
+            const slot = this.proxyPool.claimSlot(id);
+            if (slot) {
+                proxyConfig = {
+                    enabled: true,
+                    source: 'pool',
+                    type: slot.type,
+                    host: slot.host,
+                    port: slot.port,
+                    username: slot.username,
+                    password: slot.password,
+                };
+                console.log(`[InstanceManager] Assigned pool slot ${slot.host}:${slot.port} to ${id}`);
+            } else {
+                console.log(`[InstanceManager] Pool exhausted — ${id} will connect direct`);
+            }
         }
         
         const instance = new WhatsAppInstance({
@@ -1338,7 +2107,9 @@ class InstanceManager {
             name: config.name || `Instance ${id}`,
             webhookUrl: config.webhookUrl || '',
             behaviorSettings: config.behaviorSettings,
-            antiBanSettings: config.antiBanSettings
+            antiBanSettings: config.antiBanSettings,
+            proxy: proxyConfig,
+            apiKeyMeta,
         });
         
         console.log(`[InstanceManager] Instance object created, auth folder: ${instance.authFolder}`);
@@ -1363,7 +2134,68 @@ class InstanceManager {
         await this._saveInstances();
         console.log(`[InstanceManager] Instances saved to disk`);
         
-        return instance.getStatus();
+        const status = instance.getStatus();
+        if (issuedApiKey) {
+            status.apiKey = { ...status.apiKey, key: issuedApiKey, showOnce: true };
+        }
+        return status;
+    }
+
+    /**
+     * Resolve instance + verify optional per-instance API key.
+     * @returns {{ instanceId: string, instance: WhatsAppInstance } | null}
+     */
+    verifyApiKeyAccess(apiKey, preferredInstanceId = null) {
+        if (!apiKey) return null;
+
+        if (preferredInstanceId) {
+            const inst = this.instances.get(preferredInstanceId);
+            if (inst?.apiKeyMeta && verifyApiKeyForInstance(apiKey, inst.apiKeyMeta)) {
+                return { instanceId: preferredInstanceId, instance: inst };
+            }
+            return null;
+        }
+
+        for (const [instanceId, inst] of this.instances) {
+            if (inst.apiKeyMeta && verifyApiKeyForInstance(apiKey, inst.apiKeyMeta)) {
+                return { instanceId, instance: inst };
+            }
+        }
+        return null;
+    }
+
+    hasInstanceApiKeys() {
+        for (const inst of this.instances.values()) {
+            if (inst.apiKeyMeta) return true;
+        }
+        return false;
+    }
+
+    async rotateInstanceApiKey(id) {
+        const instance = this.instances.get(id);
+        if (!instance) throw new Error(`Instance ${id} not found`);
+
+        const generated = generateInstanceApiKey();
+        instance.apiKeyMeta = {
+            publicId: generated.publicId,
+            salt: generated.salt,
+            secretHash: generated.secretHash,
+            hint: generated.hint,
+            format: 'wsp_v3',
+        };
+        await this._saveInstances();
+        return {
+            apiKey: generated.key,
+            meta: redactApiKeyMeta(instance.apiKeyMeta),
+        };
+    }
+
+    async clearInstanceApiKey(id) {
+        const instance = this.instances.get(id);
+        if (!instance) throw new Error(`Instance ${id} not found`);
+        instance.apiKeyMeta = null;
+        await this._saveInstances();
+        return { cleared: true };
     }
     
     /**
@@ -1391,6 +2223,11 @@ class InstanceManager {
         const instance = this.instances.get(id);
         if (!instance) {
             throw new Error(`Instance ${id} not found`);
+        }
+
+        const released = this.proxyPool.releaseSlot(id);
+        if (released) {
+            console.log(`[InstanceManager] Returned pool slot held by ${id} to the pool`);
         }
         
         // Disconnect first
@@ -1500,6 +2337,14 @@ class InstanceManager {
         }
         return await instance.sendMessage(to, text, options);
     }
+
+    async sendReaction(instanceId, to, payload) {
+        const instance = this.instances.get(instanceId);
+        if (!instance) {
+            throw new Error(`Instance ${instanceId} not found`);
+        }
+        return await instance.sendReaction(to, payload);
+    }
     
     /**
      * Load instances from DB file with retry (for Railway volume mount timing)
@@ -1560,14 +2405,17 @@ class InstanceManager {
                     this.instances.set(instance.id, instance);
                     console.log(`[InstanceManager] Loaded instance: ${instance.id} (${instance.name})`);
                     
-                    // Auto-connect if instance has saved credentials
-                    const credsFile = path.join(instance.authFolder, 'creds.json');
-                    if (fsSync.existsSync(credsFile)) {
-                        console.log(`[InstanceManager] Auto-reconnecting instance: ${instance.id}`);
-                        // Connect in background (don't block)
-                        instance.connect().catch(err => {
-                            console.error(`[InstanceManager] Auto-reconnect failed for ${instance.id}:`, err.message);
-                        });
+                    // Auto-connect credentialed instances through the guarded reconnect scheduler.
+                    if (instance.hasSavedCredentials()) {
+                        const staggerMs = Math.min(
+                            AUTO_RECONNECT_BASE_DELAY_MS + (this.instances.size - 1) * 1500,
+                            AUTO_RECONNECT_MAX_DELAY_MS
+                        );
+                        console.log(
+                            `[InstanceManager] Scheduling startup auto-reconnect for ${instance.id} ` +
+                            `in ${Math.ceil(staggerMs / 1000)}s`
+                        );
+                        instance.scheduleStartupReconnect(staggerMs);
                     }
                 }
                 console.log(`[InstanceManager] Finished loading ${this.instances.size} instances`);

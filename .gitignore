@@ -41,3 +41,10 @@ out/
 # Private Docs (Optional - keeping these local only)
 docs/CLAUDE_SESSION_NOTES.md
 docs/BUSINESS_MONETIZATION_RESEARCH.md
+
+# Azure secrets and proxy credentials (never commit)
+infra/azure/keys.env
+infra/azure/proxies/
+infra/azure/.build/
+apps/control-plane/.deploy/
+apps/control-plane/.env.local
