@@ -185,8 +185,20 @@ body {
   width: 100% !important;
 }
 
+[data-wasup-login] .wasup-login-clerk [class*="cl-rootBox"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-card"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-main"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-form"] {
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0.75rem !important;
+  width: 100% !important;
+}
+
 [data-wasup-login] .wasup-login-clerk [class*="cl-formButtonPrimary"],
 [data-wasup-login] .wasup-login-clerk [class*="cl-socialButtonsBlockButton"] {
+  position: relative !important;
   height: 50px !important;
   min-height: 50px !important;
   width: 100% !important;

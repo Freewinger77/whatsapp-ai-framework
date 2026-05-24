@@ -39,8 +39,8 @@ const clerkAppearance = {
     cardBox: "w-full bg-transparent shadow-none",
     card: "w-full bg-transparent shadow-none border-0 p-0 gap-4",
     header: "hidden",
-    main: "gap-4",
-    form: "gap-3",
+    main: "flex w-full flex-col gap-4",
+    form: "flex w-full flex-col gap-3",
     formField: "gap-2",
     socialButtonsBlockButton:
       "!flex !h-[50px] !w-full !max-w-none !items-center !justify-center !gap-2 !rounded-[10px] !border !border-white/12 !bg-white/[0.055] !px-4 !text-white !shadow-none !transition hover:!border-[#00ff6a]/35 hover:!bg-white/[0.08]",
@@ -237,7 +237,7 @@ function SignedOutDashboard() {
       <div className="absolute bottom-[-15rem] right-[-12rem] h-[34rem] w-[34rem] rounded-full bg-[#00d5ff]/10 blur-[130px]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(0,255,106,0.10),transparent_36%),linear-gradient(180deg,#070a08_0%,#000_62%)]" />
 
-      <section className="relative grid w-full max-w-6xl overflow-hidden rounded-[1.35rem] border border-white/10 bg-[#070908]/92 p-2 shadow-[0_34px_110px_rgba(0,0,0,0.72)] ring-1 ring-[#00ff6a]/10 backdrop-blur-xl md:grid-cols-[0.86fr_1.14fr] lg:rounded-[2rem]">
+      <section className="relative grid w-full max-w-6xl rounded-[1.35rem] border border-white/10 bg-[#070908]/92 p-2 shadow-[0_34px_110px_rgba(0,0,0,0.72)] ring-1 ring-[#00ff6a]/10 backdrop-blur-xl md:grid-cols-[0.86fr_1.14fr] lg:rounded-[2rem]">
         <div className="flex min-h-[auto] items-center justify-center px-4 py-7 sm:px-8 sm:py-9 md:min-h-[560px] lg:px-12">
           <div className="w-full max-w-[360px] sm:max-w-[380px]">
             <div className="mb-5 sm:mb-6">
@@ -260,11 +260,10 @@ function SignedOutDashboard() {
               </p>
             </div>
 
-            <div className="wasup-login-clerk" key={`${authMode}-${authUrlVersion}`}>
+            <div className="wasup-login-clerk flex w-full min-h-[280px] flex-col gap-4 [&_.cl-rootBox]:relative [&_.cl-rootBox]:w-full [&_.cl-cardBox]:w-full [&_.cl-card]:relative [&_.cl-card]:flex [&_.cl-card]:w-full [&_.cl-card]:flex-col [&_.cl-card]:gap-4" key={`${authMode}-${authUrlVersion}`}>
               {authMode === "sign-up" ? (
                 <SignUp
                   routing="hash"
-                  oauthFlow="popup"
                   appearance={clerkAppearance}
                   signInUrl={buildDashboardUrl("/sign-in")}
                   fallbackRedirectUrl={redirectAfterAuthUrl}
@@ -273,7 +272,6 @@ function SignedOutDashboard() {
               ) : (
                 <SignIn
                   routing="hash"
-                  oauthFlow="popup"
                   appearance={clerkAppearance}
                   signUpUrl={buildDashboardUrl("/sign-up")}
                   fallbackRedirectUrl={redirectAfterAuthUrl}
@@ -376,7 +374,7 @@ function ThemedInvitationSetup({
       <div className="absolute bottom-[-15rem] right-[-12rem] h-[34rem] w-[34rem] rounded-full bg-[#00d5ff]/10 blur-[130px]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(0,255,106,0.10),transparent_36%),linear-gradient(180deg,#070a08_0%,#000_62%)]" />
 
-      <section className="relative grid w-full max-w-6xl overflow-hidden rounded-[1.35rem] border border-white/10 bg-[#070908]/92 p-2 shadow-[0_34px_110px_rgba(0,0,0,0.72)] ring-1 ring-[#00ff6a]/10 backdrop-blur-xl md:grid-cols-[0.86fr_1.14fr] lg:rounded-[2rem]">
+      <section className="relative grid w-full max-w-6xl rounded-[1.35rem] border border-white/10 bg-[#070908]/92 p-2 shadow-[0_34px_110px_rgba(0,0,0,0.72)] ring-1 ring-[#00ff6a]/10 backdrop-blur-xl md:grid-cols-[0.86fr_1.14fr] lg:rounded-[2rem]">
         <div className="flex min-h-[auto] items-center justify-center px-4 py-7 sm:px-8 sm:py-9 md:min-h-[560px] lg:px-12">
           <div className="w-full max-w-[390px]">
             <p className="text-xs font-medium uppercase tracking-[0.28em] text-[#00e676]/70">
@@ -491,7 +489,7 @@ function ThemedOrganizationSetup() {
       <div className="absolute bottom-[-15rem] right-[-12rem] h-[34rem] w-[34rem] rounded-full bg-[#00d5ff]/10 blur-[130px]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(0,255,106,0.10),transparent_36%),linear-gradient(180deg,#070a08_0%,#000_62%)]" />
 
-      <section className="relative grid w-full max-w-6xl overflow-hidden rounded-[1.35rem] border border-white/10 bg-[#070908]/92 p-2 shadow-[0_34px_110px_rgba(0,0,0,0.72)] ring-1 ring-[#00ff6a]/10 backdrop-blur-xl md:grid-cols-[0.86fr_1.14fr] lg:rounded-[2rem]">
+      <section className="relative grid w-full max-w-6xl rounded-[1.35rem] border border-white/10 bg-[#070908]/92 p-2 shadow-[0_34px_110px_rgba(0,0,0,0.72)] ring-1 ring-[#00ff6a]/10 backdrop-blur-xl md:grid-cols-[0.86fr_1.14fr] lg:rounded-[2rem]">
         <div className="flex min-h-[auto] items-center justify-center px-4 py-7 sm:px-8 sm:py-9 md:min-h-[560px] lg:px-12">
           <div className="w-full max-w-[390px]">
             <div className="mb-5 sm:mb-6">
