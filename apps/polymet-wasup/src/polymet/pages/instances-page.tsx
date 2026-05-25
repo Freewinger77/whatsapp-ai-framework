@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useUser } from "@clerk/clerk-react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { AlertCircleIcon, CheckCircle2Icon, PlusIcon, XIcon } from "lucide-react";
@@ -14,11 +15,60 @@ import {
   type BillingEntitlementsResult,
 } from "@/polymet/lib/control-plane-api";
 import { InlineProvisioningSpinner, useWorkspaceState } from "@/polymet/hooks/use-workspace-state";
+import { InstancesGridSkeleton } from "@/polymet/components/page-skeletons";
+import { instancePhoneLabel, instanceStatusDotClass, instanceStatusLabel } from "@/polymet/lib/instance-status";
+import { wasupProSubscribeLabel, wasupProUpgradeDescription } from "@/polymet/lib/billing-copy";
+import { showBillingPlanToast, showInstanceCreationTrialToast } from "@/polymet/lib/billing-plan-toast";
 import { cn } from "@/lib/utils";
 
 export function InstancesPage() {
+  const { user } = useUser();
   const [createOpen, setCreateOpen] = useState(false);
-  const { instances, loading, error: workspaceError, provisioningActive, refresh } = useWorkspaceState();
+  const [createCardShake, setCreateCardShake] = useState(false);
+  const { instances, error: workspaceError, provisioningActive, loading, refresh, plan } = useWorkspaceState();
+
+  const startCheckout = async () => {
+    try {
+      const returnBase = `${window.location.origin}/#/instances`;
+      const result = await createBillingCheckout({
+        instanceQuantity: 1,
+        contactEmail: user?.primaryEmailAddress?.emailAddress,
+        successUrl: `${returnBase}?billing=success`,
+        cancelUrl: `${returnBase}?billing=cancelled`,
+      });
+      window.location.assign(result.checkoutUrl);
+    } catch (checkoutError) {
+      toast.error("Could not start checkout", {
+        description: checkoutError instanceof Error ? checkoutError.message : "Please try again shortly.",
+      });
+    }
+  };
+
+  const handleCreateClick = () => {
+    if (provisioningActive) return;
+
+    if (plan?.canCreateInstances) {
+      setCreateOpen(true);
+      return;
+    }
+
+    setCreateCardShake(true);
+    window.setTimeout(() => setCreateCardShake(false), 420);
+
+    if (!plan || plan.tier === "free") {
+      showInstanceCreationTrialToast(() => void startCheckout());
+      return;
+    }
+
+    showBillingPlanToast(plan, () => void startCheckout());
+  };
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void refresh({ silent: true });
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -31,89 +81,82 @@ export function InstancesPage() {
         </div>
       </div>
 
-      <div className="grid min-h-[calc(100vh-18rem)] grid-cols-1 content-start gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      {loading && instances.length === 0 ? (
+        <InstancesGridSkeleton tiles={Math.max(2, instances.length || 2)} />
+      ) : (
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {workspaceError && (
           <div className="col-span-full rounded-2xl border border-red-200 bg-red-50/70 p-5 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
             We could not load your instances. Please refresh or try again shortly.
           </div>
         )}
 
-        {!loading && !workspaceError && instances.length === 0 && (
-          <div className="col-span-full rounded-2xl border border-dashed border-border bg-muted/20 p-8 text-center">
-            <h2 className="text-lg font-semibold">Create your first instance</h2>
-            <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-              Use the plus card below to start pairing a WhatsApp number and routing messages to your webhook.
-            </p>
-          </div>
-        )}
-
         {instances.map((inst) => (
-          <Link
-            key={inst.id}
-            to={`/instances/${inst.id}`}
-            className="group text-left"
-          >
-            <div
-              className="relative aspect-square w-full overflow-hidden rounded-2xl border border-border/40 shadow-sm transition-all duration-300 ease-out will-change-transform group-hover:-translate-y-1 group-hover:shadow-xl group-hover:brightness-110"
-              style={{
-                background: instanceGradient(inst.id),
-              }}
+          <Link key={inst.id} to={`/instances/${inst.id}`} className="group block text-left">
+            <InstanceGridTile
+              footer={
+                <>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-base font-semibold">{inst.name}</div>
+                    <div className="truncate text-sm text-muted-foreground">{instancePhoneLabel(inst)}</div>
+                  </div>
+                  <span className={cn("mt-1 h-2.5 w-2.5 shrink-0 rounded-full", instanceStatusDotClass(inst.status))} />
+                </>
+              }
             >
-              <div className="absolute left-5 top-4 text-2xl font-semibold text-white/95 transition-transform duration-300 group-hover:translate-x-0.5">
-                {inst.name}
+              <div
+                className="absolute inset-0 overflow-hidden rounded-2xl border border-border/40 shadow-sm transition-all duration-300 ease-out will-change-transform group-hover:-translate-y-1 group-hover:shadow-xl group-hover:brightness-110"
+                style={{ background: instanceGradient(inst.id) }}
+              >
+                <div className="absolute left-5 top-4 text-2xl font-semibold text-white/95 transition-transform duration-300 group-hover:translate-x-0.5">
+                  {inst.name}
+                </div>
+                <div className="absolute bottom-4 left-5 right-5 flex items-center justify-between gap-2 text-white/90">
+                  <span className="rounded-full bg-black/20 px-3 py-1 text-xs backdrop-blur">{inst.region}</span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-black/20 px-3 py-1 text-xs backdrop-blur">
+                    {(inst.status === "provisioning" || inst.status === "connecting") && (
+                      <InlineProvisioningSpinner className="h-2.5 w-2.5" />
+                    )}
+                    {inst.status === "quality-warning" ? "⚠ " : ""}
+                    {instanceStatusLabel(inst.status)}
+                  </span>
+                </div>
               </div>
-              <div className="absolute bottom-4 left-5 right-5 flex items-center justify-between text-white/90">
-                <span className="rounded-full bg-black/20 px-3 py-1 text-xs backdrop-blur">
-                  {inst.region}
-                </span>
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-black/20 px-3 py-1 text-xs capitalize backdrop-blur">
-                  {(inst.status === "provisioning" || inst.status === "connecting") && <InlineProvisioningSpinner className="h-2.5 w-2.5" />}
-                  {inst.status === "quality-warning" ? "⚠ " : ""}
-                  {inst.status.replace("-", " ")}
-                </span>
-              </div>
-            </div>
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-base font-semibold">{inst.name}</div>
-                <div className="text-sm text-muted-foreground">{inst.phone}</div>
-              </div>
-              <span
-                className={cn(
-                  "h-2.5 w-2.5 rounded-full",
-                  inst.status === "active" && "bg-emerald-500",
-                  inst.status === "quality-warning" && "bg-amber-500",
-                  inst.status === "provisioning" && "bg-blue-500",
-                  inst.status === "connecting" && "bg-sky-500",
-                  inst.status === "offline" && "bg-zinc-400"
-                )}
-              />
-            </div>
+            </InstanceGridTile>
           </Link>
         ))}
 
         <button
           type="button"
-          onClick={() => {
-            if (!provisioningActive) setCreateOpen(true);
-          }}
+          onClick={handleCreateClick}
           disabled={provisioningActive}
-          className="group text-left disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label="Create instance"
+          className={cn(
+            "group block w-full text-left disabled:cursor-not-allowed disabled:opacity-60",
+            createCardShake && "animate-wasup-shake",
+          )}
         >
-          <div className="flex aspect-square w-full items-center justify-center rounded-2xl border border-dashed border-border bg-muted/30 transition-all duration-300 ease-out group-hover:-translate-y-1 group-hover:bg-muted/60 group-hover:border-foreground/30">
-            <PlusIcon
-              className="h-10 w-10 text-muted-foreground transition-transform duration-300 group-hover:scale-110 group-hover:rotate-90"
-              strokeWidth={1.5}
-            />
-          </div>
-          <div className="mt-3 text-base font-semibold">
-            {instances.length === 0 ? "Create your first instance" : "Add another instance"}
-          </div>
-          <div className="text-sm text-muted-foreground">
-            {provisioningActive ? "Available when provisioning finishes" : "\u00a0"}
-          </div>
+          <InstanceGridTile
+            footer={
+              <>
+                <div className="min-w-0 flex-1">
+                  <div className="text-base font-semibold text-foreground">Add instance</div>
+                  <div className="text-sm text-muted-foreground">Create a new number</div>
+                </div>
+                <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full border border-dashed border-muted-foreground/40" />
+              </>
+            }
+          >
+            <div className="absolute inset-0 flex items-center justify-center rounded-2xl border border-dashed border-border bg-muted/30 transition-all duration-300 ease-out group-hover:-translate-y-1 group-hover:border-foreground/30 group-hover:bg-muted/60">
+              <PlusIcon
+                className="h-10 w-10 text-muted-foreground transition-transform duration-300 group-hover:rotate-90 group-hover:scale-110"
+                strokeWidth={1.5}
+              />
+            </div>
+          </InstanceGridTile>
         </button>
       </div>
+      )}
 
       {createOpen &&
         createPortal(
@@ -130,7 +173,19 @@ export function InstancesPage() {
   );
 }
 
+function InstanceGridTile({ children, footer }: { children: ReactNode; footer: ReactNode }) {
+  return (
+    <div className="flex h-full flex-col gap-3">
+      <div className="relative w-full pt-[100%]">
+        <div className="absolute inset-0">{children}</div>
+      </div>
+      <div className="flex min-h-[3.25rem] items-start justify-between gap-3">{footer}</div>
+    </div>
+  );
+}
+
 function CreateInstanceModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const { user } = useUser();
   const navigate = useNavigate();
   const { provisioningActive } = useWorkspaceState();
   const [selectedRegion, setSelectedRegion] =
@@ -206,6 +261,7 @@ function CreateInstanceModal({ onClose, onCreated }: { onClose: () => void; onCr
       const returnBase = `${window.location.origin}/#/instances`;
       const result = await createBillingCheckout({
         instanceQuantity: 1,
+        contactEmail: user?.primaryEmailAddress?.emailAddress,
         successUrl: `${returnBase}?billing=success`,
         cancelUrl: `${returnBase}?billing=cancelled`,
       });
@@ -313,7 +369,7 @@ function CreateInstanceModal({ onClose, onCreated }: { onClose: () => void; onCr
                 disabled={checkoutLoading}
                 className="mt-3 inline-flex rounded-lg bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {checkoutLoading ? "Opening checkout..." : "Add a $39/month instance seat"}
+                {checkoutLoading ? "Opening checkout..." : wasupProSubscribeLabel()}
               </button>
             )}
           </div>
@@ -349,7 +405,7 @@ function entitlementLabel(state: {
   if (state.status === "error") return "Entitlement check unavailable";
   const entitlement = state.data?.entitlement;
   if (!entitlement?.allowed) return "Instance creation unavailable";
-  return entitlement.mode === "trial" ? "Free trial slot available" : "Paid slot available";
+  return "Wasup Pro slot available";
 }
 
 function entitlementDescription(state: {
@@ -362,18 +418,24 @@ function entitlementDescription(state: {
   const entitlement = state.data?.entitlement;
   if (!entitlement) return "Could not verify your workspace entitlement.";
   if (!entitlement.allowed) return blockedEntitlementMessage(entitlement.reason);
-  if (entitlement.mode === "trial") {
-    return `Your workspace can create ${entitlement.availableSlots} free trial ${entitlement.availableSlots === 1 ? "instance" : "instances"}.`;
-  }
-  return `Your workspace has ${entitlement.availableSlots} paid ${entitlement.availableSlots === 1 ? "slot" : "slots"} available.`;
+  return `Wasup Pro — ${entitlement.availableSlots} of ${entitlement.paidInstanceLimit || state.data?.plan.proInstanceLimit || 5} instance slots available.`;
 }
 
 function blockedEntitlementMessage(reason: string | null) {
-  if (reason === "trial_expired") return "Your free trial has expired. Upgrade to create another instance.";
-  if (reason === "trial_instance_limit_reached") return "Your free trial instance slot is already in use.";
-  if (reason === "instance_limit_reached") return "No paid instance slots are available.";
+  if (reason === "pro_subscription_required") {
+    return wasupProUpgradeDescription();
+  }
+  if (reason === "billing_locked") {
+    return "Billing is suspended. Update payment to reconnect instances and create new ones.";
+  }
+  if (reason === "billing_grace") {
+    return "Payment failed. Update billing during the 14-day grace period to keep creating instances.";
+  }
+  if (reason === "trial_expired") return "Your free trial has expired. Upgrade to Wasup Pro to create instances.";
+  if (reason === "trial_instance_limit_reached") return "Free accounts cannot create instances. Upgrade to Wasup Pro.";
+  if (reason === "instance_limit_reached") return "You reached the Pro limit of 5 instances.";
   if (reason?.startsWith("billing_status_")) return "Billing is not active for this workspace.";
-  return "This workspace is not entitled to create another instance.";
+  return "Upgrade to Wasup Pro to create instances.";
 }
 
 function shouldShowUpgrade(state: {

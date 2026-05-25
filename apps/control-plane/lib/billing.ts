@@ -1,12 +1,17 @@
 import type Stripe from 'stripe';
 import { getStripe } from './stripe';
 import { getSupabaseAdmin } from './supabase-admin';
+import { markBillingGraceStarted, restoreOrgAfterBillingPayment, lockOrgForBillingFailure } from './billing-lifecycle';
+import { readEntitlementMetadata } from './billing-metadata';
+import { getProInstanceLimit } from './plan-access';
 
 export type EntitlementReservation =
   | { allowed: true; paidInstanceLimit: number; activeInstanceCount: number; reservedInstanceCount: number }
   | { allowed: false; reason: string; paidInstanceLimit?: number; activeInstanceCount?: number; reservedInstanceCount?: number };
 
 const ACTIVE_BILLING_STATUSES = new Set(['active', 'trialing']);
+const GRACE_BILLING_STATUSES = new Set(['past_due', 'unpaid']);
+const LOCK_TRIGGER_STATUSES = new Set(['canceled', 'incomplete_expired']);
 
 export async function getOrgBillingSummary(orgId: string) {
   const supabase = getSupabaseAdmin() as any;
@@ -39,7 +44,7 @@ export async function releasePaidInstanceSlot(orgId: string) {
   await supabase.rpc('release_instance_entitlement', { p_org_id: orgId });
 }
 
-export async function ensureStripeCustomerForOrg(orgId: string) {
+export async function ensureStripeCustomerForOrg(orgId: string, contactEmail?: string | null) {
   const supabase = getSupabaseAdmin() as any;
   const { data: org, error } = await supabase
     .from('organizations')
@@ -51,13 +56,19 @@ export async function ensureStripeCustomerForOrg(orgId: string) {
     throw new Error(error?.message || `Organization ${orgId} not found`);
   }
 
+  const stripe = getStripe();
+  const normalizedEmail = contactEmail?.trim() || null;
+
   if (org.billing_customer_id) {
+    if (normalizedEmail) {
+      await stripe.customers.update(org.billing_customer_id, { email: normalizedEmail });
+    }
     return org.billing_customer_id as string;
   }
 
-  const stripe = getStripe();
   const customer = await stripe.customers.create({
     name: org.name,
+    email: normalizedEmail || undefined,
     metadata: {
       wasupOrgId: org.id,
       wasupOrgSlug: org.slug
@@ -88,12 +99,37 @@ export async function syncStripeSubscription(subscriptionId: string) {
   const customerId = getStripeCustomerId(subscription.customer);
   const supabase = getSupabaseAdmin() as any;
 
+  if (ACTIVE_BILLING_STATUSES.has(entitlement.status)) {
+    await restoreOrgAfterBillingPayment(orgId);
+  } else if (GRACE_BILLING_STATUSES.has(entitlement.status)) {
+    await markBillingGraceStarted(orgId);
+  } else if (LOCK_TRIGGER_STATUSES.has(entitlement.status)) {
+    const metadata = await readEntitlementMetadata(orgId);
+    if (!metadata.billing_locked_at) {
+      const { data: org } = await supabase
+        .from('organizations')
+        .select('id, slug, name, subdomain, status')
+        .eq('id', orgId)
+        .single();
+      if (org) await lockOrgForBillingFailure(org);
+    }
+  }
+
+  const entitlementMetadata = {
+    ...entitlement.metadata,
+    stripe_trial_end: subscription.trial_end ? toIso(subscription.trial_end) : null
+  };
+
   await supabase
     .from('organizations')
     .update({
       billing_customer_id: customerId,
       plan: entitlement.planKey,
-      status: ACTIVE_BILLING_STATUSES.has(entitlement.status) ? 'active' : 'billing_hold'
+      status: ACTIVE_BILLING_STATUSES.has(entitlement.status)
+        ? 'active'
+        : GRACE_BILLING_STATUSES.has(entitlement.status)
+          ? 'billing_grace'
+          : 'billing_hold'
     })
     .eq('id', orgId);
 
@@ -111,7 +147,7 @@ export async function syncStripeSubscription(subscriptionId: string) {
       current_period_start: toIso(subscriptionRecord.current_period_start),
       current_period_end: toIso(subscriptionRecord.current_period_end),
       cancel_at_period_end: !!subscription.cancel_at_period_end,
-      metadata: entitlement.metadata,
+      metadata: entitlementMetadata,
       updated_at: new Date().toISOString()
     }, { onConflict: 'org_id' });
 
@@ -217,6 +253,11 @@ function buildEntitlementFromSubscription(subscription: Stripe.Subscription) {
     if (entitlement === 'message_credits') {
       includedMessageCredits += quantity * numberMetadata(metadata.wasupMessageCredits || metadata.wasup_message_credits, 0);
     }
+  }
+
+  if (ACTIVE_BILLING_STATUSES.has(subscription.status)) {
+    paidInstanceLimit = getProInstanceLimit();
+    planKey = 'pro';
   }
 
   return {

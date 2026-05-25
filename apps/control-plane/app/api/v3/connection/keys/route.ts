@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { generateApiKey, maskApiKey } from '../../../../../lib/api-keys';
 import { isAuthError, requireWasupPrincipal } from '../../../../../lib/auth';
 import { recordAppNotification } from '../../../../../lib/notifications';
+import { getOrgPlanAccess } from '../../../../../lib/plan-access';
 import { getSupabaseAdmin } from '../../../../../lib/supabase-admin';
 
 const RotateKeySchema = z.object({
@@ -22,6 +23,14 @@ export async function POST(req: Request) {
   }
 
   const body = parsed.data;
+  const plan = await getOrgPlanAccess(principal.orgId);
+  if (!plan.canViewCredentials) {
+    return NextResponse.json(
+      { error: 'Upgrade to Wasup Pro to manage API keys and connection credentials.' },
+      { status: 402 }
+    );
+  }
+
   const supabase = getSupabaseAdmin() as any;
   const now = new Date().toISOString();
 

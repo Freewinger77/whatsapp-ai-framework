@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import {
+  applyInstanceConnectionStatus,
+  connectionEventToInstanceStatus,
+  isConnectionStatusEvent
+} from '../../../../lib/sync-instance-worker-status';
 import { getSupabaseAdmin } from '../../../../lib/supabase-admin';
 
 const InternalEventSchema = z.discriminatedUnion('kind', [
@@ -52,6 +57,29 @@ export async function POST(req: Request) {
     });
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    if (event.instanceId && isConnectionStatusEvent(event.eventType)) {
+      const nextStatus = connectionEventToInstanceStatus(event.eventType, event.payload);
+      if (nextStatus) {
+        const { data: instance } = await supabase
+          .from('instances')
+          .select('id, metadata')
+          .eq('org_id', event.orgId)
+          .eq('id', event.instanceId)
+          .is('deleted_at', null)
+          .maybeSingle();
+
+        if (instance) {
+          const payloadPhone = typeof event.payload.phone === 'string' ? event.payload.phone : null;
+          await applyInstanceConnectionStatus(supabase, event.orgId, event.instanceId, nextStatus, {
+            phone: nextStatus === 'connected' ? payloadPhone : null,
+            existingMetadata: instance.metadata,
+            syncKey: 'lastConnectionEvent'
+          });
+        }
+      }
+    }
+
     return NextResponse.json({ success: true, eventId: data }, { status: 202 });
   }
 

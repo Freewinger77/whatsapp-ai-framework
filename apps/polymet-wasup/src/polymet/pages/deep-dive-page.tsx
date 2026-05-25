@@ -7,6 +7,7 @@ import {
   type LiveFeedItem,
 } from "@/polymet/data/dashboard-data";
 import { getDeepDive, listInstances } from "@/polymet/lib/control-plane-api";
+import { DeepDivePageSkeleton } from "@/polymet/components/page-skeletons";
 import { cn } from "@/lib/utils";
 
 type Mode = "conversations" | "logs";
@@ -24,6 +25,7 @@ export function DeepDivePage() {
   const [instances, setInstances] = useState<Instance[]>([]);
   const [liveConversations, setLiveConversations] = useState<LiveFeedItem[]>([]);
   const [liveLogs, setLiveLogs] = useState<ActivityLogItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState("");
 
   useEffect(() => {
@@ -33,6 +35,9 @@ export function DeepDivePage() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+
     const timer = window.setTimeout(() => {
       getDeepDive({
         type: mode === "conversations" ? "messages" : "logs",
@@ -42,6 +47,7 @@ export function DeepDivePage() {
         to,
       })
         .then((result) => {
+          if (cancelled) return;
           setLiveConversations(
             result.messages.map((message) => ({
               direction: message.direction === "outbound" ? "Sent" : "Received",
@@ -64,13 +70,20 @@ export function DeepDivePage() {
           setApiError("");
         })
         .catch((error) => {
+          if (cancelled) return;
           setLiveConversations([]);
           setLiveLogs([]);
           setApiError(error instanceof Error ? error.message : "Could not load activity");
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
         });
     }, 250);
 
-    return () => window.clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [from, instanceId, mode, query, to]);
 
   const inRange = (timestamp: string) => (!from || timestamp >= from) && (!to || timestamp <= to);
@@ -244,7 +257,9 @@ export function DeepDivePage() {
         </div>
       )}
 
-      {mode === "conversations" ? (
+      {loading && liveConversations.length === 0 && liveLogs.length === 0 ? (
+        <DeepDivePageSkeleton />
+      ) : mode === "conversations" ? (
         <section className="rounded-xl border border-border/60 bg-card p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between gap-3">
             <h2 className="text-base font-semibold">Conversations</h2>

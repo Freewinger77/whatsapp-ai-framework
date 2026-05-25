@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
-import { reconcileAzureVmDeployment } from '../../../../../lib/azure-vm-provisioner';
+import { reconcileAzureVmDeployment, standardizeWorkerRuntime } from '../../../../../lib/azure-vm-provisioner';
+import { getServerEnv } from '../../../../../lib/env';
 import { recordDeploymentStatusNotification } from '../../../../../lib/notifications';
 import { markDeploymentPublicIp, reconcileQueuedWorkerInstances } from '../../../../../lib/org-deployments';
 import { getSupabaseAdmin } from '../../../../../lib/supabase-admin';
 import { checkWorkerHealth } from '../../../../../lib/worker-client';
+import { checkWorkerSurfaceMarkers } from '../../../../../lib/worker-surface';
 
 export async function POST(req: Request) {
   const requiredSecret = process.env.WASUP_WORKER_SHARED_SECRET;
@@ -59,7 +61,18 @@ export async function POST(req: Request) {
         }
 
         const workerReconcile = await reconcileQueuedWorkerInstances(deployment.org_id, deployment);
-        results.push({ id: deployment.id, ready: true, health, workerReconcile });
+        const surface = await checkWorkerSurfaceMarkers(deployment.base_url);
+        let standardized = null;
+        if (!surface.ok && deployment.azure_resource_group && deployment.vm_name) {
+          const env = getServerEnv();
+          standardized = await standardizeWorkerRuntime({
+            resourceGroup: deployment.azure_resource_group,
+            vmName: deployment.vm_name,
+            workerGitRepo: env.WASUP_WORKER_GIT_REPO,
+            workerGitRef: env.WASUP_WORKER_GIT_REF
+          });
+        }
+        results.push({ id: deployment.id, ready: true, health, workerReconcile, surface, standardized });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         results.push({ id: deployment.id, ready: true, workerReconcileError: message });

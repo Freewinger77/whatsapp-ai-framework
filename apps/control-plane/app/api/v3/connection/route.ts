@@ -2,13 +2,19 @@ import { NextResponse } from 'next/server';
 import { maskApiKey } from '../../../../lib/api-keys';
 import { isAuthError, requireWasupPrincipal } from '../../../../lib/auth';
 import { ensureOrgDeployment } from '../../../../lib/org-deployments';
+import { getOrgPlanAccess } from '../../../../lib/plan-access';
 import { getSupabaseAdmin } from '../../../../lib/supabase-admin';
 
 export async function GET(req: Request) {
   const principal = await requireWasupPrincipal(req);
   if (isAuthError(principal)) return principal;
 
-  const deployment = await ensureOrgDeployment(principal.orgId);
+  const [deployment, plan] = await Promise.all([
+    ensureOrgDeployment(principal.orgId),
+    getOrgPlanAccess(principal.orgId)
+  ]);
+
+  const credentialsLocked = !plan.canViewCredentials;
   const { data: keys, error } = await (getSupabaseAdmin() as any)
     .from('api_keys')
     .select('id, name, public_id, key_kind, scopes, created_at, last_used_at, expires_at, revoked_at')
@@ -22,11 +28,26 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     success: true,
+    plan: {
+      tier: plan.tier,
+      isPro: plan.isPro,
+      canCreateInstances: plan.canCreateInstances,
+      canViewCredentials: plan.canViewCredentials,
+      proInstanceLimit: plan.proInstanceLimit,
+      billingStatus: plan.billingStatus,
+      billingGraceEndsAt: plan.billingGraceEndsAt,
+      billingLockedAt: plan.billingLockedAt,
+      currentPeriodEnd: plan.currentPeriodEnd,
+      cancelAtPeriodEnd: plan.cancelAtPeriodEnd
+    },
+    credentialsLocked,
     organization: {
       id: deployment.organization.id,
       slug: deployment.organization.slug,
       name: deployment.organization.name,
-      baseUrl: deployment.organization.api_base_url || deployment.deployment.base_url
+      baseUrl: credentialsLocked
+        ? null
+        : deployment.organization.api_base_url || deployment.deployment.base_url
     },
     deployment: {
       id: deployment.deployment.id,
@@ -39,11 +60,15 @@ export async function GET(req: Request) {
       dns_ready_at: deployment.deployment.dns_ready_at,
       progress: buildDeploymentProgress(deployment.deployment)
     },
-    apiKeys: (keys ?? []).map((key: any) => ({
-      ...key,
-      masked: maskApiKey(key.public_id)
-    })),
-    oneTimeApiKeys: deployment.apiKeysCreated.map((key) => ({
+    apiKeys: credentialsLocked
+      ? []
+      : (keys ?? []).map((key: any) => ({
+          ...key,
+          masked: maskApiKey(key.public_id)
+        })),
+    oneTimeApiKeys: credentialsLocked
+      ? []
+      : deployment.apiKeysCreated.map((key) => ({
       id: key.id,
       public_id: key.publicId,
       key_kind: key.keyKind,

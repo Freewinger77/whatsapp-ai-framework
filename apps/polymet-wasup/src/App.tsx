@@ -1,9 +1,9 @@
 import {
-  SignedIn,
-  SignedOut,
   useAuth,
+  useClerk,
   useOrganization,
   useOrganizationList,
+  useSession,
   useUser,
 } from "@clerk/clerk-react";
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useState } from "react";
@@ -31,17 +31,45 @@ type InvitationContext = {
 
 const PENDING_INVITATION_ORG_KEY = "wasup.pendingInvitationOrgId";
 
+const LOGIN_EYEBROW_CLASS = "wasup-eyebrow text-[#00e676]/70";
+const LOGIN_HEADLINE_CLASS = "wasup-display-headline mt-3 text-[2rem] text-white sm:text-[2.65rem]";
+const LOGIN_BODY_CLASS = "mt-3 font-sans text-sm leading-6 text-white/50";
+const LOGIN_SHELL_CLASS =
+  "relative grid w-full max-w-6xl overflow-hidden rounded-[1.35rem] bg-[#070908]/92 shadow-[0_34px_110px_rgba(0,0,0,0.72)] backdrop-blur-xl md:grid-cols-[0.88fr_1.12fr] lg:rounded-[2rem]";
+const LOGIN_FORM_COLUMN_CLASS =
+  "flex min-h-[auto] items-center justify-center px-4 py-7 sm:px-8 sm:py-9 md:min-h-[560px] lg:px-12";
+const LOGIN_VISUAL_COLUMN_CLASS = "relative min-h-[360px] overflow-hidden md:min-h-[560px]";
+
 export default function WasupPrototypeRender() {
-  return (
-    <>
-      <SignedOut>
-        <SignedOutDashboard />
-      </SignedOut>
-      <SignedIn>
-        <SignedInDashboard />
-      </SignedIn>
-    </>
-  );
+  return <AuthGateway />;
+}
+
+function AuthGateway() {
+  const { isLoaded, isSignedIn, userId } = useAuth();
+  const { session, isLoaded: sessionLoaded } = useSession();
+  const clerk = useClerk();
+  const { isLoaded: orgLoaded } = useOrganization();
+
+  const authenticated =
+    isSignedIn || Boolean(userId) || Boolean(session?.id) || Boolean(clerk.session?.id);
+  const authReady = isLoaded && sessionLoaded;
+
+  if (!authReady) {
+    return <AuthLoadingScreen message="Loading secure dashboard..." />;
+  }
+
+  if (authenticated) {
+    if (!orgLoaded) {
+      return <AuthLoadingScreen message="Loading your workspace..." />;
+    }
+    return <SignedInDashboard />;
+  }
+
+  if (getHashRouteFromWindow() === "/sso-callback") {
+    return <WasupSsoCallback />;
+  }
+
+  return <SignedOutDashboard />;
 }
 
 function SignedInDashboard() {
@@ -56,14 +84,15 @@ function SignedInDashboard() {
     return () => setControlPlaneAuthTokenGetter(null);
   }, [getToken, isLoaded]);
 
+  useLayoutEffect(() => {
+    if (!isLoaded || !orgLoaded) return;
+    if (isClerkChooseOrganizationTask()) {
+      window.history.replaceState(null, "", buildDashboardUrl("/connection"));
+    }
+  }, [isLoaded, orgLoaded]);
+
   if (!isLoaded || !orgLoaded) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-        <div className="rounded-2xl border border-border bg-card px-6 py-4 text-sm text-muted-foreground shadow-lg">
-          Loading secure dashboard...
-        </div>
-      </div>
-    );
+    return <AuthLoadingScreen message="Loading secure dashboard..." />;
   }
 
   if (invitationContext?.isInvitationRoute || pendingInvitationOrgId) {
@@ -82,6 +111,10 @@ function SignedInDashboard() {
 }
 
 function SignedOutDashboard() {
+  const { isLoaded, isSignedIn, userId } = useAuth();
+  const { session, isLoaded: sessionLoaded } = useSession();
+  const clerk = useClerk();
+  const onChooseOrgTask = isClerkChooseOrganizationTask();
   const [authMode, setAuthMode] = useState<InvitationAuthMode>(() => getInitialAuthMode());
   const [normalizingInvitationRoute, setNormalizingInvitationRoute] = useState(() =>
     needsInvitationUrlNormalization(),
@@ -106,7 +139,7 @@ function SignedOutDashboard() {
   useLayoutEffect(() => {
     if (!normalizingTaskRoute) return;
     normalizeSignedOutAuthUrl();
-    setAuthMode("sign-up");
+    setAuthMode(getInitialAuthMode());
     setNormalizingTaskRoute(false);
   }, [normalizingTaskRoute]);
 
@@ -133,11 +166,33 @@ function SignedOutDashboard() {
     rememberPendingInvitation(invitationContext);
   }, [invitationContext?.organizationId, invitationContext?.ticket]);
 
-  if (normalizingInvitationRoute || normalizingTaskRoute) {
+  useEffect(() => {
+    if (!isLoaded || !sessionLoaded) return;
+
+    const sessionId = session?.id || clerk.session?.id;
+    const alreadyAuthed = isSignedIn || Boolean(userId) || Boolean(sessionId);
+    if (!alreadyAuthed || !sessionId) return;
+
+    void clerk
+      .setActive({ session: sessionId, redirectUrl: redirectAfterAuthUrl })
+      .catch(() => {
+        window.location.replace(redirectAfterAuthUrl);
+      });
+  }, [
+    clerk,
+    isLoaded,
+    isSignedIn,
+    redirectAfterAuthUrl,
+    session?.id,
+    sessionLoaded,
+    userId,
+  ]);
+
+  if (!isLoaded || !sessionLoaded || normalizingInvitationRoute || normalizingTaskRoute) {
     return (
       <main className="flex min-h-svh items-center justify-center bg-black text-white">
         <div className="rounded-2xl border border-white/10 bg-white/[0.035] px-6 py-4 text-sm text-white/55">
-          Loading Wasup sign-up...
+          {onChooseOrgTask ? "Loading workspace setup..." : "Loading Wasup sign-in..."}
         </div>
       </main>
     );
@@ -146,6 +201,9 @@ function SignedOutDashboard() {
   if (getHashRouteFromWindow() === "/sso-callback") {
     return <WasupSsoCallback />;
   }
+
+  const effectiveAuthMode: InvitationAuthMode = onChooseOrgTask ? "sign-in" : authMode;
+  const showOrgTaskSignIn = onChooseOrgTask && effectiveAuthMode === "sign-in";
 
   return (
     <main
@@ -156,43 +214,51 @@ function SignedOutDashboard() {
       <div className="absolute bottom-[-15rem] right-[-12rem] h-[34rem] w-[34rem] rounded-full bg-[#00d5ff]/10 blur-[130px]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(0,255,106,0.10),transparent_36%),linear-gradient(180deg,#070a08_0%,#000_62%)]" />
 
-      <section className="relative grid w-full max-w-6xl rounded-[1.35rem] border border-white/10 bg-[#070908]/92 p-2 shadow-[0_34px_110px_rgba(0,0,0,0.72)] ring-1 ring-[#00ff6a]/10 backdrop-blur-xl md:grid-cols-[0.86fr_1.14fr] lg:rounded-[2rem]">
-        <div className="flex min-h-[auto] items-center justify-center px-4 py-7 sm:px-8 sm:py-9 md:min-h-[560px] lg:px-12">
+      <section className={LOGIN_SHELL_CLASS}>
+        <div className={LOGIN_FORM_COLUMN_CLASS}>
           <div className="w-full max-w-[360px] sm:max-w-[380px]">
             <div className="mb-5 sm:mb-6">
-              <p className="text-xs font-medium uppercase tracking-[0.28em] text-[#00e676]/70">
+              <p className={LOGIN_EYEBROW_CLASS}>
                 dev.wasup.co
               </p>
-              <h1 className="mt-3 text-[2rem] font-semibold leading-[1.05] tracking-[-0.045em] text-white sm:text-[2.65rem]">
+              <h1 className={LOGIN_HEADLINE_CLASS}>
                 {isInvitationFlow
                   ? "Accept your Wasup invite"
-                  : authMode === "sign-up"
-                    ? "Create your workspace"
-                    : "Welcome back"}
+                  : showOrgTaskSignIn
+                    ? "Sign in to set up your workspace"
+                    : effectiveAuthMode === "sign-up"
+                      ? "Create your workspace"
+                      : "Welcome back"}
               </h1>
-              <p className="mt-3 max-w-xs text-sm leading-6 text-white/50">
+              <p className={`${LOGIN_BODY_CLASS} max-w-xs`}>
                 {isInvitationFlow
                   ? "Use the email address that received the invite, then we will open the right workspace."
-                  : authMode === "sign-up"
-                    ? "Start managing WhatsApp AI support from a premium customer dashboard."
-                    : "Sign in to manage your AI customer workspace."}
+                  : showOrgTaskSignIn
+                    ? "You are one step away. Sign in, then name the workspace that will own your WhatsApp AI instances."
+                    : effectiveAuthMode === "sign-up"
+                      ? "Start managing WhatsApp AI support from a premium customer dashboard."
+                      : "Sign in to manage your AI customer workspace."}
               </p>
             </div>
 
-            <div className="wasup-login-clerk flex w-full flex-col gap-4" key={authMode}>
-              <WasupAuthForm mode={authMode} redirectUrl={redirectAfterAuthUrl} />
+            <div className="wasup-login-clerk flex w-full flex-col gap-4" key={effectiveAuthMode}>
+              <WasupAuthForm mode={effectiveAuthMode} redirectUrl={redirectAfterAuthUrl} />
               {isInvitationFlow ? (
                 <div className="mt-5 rounded-xl border border-[#00ff6a]/15 bg-[#00ff6a]/[0.045] px-4 py-3 text-center text-sm text-white/55">
                   This invite stays inside Wasup. Clerk will return you to the dashboard after auth.
                 </div>
+              ) : showOrgTaskSignIn ? (
+                <div className="mt-5 rounded-xl border border-[#00ff6a]/15 bg-[#00ff6a]/[0.045] px-4 py-3 text-center text-sm text-white/55">
+                  After sign-in you&apos;ll create your Wasup organization here — not on a separate Clerk page.
+                </div>
               ) : (
                 <div className="mt-5 rounded-xl border border-white/10 bg-white/[0.035] px-4 py-3 text-center text-sm text-white/55">
-                  {authMode === "sign-up" ? "Already have an account?" : "New to Wasup?"}{" "}
+                  {effectiveAuthMode === "sign-up" ? "Already have an account?" : "New to Wasup?"}{" "}
                   <a
-                    href={authMode === "sign-up" ? "#/sign-in" : "#/sign-up"}
+                    href={effectiveAuthMode === "sign-up" ? "#/sign-in" : "#/sign-up"}
                     className="font-semibold text-[#00e676] transition hover:text-[#7cffaa]"
                   >
-                    {authMode === "sign-up" ? "Sign in" : "Sign up"}
+                    {effectiveAuthMode === "sign-up" ? "Sign in" : "Sign up"}
                   </a>
                 </div>
               )}
@@ -200,7 +266,7 @@ function SignedOutDashboard() {
           </div>
         </div>
 
-        <div className="min-h-[360px] bg-black/20 md:min-h-[560px]">
+        <div className={LOGIN_VISUAL_COLUMN_CLASS}>
           <PhoneAiVisual />
         </div>
       </section>
@@ -276,16 +342,16 @@ function ThemedInvitationSetup({
       <div className="absolute bottom-[-15rem] right-[-12rem] h-[34rem] w-[34rem] rounded-full bg-[#00d5ff]/10 blur-[130px]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(0,255,106,0.10),transparent_36%),linear-gradient(180deg,#070a08_0%,#000_62%)]" />
 
-      <section className="relative grid w-full max-w-6xl rounded-[1.35rem] border border-white/10 bg-[#070908]/92 p-2 shadow-[0_34px_110px_rgba(0,0,0,0.72)] ring-1 ring-[#00ff6a]/10 backdrop-blur-xl md:grid-cols-[0.86fr_1.14fr] lg:rounded-[2rem]">
-        <div className="flex min-h-[auto] items-center justify-center px-4 py-7 sm:px-8 sm:py-9 md:min-h-[560px] lg:px-12">
+      <section className={LOGIN_SHELL_CLASS}>
+        <div className={LOGIN_FORM_COLUMN_CLASS}>
           <div className="w-full max-w-[390px]">
-            <p className="text-xs font-medium uppercase tracking-[0.28em] text-[#00e676]/70">
+            <p className={LOGIN_EYEBROW_CLASS}>
               dev.wasup.co
             </p>
-            <h1 className="mt-3 text-[2rem] font-semibold leading-[1.05] tracking-[-0.045em] text-white sm:text-[2.65rem]">
+            <h1 className={LOGIN_HEADLINE_CLASS}>
               Opening your workspace
             </h1>
-            <p className="mt-3 max-w-sm text-sm leading-6 text-white/50">
+            <p className={`${LOGIN_BODY_CLASS} max-w-sm`}>
               Your invitation was accepted. We are switching you into the right Wasup workspace.
             </p>
 
@@ -304,7 +370,7 @@ function ThemedInvitationSetup({
           </div>
         </div>
 
-        <div className="min-h-[360px] bg-black/20 md:min-h-[560px]">
+        <div className={LOGIN_VISUAL_COLUMN_CLASS}>
           <PhoneAiVisual />
         </div>
       </section>
@@ -339,7 +405,18 @@ function ThemedOrganizationSetup() {
   }, [defaultName]);
 
   const memberships = userMemberships.data ?? [];
-  const canSubmit = isLoaded && !!createOrganization && !!setActive && workspaceName.trim().length > 1;
+  const hasExistingWorkspace = memberships.length > 0;
+  const canSubmit =
+    isLoaded &&
+    !!createOrganization &&
+    !!setActive &&
+    workspaceName.trim().length > 1 &&
+    !hasExistingWorkspace;
+
+  useEffect(() => {
+    if (!isLoaded || submitting || memberships.length !== 1) return;
+    void submitExisting(memberships[0].organization.id);
+  }, [isLoaded, memberships, submitting]);
 
   const finishSetup = async (organizationId: string) => {
     if (!setActive) return;
@@ -358,7 +435,6 @@ function ThemedOrganizationSetup() {
     try {
       const organization = await createOrganization({
         name: workspaceName.trim(),
-        slug: buildClerkOrgSlug(workspaceName),
       });
       await finishSetup(organization.id);
     } catch (error) {
@@ -390,26 +466,32 @@ function ThemedOrganizationSetup() {
       <div className="absolute bottom-[-15rem] right-[-12rem] h-[34rem] w-[34rem] rounded-full bg-[#00d5ff]/10 blur-[130px]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(0,255,106,0.10),transparent_36%),linear-gradient(180deg,#070a08_0%,#000_62%)]" />
 
-      <section className="relative grid w-full max-w-6xl rounded-[1.35rem] border border-white/10 bg-[#070908]/92 p-2 shadow-[0_34px_110px_rgba(0,0,0,0.72)] ring-1 ring-[#00ff6a]/10 backdrop-blur-xl md:grid-cols-[0.86fr_1.14fr] lg:rounded-[2rem]">
-        <div className="flex min-h-[auto] items-center justify-center px-4 py-7 sm:px-8 sm:py-9 md:min-h-[560px] lg:px-12">
+      <section className={LOGIN_SHELL_CLASS}>
+        <div className={LOGIN_FORM_COLUMN_CLASS}>
           <div className="w-full max-w-[390px]">
             <div className="mb-5 sm:mb-6">
-              <p className="text-xs font-medium uppercase tracking-[0.28em] text-[#00e676]/70">
+              <p className={LOGIN_EYEBROW_CLASS}>
                 dev.wasup.co
               </p>
-              <h1 className="mt-3 text-[2rem] font-semibold leading-[1.05] tracking-[-0.045em] text-white sm:text-[2.65rem]">
+              <h1 className={LOGIN_HEADLINE_CLASS}>
                 Set up your workspace
               </h1>
-              <p className="mt-3 max-w-sm text-sm leading-6 text-white/50">
+              <p className={`${LOGIN_BODY_CLASS} max-w-sm`}>
                 Create the customer workspace that owns your WhatsApp AI instances.
               </p>
             </div>
 
             <form onSubmit={submitCreate} className="space-y-4 rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+              {hasExistingWorkspace ? (
+                <div className="rounded-xl border border-[#00e676]/20 bg-[#00e676]/10 px-3 py-3 text-sm text-white/75">
+                  You already have a Wasup workspace on this account. Open it below — each account gets one workspace.
+                </div>
+              ) : (
+              <>
               <div>
                 <label
                   htmlFor="workspace-name"
-                  className="text-xs font-medium uppercase tracking-[0.16em] text-white/45"
+                  className="wasup-eyebrow text-white/45"
                 >
                   Workspace name
                 </label>
@@ -442,6 +524,8 @@ function ThemedOrganizationSetup() {
                 We will create your Clerk organization, link it to the Wasup control plane,
                 and start workspace provisioning.
               </p>
+              </>
+              )}
             </form>
 
             {memberships.length > 0 && (
@@ -473,7 +557,7 @@ function ThemedOrganizationSetup() {
           </div>
         </div>
 
-        <div className="min-h-[360px] bg-black/20 md:min-h-[560px]">
+        <div className={LOGIN_VISUAL_COLUMN_CLASS}>
           <PhoneAiVisual />
         </div>
       </section>
@@ -483,17 +567,16 @@ function ThemedOrganizationSetup() {
 
 function PhoneAiVisual() {
   return (
-    <div className="relative flex h-full min-h-[360px] items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_50%_48%,rgba(0,255,106,0.16),transparent_38%),radial-gradient(circle_at_80%_20%,rgba(0,213,255,0.08),transparent_30%),linear-gradient(90deg,rgba(7,9,8,0.12),#000_18%,#000_100%)] p-5 md:min-h-[560px] md:p-8 lg:p-10">
-      <div className="pointer-events-none absolute inset-y-0 left-0 w-28 bg-gradient-to-r from-[#070908] to-transparent" />
-      <div className="pointer-events-none absolute inset-x-8 bottom-6 h-24 rounded-full bg-[#00ff6a]/10 blur-3xl" />
+    <div className="relative flex h-full min-h-[360px] items-center justify-center overflow-hidden px-2 py-6 md:min-h-[560px] md:px-4 md:py-8">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_58%_42%,rgba(0,255,106,0.14),transparent_52%),radial-gradient(circle_at_82%_18%,rgba(0,213,255,0.08),transparent_40%)]" />
+      <div className="pointer-events-none absolute inset-x-6 bottom-4 h-28 rounded-full bg-[#00ff6a]/10 blur-3xl" />
       <img
         src="/wasup-login-phone.png"
-        alt="Phone displaying a WhatsApp AI assistant interface"
-        width={1024}
-        height={537}
-        className="relative z-10 h-auto max-h-[320px] w-full max-w-[560px] object-contain drop-shadow-[0_28px_70px_rgba(0,0,0,0.58)] md:max-h-[500px]"
+        alt="Wasup Dev — phone with code interface"
+        width={690}
+        height={362}
+        className="relative z-10 h-auto w-[min(860px,108%)] max-w-none origin-center scale-[1.3] object-contain drop-shadow-[0_28px_70px_rgba(0,0,0,0.45)]"
       />
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.08)_0%,transparent_28%,rgba(0,0,0,0.12)_100%)]" />
     </div>
   );
 }
@@ -508,7 +591,20 @@ function getInitialAuthMode(): InvitationAuthMode {
   const invitationContext = getInvitationContextFromUrl();
   if (invitationContext?.status === "sign_up") return "sign-up";
   if (invitationContext?.status === "sign_in") return "sign-in";
-  return window.location.hash.startsWith("#/sign-up") ? "sign-up" : "sign-in";
+  if (isClerkChooseOrganizationTask()) return "sign-in";
+  const hashRoute = getHashRouteFromWindow();
+  if (hashRoute === "/sign-up/tasks/choose-organization") return "sign-in";
+  return hashRoute === "/sign-up" ? "sign-up" : "sign-in";
+}
+
+function AuthLoadingScreen({ message }: { message: string }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
+      <div className="rounded-2xl border border-border bg-card px-6 py-4 text-sm text-muted-foreground shadow-lg">
+        {message}
+      </div>
+    </div>
+  );
 }
 
 function isClerkChooseOrganizationTask() {
@@ -597,15 +693,6 @@ function getPendingInvitationOrgId() {
 
 function clearPendingInvitation() {
   window.sessionStorage.removeItem(PENDING_INVITATION_ORG_KEY);
-}
-
-function buildClerkOrgSlug(name: string) {
-  const base = name
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 42);
-  return `${base || "wasup-workspace"}-${Date.now().toString(36).slice(-6)}`;
 }
 
 function titleCase(value: string) {

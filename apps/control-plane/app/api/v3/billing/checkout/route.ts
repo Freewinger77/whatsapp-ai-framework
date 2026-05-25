@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { ensureStripeCustomerForOrg } from '../../../../../lib/billing';
-import { isAuthError, requireWasupPrincipal } from '../../../../../lib/auth';
+import { getAuthenticatedClerkEmail, isAuthError, requireWasupPrincipal } from '../../../../../lib/auth';
+import { getStripeTrialDays } from '../../../../../lib/billing-pricing';
 import { getStripe, getWasupAppUrl } from '../../../../../lib/stripe';
 
 const CheckoutSchema = z.object({
@@ -9,7 +10,8 @@ const CheckoutSchema = z.object({
   instanceQuantity: z.number().int().min(1).max(500).default(1),
   messageCreditQuantity: z.number().int().min(0).max(1000).default(0),
   successUrl: z.string().url().optional(),
-  cancelUrl: z.string().url().optional()
+  cancelUrl: z.string().url().optional(),
+  contactEmail: z.string().email().optional()
 });
 
 export async function POST(req: Request) {
@@ -34,7 +36,27 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'STRIPE_INSTANCE_PRICE_ID is not configured' }, { status: 500 });
   }
 
-  const customer = await ensureStripeCustomerForOrg(orgId);
+  let contactEmail: string | null = null;
+  if (principal.source === 'clerk') {
+    contactEmail = await getAuthenticatedClerkEmail(principal.actorId);
+  }
+  if (!contactEmail && body.contactEmail) {
+    contactEmail = body.contactEmail.trim();
+  }
+  if (principal.source === 'clerk' && !contactEmail) {
+    return NextResponse.json(
+      { error: 'Could not resolve your account email for checkout. Add an email to your Wasup account and try again.' },
+      { status: 400 }
+    );
+  }
+
+  const customer = await ensureStripeCustomerForOrg(orgId, contactEmail);
+  const stripe = getStripe();
+  const stripeCustomer = await stripe.customers.retrieve(customer);
+  if (contactEmail && !stripeCustomer.deleted && stripeCustomer.email !== contactEmail) {
+    await stripe.customers.update(customer, { email: contactEmail });
+  }
+
   const lineItems = [
     {
       price: instancePrice,
@@ -52,22 +74,27 @@ export async function POST(req: Request) {
   const session = await getStripe().checkout.sessions.create({
     mode: 'subscription',
     customer,
+    customer_update: {
+      address: 'auto',
+      name: 'auto'
+    },
     line_items: lineItems,
     success_url: body.successUrl || `${appUrl}/dashboard?billing=success`,
     cancel_url: body.cancelUrl || `${appUrl}/dashboard?billing=cancelled`,
     allow_promotion_codes: true,
     client_reference_id: orgId,
     subscription_data: {
+      trial_period_days: getStripeTrialDays(),
       metadata: {
         wasupOrgId: orgId,
         wasupCreatedBy: principal.actorId,
-        wasupPlanKey: 'instance-seat'
+        wasupPlanKey: 'pro'
       }
     },
     metadata: {
       wasupOrgId: orgId,
       wasupKind: 'subscription_checkout',
-      wasupPlanKey: 'instance-seat'
+      wasupPlanKey: 'pro'
     }
   });
 

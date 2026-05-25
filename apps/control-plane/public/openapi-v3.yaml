@@ -1,0 +1,429 @@
+openapi: 3.0.3
+info:
+  title: Wasup Control Plane API (v3)
+  description: |-
+    Wasup **Control Plane API** (v3) powers the dashboard at dev.wasup.co. It manages organizations, billing, provisioning, and proxies — while actual WhatsApp send/receive happens on your org worker URL.
+
+    ## Authentication
+    Sign in with **Clerk** in the browser, or send a **Wasup API key** (`sk-prod_...` / `sk-dev_...`) from the Connection page:
+    - `Authorization: Bearer sk-prod_...`
+    - or `X-API-Key: sk-prod_...`
+
+    ## Base URL
+    `https://control-plane.wasup.co` (production). Paths below are prefixed with `/api/v3`.
+
+    ## Relationship to worker API
+    - Control plane: create orgs, pay, provision instances, read activity feeds.
+    - Org worker (`https://{org}.wasup.co`): connect QR, send messages, webhooks. See worker `/docs` on your org URL.
+  version: 3.0.0
+servers:
+  - url: https://control-plane.wasup.co
+    description: Production control plane
+tags:
+  - name: Identity
+    description: Verify authentication and list workspace membership.
+  - name: Connection
+    description: Worker URL, deployment status, and API keys for your org.
+  - name: Organizations
+    description: Create and manage Wasup workspaces (one per user).
+  - name: Instances
+    description: Provision and configure WhatsApp instances on your org worker.
+  - name: Activity
+    description: Search messages and logs shown in the dashboard.
+  - name: Billing
+    description: Stripe checkout, entitlements, and customer portal.
+  - name: Proxy
+    description: Regional proxy pool availability and admin import.
+  - name: Notifications
+    description: In-app alerts for provisioning and billing events.
+  - name: System
+    description: Health checks and destructive workspace reset.
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+paths:
+  /api/v3/me:
+    get:
+      tags:
+        - Identity
+      summary: Who am I?** Returns the authenticated principal — Clerk user id, organization id, auth source (`clerk` or `api_key`), an
+      description: "**Who am I?** Returns the authenticated principal — Clerk user id, organization id, auth source (`clerk` or `api_key`), and assigned scopes. Call this first to verify your API key or session works before provisioning or listing instances."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/connection:
+    get:
+      tags:
+        - Connection
+      summary: Workspace connection summary for the signed-in org.** Returns organization slug, worker base URL, deployment status (pro
+      description: "**Workspace connection summary for the signed-in org.** Returns organization slug, worker base URL, deployment status (provisioning vs ready), DNS progress, and API keys available on the Connection page."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/connection/keys:
+    get:
+      tags:
+        - Connection
+      summary: List API keys** for the org (masked). Use to rotate keys or confirm which `sk-prod` key is active.
+      description: "**List API keys** for the org (masked). Use to rotate keys or confirm which `sk-prod` key is active."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/orgs:
+    get:
+      tags:
+        - Organizations
+      summary: List organizations** the current user belongs to. Each org maps to one Wasup workspace and one worker VM.
+      description: "**List organizations** the current user belongs to. Each org maps to one Wasup workspace and one worker VM."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+    post:
+      tags:
+        - Organizations
+      summary: Create a new workspace.** Requires Clerk auth. Returns 409 if the user already owns a workspace (one workspace per user)
+      description: "**Create a new workspace.** Requires Clerk auth. Returns 409 if the user already owns a workspace (one workspace per user). Triggers Azure VM provisioning in the background."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/orgs/{id}:
+    get:
+      tags:
+        - Organizations
+      summary: Fetch one organization** including slug, name, and billing linkage.
+      description: "**Fetch one organization** including slug, name, and billing linkage."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+    put:
+      tags:
+        - Organizations
+      summary: Update organization settings** such as display name.
+      description: "**Update organization settings** such as display name."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+    delete:
+      tags:
+        - Organizations
+      summary: Delete a workspace** and schedule worker teardown (destructive).
+      description: "**Delete a workspace** and schedule worker teardown (destructive)."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/instances:
+    get:
+      tags:
+        - Instances
+      summary: List WhatsApp instances in your org.** Includes Supabase status, region, phone, proxy assignment, and `messages_today` c
+      description: "**List WhatsApp instances in your org.** Includes Supabase status, region, phone, proxy assignment, and `messages_today` count. Live-syncs connected numbers from the worker when needed."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+    post:
+      tags:
+        - Instances
+      summary: "Request a new instance slot.** Checks billing entitlements, reserves a paid seat, assigns regional proxy, and registers "
+      description: "**Request a new instance slot.** Checks billing entitlements, reserves a paid seat, assigns regional proxy, and registers desired state on the worker. Returns provisioning status — poll until `connected` or open the dashboard."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/instances/{id}:
+    get:
+      tags:
+        - Instances
+      summary: Get one instance** with live worker status sync on read. Use on instance detail pages to show accurate connected/disconn
+      description: "**Get one instance** with live worker status sync on read. Use on instance detail pages to show accurate connected/disconnected state."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+    put:
+      tags:
+        - Instances
+      summary: Update instance name, webhook URL, or signing secret** in both Supabase and the org worker.
+      description: "**Update instance name, webhook URL, or signing secret** in both Supabase and the org worker."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+    delete:
+      tags:
+        - Instances
+      summary: Delete instance** — removes worker state, releases proxy slot, and frees billing seat.
+      description: "**Delete instance** — removes worker state, releases proxy slot, and frees billing seat."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/instances/{id}/connect:
+    post:
+      tags:
+        - Instances
+      summary: Tell the worker to start pairing** for this instance. Optional `pairingPhone` for code-based linking.
+      description: "**Tell the worker to start pairing** for this instance. Optional `pairingPhone` for code-based linking."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/instances/{id}/qr:
+    get:
+      tags:
+        - Instances
+      summary: Poll QR / pairing / connected state** from the worker through the control plane (no direct worker URL needed in the dash
+      description: "**Poll QR / pairing / connected state** from the worker through the control plane (no direct worker URL needed in the dashboard)."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/instances/{id}/clear-auth:
+    post:
+      tags:
+        - Instances
+      summary: Clear worker credentials** so the user must scan QR again.
+      description: "**Clear worker credentials** so the user must scan QR again."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/instances/{id}/send:
+    post:
+      tags:
+        - Instances
+      summary: Send a WhatsApp message** via control plane proxy to the org worker. Same payload as worker `/send`.
+      description: "**Send a WhatsApp message** via control plane proxy to the org worker. Same payload as worker `/send`."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/instances/{id}/profile:
+    get:
+      tags:
+        - Instances
+      summary: Read linked WhatsApp profile** (name, about, picture) from the worker.
+      description: "**Read linked WhatsApp profile** (name, about, picture) from the worker."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+    put:
+      tags:
+        - Instances
+      summary: Update WhatsApp profile fields** on the worker.
+      description: "**Update WhatsApp profile fields** on the worker."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/instances/{id}/handoff:
+    get:
+      tags:
+        - Instances
+      summary: Read handoff state** for human takeover flows.
+      description: "**Read handoff state** for human takeover flows."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+    put:
+      tags:
+        - Instances
+      summary: Update handoff settings** on the worker.
+      description: "**Update handoff settings** on the worker."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/deep-dive:
+    get:
+      tags:
+        - Activity
+      summary: Search messages and logs** across the org (or one instance). Powers Home, Deep Dive, and instance Live Activity in the d
+      description: "**Search messages and logs** across the org (or one instance). Powers Home, Deep Dive, and instance Live Activity in the dashboard. Query params: `type`, `instanceId`, `search`, `from`, `to`, `limit`."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/docs:
+    get:
+      tags:
+        - Connection
+      summary: Resolve worker doc links** for your org — docs, playground, openapi, admin URLs on `{org}.wasup.co`.
+      description: "**Resolve worker doc links** for your org — docs, playground, openapi, admin URLs on `{org}.wasup.co`."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/billing/entitlements:
+    get:
+      tags:
+        - Billing
+      summary: Read billing state** — paid instance slots, active count, credit balance, subscription status.
+      description: "**Read billing state** — paid instance slots, active count, credit balance, subscription status."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/billing/checkout:
+    post:
+      tags:
+        - Billing
+      summary: Start Stripe Checkout** to buy instance seats or message credits.
+      description: "**Start Stripe Checkout** to buy instance seats or message credits."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/billing/portal:
+    post:
+      tags:
+        - Billing
+      summary: Open Stripe Customer Portal** for invoices and payment methods.
+      description: "**Open Stripe Customer Portal** for invoices and payment methods."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/provision/instances:
+    post:
+      tags:
+        - Instances
+      summary: Provision flow alias** — reserves entitlement and creates instance (same gate as POST /instances).
+      description: "**Provision flow alias** — reserves entitlement and creates instance (same gate as POST /instances)."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/proxy/availability:
+    get:
+      tags:
+        - Proxy
+      summary: Regions with available proxies** for new instance creation.
+      description: "**Regions with available proxies** for new instance creation."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/proxy/admin:
+    get:
+      tags:
+        - Proxy
+      summary: Admin proxy pool view** (operator scope).
+      description: "**Admin proxy pool view** (operator scope)."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+    post:
+      tags:
+        - Proxy
+      summary: Import proxies** into the pool (operator scope).
+      description: "**Import proxies** into the pool (operator scope)."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/notifications:
+    get:
+      tags:
+        - Notifications
+      summary: In-app notifications** for the signed-in user (provisioning, errors, billing).
+      description: "**In-app notifications** for the signed-in user (provisioning, errors, billing)."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/notifications/mark-read:
+    post:
+      tags:
+        - Notifications
+      summary: Mark notifications read.
+      description: "**Mark notifications read.**"
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/playground/worker-health:
+    get:
+      tags:
+        - Connection
+      summary: Check reachability** of the org worker from the control plane.
+      description: "**Check reachability** of the org worker from the control plane."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/customer/reset:
+    post:
+      tags:
+        - System
+      summary: Danger zone — delete entire workspace** and all data (requires confirmation token).
+      description: "**Danger zone — delete entire workspace** and all data (requires confirmation token)."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/organization-invitations:
+    get:
+      tags:
+        - System
+      summary: Pending org invites** for the current user.
+      description: "**Pending org invites** for the current user."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key

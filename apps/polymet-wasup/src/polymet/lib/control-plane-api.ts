@@ -1,4 +1,5 @@
 import type { Instance } from "@/polymet/data/dashboard-data";
+import { instancePhoneLabel } from "@/polymet/lib/instance-status";
 import type { OneTimeApiKey } from "@/polymet/lib/one-time-api-keys";
 
 const API_BASE = import.meta.env.VITE_CONTROL_PLANE_API_BASE_URL || "";
@@ -11,7 +12,27 @@ export function setControlPlaneAuthTokenGetter(getToken: ClerkGetToken | null) {
   clerkGetToken = getToken;
 }
 
+export type WorkspacePlan = {
+  tier: "free" | "pro" | "grace" | "locked";
+  isPro: boolean;
+  canCreateInstances: boolean;
+  canViewCredentials: boolean;
+  proInstanceLimit: number;
+  billingStatus: string | null;
+  billingGraceEndsAt: string | null;
+  billingLockedAt: string | null;
+  trialEndsAt?: string | null;
+  instancesDeleteAfter?: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  activeInstanceCount: number;
+  paidInstanceLimit: number;
+  availableInstanceSlots: number;
+};
+
 export type ControlPlaneConnection = {
+  credentialsLocked?: boolean;
+  plan?: WorkspacePlan;
   organization: {
     id: string;
     slug: string;
@@ -94,9 +115,10 @@ export type BillingEntitlementsResult = {
     current_period_end?: string | null;
     cancel_at_period_end?: boolean;
   };
+  plan: WorkspacePlan;
   entitlement: {
     allowed: boolean;
-    mode: "billing" | "trial";
+    mode: "billing" | "trial" | "free" | "grace";
     reason: string | null;
     availableSlots: number;
     paidInstanceLimit: number;
@@ -131,6 +153,91 @@ export type InviteOrganizationMemberResult = {
     role: string;
     status?: string;
   };
+};
+
+export type PlatformOrgRow = {
+  id: string;
+  slug: string;
+  name: string;
+  plan: string;
+  orgStatus: string;
+  clerkOrgId: string | null;
+  apiBaseUrl: string | null;
+  subdomain: string | null;
+  deploymentStatus: string | null;
+  createdAt: string;
+  tier: WorkspacePlan["tier"];
+  billingStatus: string | null;
+  billingGraceEndsAt: string | null;
+  billingLockedAt: string | null;
+  trialEndsAt: string | null;
+  instancesDeleteAfter: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  activeInstanceCount: number;
+  paidInstanceLimit: number;
+  availableInstanceSlots: number;
+  messageCreditBalance: number;
+  deployment: {
+    status: string;
+    baseUrl: string | null;
+    publicIp: string | null;
+    vmName: string | null;
+    azureRegion: string | null;
+    lastError: string | null;
+    requestedAt: string | null;
+    provisionedAt: string | null;
+    dnsReadyAt: string | null;
+  } | null;
+  instanceCounts: {
+    total: number;
+    connected: number;
+    disconnected: number;
+    provisioning: number;
+    error: number;
+    suspended: number;
+  };
+};
+
+export type PlatformInstanceRow = {
+  id: string;
+  orgId: string;
+  orgSlug: string;
+  orgName: string;
+  name: string;
+  status: string;
+  regionCode: string;
+  phone: string | null;
+  provisioningState: string | null;
+  createdAt: string;
+};
+
+export type PlatformOverview = {
+  generatedAt: string;
+  summary: {
+    totalOrganizations: number;
+    proOrganizations: number;
+    trialingOrganizations: number;
+    graceOrganizations: number;
+    lockedOrganizations: number;
+    freeOrganizations: number;
+    totalInstances: number;
+    connectedInstances: number;
+    readyDeployments: number;
+    failedDeployments: number;
+    proxyTotal: number;
+    proxyFree: number;
+    proxyAssigned: number;
+  };
+  organizations: PlatformOrgRow[];
+  instances: PlatformInstanceRow[];
+  proxyPool: Array<{
+    regionCode: string;
+    total: number;
+    free: number;
+    assigned: number;
+    unavailable: number;
+  }>;
 };
 
 export class ApiError extends Error {
@@ -190,8 +297,16 @@ export async function createBillingCheckout(input: {
   messageCreditQuantity?: number;
   successUrl?: string;
   cancelUrl?: string;
+  contactEmail?: string;
 }) {
   return api<{ success: boolean; checkoutUrl: string; sessionId: string }>("/api/v3/billing/checkout", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function syncBillingEntitlements(input: { checkoutSessionId?: string } = {}) {
+  return api<{ success: boolean; subscriptionId: string; plan: WorkspacePlan }>("/api/v3/billing/sync", {
     method: "POST",
     body: JSON.stringify(input),
   });
@@ -343,6 +458,10 @@ export async function getProxyAvailability() {
   }>("/api/v3/proxy/availability");
 }
 
+export async function getPlatformOverview() {
+  return api<PlatformOverview>("/api/v3/platform/overview", { cache: "no-store" });
+}
+
 export async function listProxyPool(regionCode?: string) {
   const search = new URLSearchParams();
   if (regionCode) search.set("regionCode", regionCode);
@@ -398,6 +517,44 @@ export async function getPlaygroundWorkerHealth() {
   return api<PlaygroundWorkerHealth>("/api/v3/playground/worker-health", { cache: "no-store" });
 }
 
+export type InstanceMediaItem = {
+  id: string;
+  instanceId?: string;
+  mediaType?: string;
+  direction?: string;
+  mimeType?: string | null;
+  fileName?: string | null;
+  publicUrl?: string | null;
+  size?: number;
+  createdAt?: string;
+  downloadUrl?: string | null;
+};
+
+export async function listInstanceMedia(
+  instanceId: string,
+  params: { type?: string; limit?: number } = {},
+) {
+  const search = new URLSearchParams();
+  if (params.type) search.set("type", params.type);
+  if (params.limit) search.set("limit", String(params.limit));
+  const query = search.size ? `?${search.toString()}` : "";
+  return api<{ success: boolean; count: number; media: InstanceMediaItem[] }>(
+    `/api/v3/instances/${encodeURIComponent(instanceId)}/media${query}`,
+    { cache: "no-store" },
+  );
+}
+
+export async function fetchInstanceMediaBlob(instanceId: string, mediaId: string) {
+  const response = await apiRaw(
+    `/api/v3/instances/${encodeURIComponent(instanceId)}/media/${encodeURIComponent(mediaId)}`,
+  );
+  return response.blob();
+}
+
+export function instanceMediaPreviewUrl(instanceId: string, mediaId: string) {
+  return `${API_BASE}/api/v3/instances/${encodeURIComponent(instanceId)}/media/${encodeURIComponent(mediaId)}`;
+}
+
 export function regionLabelToCode(region: string) {
   const map: Record<string, string> = {
     Finland: "fi",
@@ -412,21 +569,26 @@ export function regionLabelToCode(region: string) {
   return map[region] || region.toLowerCase().replace(/\s+/g, "-");
 }
 
+function formatCount(value: number) {
+  return value.toLocaleString("en-US");
+}
+
 function mapInstance(instance: ControlPlaneInstance): Instance {
   const proxy = instance.proxy_allocations?.[0];
   const lastError = typeof instance.metadata?.last_error === "string" ? instance.metadata.last_error : undefined;
   const status = mapStatus(instance.status);
+  const messagesToday = typeof instance.messages_today === "number" ? instance.messages_today : 0;
   return {
     id: instance.id,
     name: instance.name,
     region: codeToRegionLabel(instance.region_code),
     status,
-    phone: instance.phone || (status === "active" ? "Linked number syncing..." : "Not linked yet"),
+    phone: instancePhoneLabel({ status, phone: instance.phone || "" }),
     webhookUrl: instance.webhook_url || "",
     behaviorProfile: mapBehavior(instance.behavior_profile),
     proxy: proxy ? `${proxy.region_code}-${proxy.host}:${proxy.port}` : "No proxy assigned",
-    messagesToday: "0",
-    uptime: instance.status === "connected" ? "Live" : "Pending",
+    messagesToday: formatCount(messagesToday),
+    uptime: instance.status === "connected" ? "Live" : instance.status === "disconnected" ? "Disconnected" : "Pending",
     qualityScore: instance.status === "error" ? "Critical" : "Healthy",
     provisioningState: instance.provisioning_state,
     lastError,
@@ -458,6 +620,32 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload;
 }
 
+async function apiRaw(path: string, init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
+  const token = await clerkGetToken?.();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    credentials: "include",
+    headers,
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    const errorPayload = payload as { error?: string; message?: string } | null;
+    throw new ApiError(
+      errorPayload?.error || errorPayload?.message || `Request failed: ${response.status}`,
+      response.status,
+      payload,
+    );
+  }
+
+  return response;
+}
+
 function codeToRegionLabel(code: string) {
   const map: Record<string, string> = {
     fi: "Finland",
@@ -475,6 +663,7 @@ function codeToRegionLabel(code: string) {
 
 function mapStatus(status: string): Instance["status"] {
   if (status === "connected") return "active";
+  if (status === "disconnected") return "offline";
   if (status === "connecting") return "connecting";
   if (status === "error" || status === "suspended") return "quality-warning";
   if (status === "provisioning") return "provisioning";
@@ -492,6 +681,7 @@ type ControlPlaneInstance = {
   name: string;
   phone: string | null;
   status: string;
+  messages_today?: number;
   provisioning_state?: string;
   metadata?: Record<string, unknown> | null;
   region_code: string;

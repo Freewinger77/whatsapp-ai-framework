@@ -1,5 +1,7 @@
 import { generateApiKey } from './api-keys';
+import { standardizeWorkerRuntime } from './azure-vm-provisioner';
 import { getServerEnv } from './env';
+import { checkWorkerSurfaceMarkers } from './worker-surface';
 import { notifyOrgAdmins, recordAppNotification, recordDeploymentStatusNotification } from './notifications';
 import { upsertGoDaddyARecord } from './godaddy';
 import type { ProxyClaimResult } from './proxy-pool';
@@ -278,7 +280,19 @@ export async function markDeploymentPublicIp(input: {
 
   if (data.status === 'ready') {
     const workerReconcile = await reconcileQueuedWorkerInstances(input.orgId, data);
+    const becameReady = currentDeployment.status !== 'ready';
+    const surface = await checkWorkerSurfaceMarkers(data.base_url);
+    const needsStandardize = !surface.ok;
+    const env = getServerEnv();
     await Promise.allSettled([
+      (becameReady || needsStandardize) && data.azure_resource_group && data.vm_name
+        ? standardizeWorkerRuntime({
+            resourceGroup: data.azure_resource_group,
+            vmName: data.vm_name,
+            workerGitRepo: env.WASUP_WORKER_GIT_REPO,
+            workerGitRef: env.WASUP_WORKER_GIT_REF
+          })
+        : Promise.resolve(null),
       recordAppNotification({
         orgId: input.orgId,
         eventType: 'deployment.ready',

@@ -1,59 +1,151 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useUser } from "@clerk/clerk-react";
 import {
   LockIcon,
   CopyIcon,
   CheckIcon,
   RefreshCwIcon,
   AlertTriangleIcon,
-  ChevronDownIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { type ApiKey } from "@/polymet/data/dashboard-data";
-import { getConnection, rotateApiKey, type ControlPlaneConnection } from "@/polymet/lib/control-plane-api";
+import {
+  createBillingCheckout,
+  getConnection,
+  rotateApiKey,
+  type ControlPlaneConnection,
+  type WorkspacePlan,
+} from "@/polymet/lib/control-plane-api";
+import { copyWithToast } from "@/polymet/lib/copy-to-clipboard";
 import { loadOneTimeApiKeys, storeOneTimeApiKey } from "@/polymet/lib/one-time-api-keys";
 import { ACTIVE_DEPLOYMENT_STATUSES, useWorkspaceState } from "@/polymet/hooks/use-workspace-state";
+import { ConnectionPageSkeleton } from "@/polymet/components/page-skeletons";
+import { CredentialsProOverlay } from "@/polymet/components/credentials-pro-overlay";
+import { ProBadge } from "@/polymet/components/pro-badge";
 import { cn } from "@/lib/utils";
+import { getWorkerLinks } from "@/polymet/lib/worker-links";
+
+function CopyButton({
+  value,
+  label,
+  disabled = false,
+  onCopied,
+}: {
+  value: string | null | undefined;
+  label: string;
+  disabled?: boolean;
+  onCopied?: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    const text = String(value || "").trim();
+    if (!text || text.includes("...") || text === "Not available yet") {
+      toast.error("Nothing to copy", {
+        description: "Rotate the key to issue a copyable secret, or wait until the base URL is ready.",
+      });
+      return;
+    }
+
+    const copied = await copyWithToast(text, label);
+    if (!copied) return;
+    setCopied(true);
+    onCopied?.();
+    setTimeout(() => setCopied(false), 3000);
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      disabled={disabled}
+      aria-label={copied ? "Copied" : label}
+      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border/70 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {copied ? <CheckIcon className="h-4 w-4 text-emerald-600" /> : <CopyIcon className="h-4 w-4" />}
+    </button>
+  );
+}
 
 function IconButton({
   label,
-  tooltip,
   onClick,
   children,
-  className,
   disabled = false,
 }: {
   label: string;
-  tooltip?: string;
   onClick?: () => void;
   children: ReactNode;
-  className?: string;
   disabled?: boolean;
 }) {
   return (
-    <div className="group relative">
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={disabled}
-        aria-label={label}
-        className={cn(
-          "rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground",
-          className
-        )}
-      >
-        {children}
-      </button>
-      {tooltip && (
-        <div className="pointer-events-none absolute left-1/2 top-full z-10 mt-1 -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-2 py-1 text-[10px] font-medium text-background opacity-0 shadow transition-opacity group-hover:opacity-100">
-          {tooltip}
-        </div>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border/70 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {children}
+    </button>
+  );
+}
+
+function CredentialRow({
+  label,
+  hint,
+  value,
+  copyValue,
+  copyLabel,
+  disabled = false,
+  trailing,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  copyValue?: string | null;
+  copyLabel: string;
+  disabled?: boolean;
+  trailing?: ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid gap-4 border-b border-border/60 px-5 py-5 last:border-b-0 sm:grid-cols-[minmax(0,11rem)_1fr_auto] sm:items-center sm:gap-6",
+        disabled && "opacity-60",
       )}
+    >
+      <div>
+        <div className="text-sm font-semibold text-foreground">{label}</div>
+        {hint && <div className="mt-1 text-sm text-muted-foreground">{hint}</div>}
+      </div>
+
+      <div
+        className="flex min-w-0 items-center gap-2 rounded-xl bg-muted/50 px-4 py-3 font-mono text-sm select-all"
+        onClick={(event) => {
+          const selection = window.getSelection();
+          if (!selection) return;
+          selection.selectAllChildren(event.currentTarget);
+        }}
+      >
+        <LockIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="truncate">{value}</span>
+      </div>
+
+      <div className="flex items-center gap-2 sm:justify-end">
+        <CopyButton
+          value={copyValue ?? (value !== "Not available yet" ? value : null)}
+          label={copyLabel}
+          disabled={!(copyValue ?? (value !== "Not available yet" ? value : null))}
+        />
+        {trailing}
+      </div>
     </div>
   );
 }
 
-function KeyRow({
+function KeyCredentialRow({
   keyData,
   keyKind,
   orgId,
@@ -66,40 +158,19 @@ function KeyRow({
 }) {
   const [displayValue, setDisplayValue] = useState(keyData.masked);
   const [oneTimeSecret, setOneTimeSecret] = useState<string | null>(keyData.oneTimeSecret || null);
-  const [copied, setCopied] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const copyValue = oneTimeSecret;
-  const copyLabel = oneTimeSecret ? "Copy full secret" : "Full key unavailable";
-  const statusLabel = oneTimeSecret ? "Ready to copy" : "Rotate to issue copyable key";
 
   useEffect(() => {
     setDisplayValue(keyData.masked);
     if (keyData.oneTimeSecret) setOneTimeSecret(keyData.oneTimeSecret);
   }, [keyData.masked, keyData.oneTimeSecret]);
 
-  const doCopy = async () => {
-    if (!copyValue || copyValue.includes("...")) {
-      toast.error("Full key unavailable", {
-        description: "Existing secrets cannot be recovered. Rotate this key to issue a replacement.",
-      });
-      return;
-    }
-
-    try {
-      await navigator.clipboard?.writeText(copyValue);
-    } catch {
-      /* ignore */
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 7000);
-  };
-
   const doRotate = () => {
     if (disabled) {
       setConfirmOpen(false);
       toast.info("Workspace is still provisioning", {
-        description: "API key rotation unlocks when the workspace is ready.",
+        description: "Key rotation unlocks when the workspace is ready.",
       });
       return;
     }
@@ -122,6 +193,9 @@ function KeyRow({
             secret: result.secret,
           });
         }
+        toast.success("Key rotated", {
+          description: "Copy the new secret now — it won't be shown again.",
+        });
       })
       .catch(() => {
         setDisplayValue(keyData.masked);
@@ -132,108 +206,58 @@ function KeyRow({
       });
   };
 
+  const hint = oneTimeSecret
+    ? "Full secret ready to copy in this session"
+    : keyData.expires;
+
   return (
-    <div
-      aria-disabled={disabled}
-      className={cn(
-        "rounded-2xl border border-border/60 bg-card/80 p-5 transition-colors",
-        disabled && "border-dashed bg-muted/20 text-muted-foreground shadow-none",
-      )}
-    >
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="text-base font-semibold">{keyData.label}</div>
-          <div className="text-sm text-muted-foreground">{keyData.expires}</div>
-        </div>
-        <span
-          className={cn(
-            "inline-flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]",
-            oneTimeSecret
-              ? "border-emerald-300/40 bg-emerald-100/70 text-emerald-700 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-300"
-              : "border-border bg-muted/60 text-muted-foreground",
-          )}
-        >
-          {oneTimeSecret && <CheckIcon className="h-3 w-3" />}
-          {statusLabel}
-        </span>
-      </div>
-      <p className={cn("mb-3 text-xs", oneTimeSecret ? "text-emerald-700 dark:text-emerald-300" : "text-muted-foreground")}>
-        {oneTimeSecret
-          ? "A full key is available in this browser session. The key stays masked on screen, but Copy uses the real secret."
-          : "The saved secret cannot be recovered. Rotate only when you want to replace this credential."}
-      </p>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div
-          className={cn(
-            "flex min-w-0 flex-1 items-center gap-2 rounded-lg bg-muted/60 px-4 py-2.5 font-mono text-sm transition-opacity sm:max-w-md",
-            rotating && "opacity-60",
-            disabled && "bg-muted/30 text-muted-foreground/70 ring-1 ring-border/40",
-          )}
-        >
-          <LockIcon className={cn("h-4 w-4 text-muted-foreground", disabled && "text-muted-foreground/50")} />
-          <span className="truncate">{displayValue}</span>
-        </div>
-
-        <div className="group relative">
-          <button
-            type="button"
-            onClick={doCopy}
-            disabled={!copyValue}
-            aria-label={copied ? "Copied" : copyLabel}
-            className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+    <>
+      <CredentialRow
+        label={keyData.label}
+        hint={hint}
+        value={displayValue}
+        copyValue={oneTimeSecret ?? keyData.publicId ?? null}
+        copyLabel={oneTimeSecret ? `Copy ${keyData.label}` : `Copy ${keyData.label} public id`}
+        disabled={disabled}
+        trailing={
+          <IconButton
+            label="Rotate key"
+            onClick={() => setConfirmOpen(true)}
+            disabled={disabled}
           >
-            {copied ? (
-              <CheckIcon className="h-4 w-4 text-emerald-600" />
-            ) : (
-              <CopyIcon className="h-4 w-4" />
-            )}
-          </button>
-          <div className="pointer-events-none absolute left-1/2 top-full z-10 mt-1 -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-2 py-1 text-[10px] font-medium text-background opacity-0 shadow transition-opacity group-hover:opacity-100">
-            {copied ? "Copied!" : copyLabel}
-          </div>
-        </div>
-
-        <IconButton
-          label="Rotate key"
-          tooltip={disabled ? "Available when ready" : "Rotate key"}
-          onClick={() => setConfirmOpen(true)}
-          disabled={disabled}
-        >
-          <RefreshCwIcon
-            className={cn("h-4 w-4", rotating && "animate-spin text-foreground")}
-          />
-        </IconButton>
-      </div>
+            <RefreshCwIcon className={cn("h-4 w-4", rotating && "animate-spin")} />
+          </IconButton>
+        }
+      />
 
       {confirmOpen &&
         createPortal(
           <div
-            className="fixed inset-0 z-[100] flex h-dvh w-screen items-center justify-center bg-black/45 p-3 backdrop-blur-sm animate-fade-in sm:p-4"
+            className="fixed inset-0 z-[100] flex h-dvh w-screen items-center justify-center bg-black/45 p-4 backdrop-blur-sm animate-fade-in"
             onClick={() => setConfirmOpen(false)}
           >
             <div
-              className="w-full max-w-sm rounded-xl border border-border bg-background p-4 shadow-2xl animate-pop-in sm:p-6"
+              className="w-full max-w-md rounded-2xl border border-border bg-background p-6 shadow-2xl animate-pop-in"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-950/40">
+              <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-950/40">
                 <AlertTriangleIcon className="h-5 w-5" />
               </div>
-              <div className="text-base font-semibold">Rotate {keyData.label}?</div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                This action will replace the saved key and make the new secret copyable in this browser session.
-                The key remains masked on screen and the old key stops working immediately.
+              <h2 className="text-lg font-semibold">Rotate {keyData.label}?</h2>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                The current key stops working immediately. You'll get one chance to copy the replacement in this browser.
               </p>
-              <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <button
                   onClick={() => setConfirmOpen(false)}
-                  className="h-9 rounded-md border border-border px-3 text-sm hover:bg-muted"
+                  className="h-10 rounded-lg border border-border px-4 text-sm hover:bg-muted"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={doRotate}
                   disabled={disabled}
-                  className="h-9 rounded-md bg-foreground px-3 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="h-10 rounded-lg bg-foreground px-4 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Rotate key
                 </button>
@@ -242,92 +266,92 @@ function KeyRow({
           </div>,
           document.body,
         )}
-    </div>
+    </>
   );
 }
 
-function BaseUrlCard({ baseUrl, disabled }: { baseUrl: string; disabled: boolean }) {
-  const [copied, setCopied] = useState(false);
-  const copyUrl = async () => {
-    if (!baseUrl) return;
-    try {
-      await navigator.clipboard?.writeText(baseUrl);
-    } catch {
-      /* ignore */
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 3000);
-  };
+function StatusBanner({
+  provisioningActive,
+  failed,
+  deploymentStatus,
+  deploymentProgress,
+  error,
+}: {
+  provisioningActive: boolean;
+  failed: boolean;
+  deploymentStatus: string;
+  deploymentProgress: ControlPlaneConnection["deployment"]["progress"] | null;
+  error: string;
+}) {
+  if (!provisioningActive && !failed && !error) return null;
+
+  const message = failed
+    ? deploymentProgress?.message || error || "Setup didn't finish. Retry shortly or contact support."
+    : deploymentProgress?.message || "Preparing your worker and credentials.";
 
   return (
     <div
-      aria-disabled={disabled}
       className={cn(
-        "rounded-2xl border border-border/60 bg-card/80 p-5 transition-colors",
-        disabled && "border-dashed bg-muted/20 text-muted-foreground shadow-none",
+        "rounded-2xl border px-5 py-4",
+        failed
+          ? "border-red-200 bg-red-50/80 dark:border-red-900/50 dark:bg-red-950/30"
+          : "border-amber-200 bg-amber-50/80 dark:border-amber-900/50 dark:bg-amber-950/30",
       )}
     >
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="text-base font-semibold">Organisation base URL</div>
-          <div className="text-sm text-muted-foreground">
-            Use this endpoint for API calls and worker diagnostics.
+      <div className="flex items-start gap-3">
+        {provisioningActive ? (
+          <RefreshCwIcon className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-amber-700 dark:text-amber-300" />
+        ) : (
+          <AlertTriangleIcon className="mt-0.5 h-5 w-5 shrink-0 text-red-600 dark:text-red-300" />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="text-base font-semibold">
+            {provisioningActive ? "Setting up your workspace" : "Connection needs attention"}
           </div>
+          <p
+            role="status"
+            aria-live="polite"
+            className={cn(
+              "mt-1 text-sm leading-relaxed",
+              failed ? "text-red-700 dark:text-red-200" : "text-amber-900/80 dark:text-amber-100/80",
+            )}
+          >
+            {message}
+          </p>
+          {provisioningActive && (
+            <p className="mt-2 text-sm text-amber-900/70 dark:text-amber-100/70">
+              We'll email you when it's ready. You can stay on this page.
+            </p>
+          )}
         </div>
-        <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-border bg-muted/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-          {baseUrl ? "Ready to copy" : "Pending"}
-        </span>
-      </div>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div
+        <span
           className={cn(
-            "flex min-w-0 flex-1 items-center gap-2 rounded-lg bg-muted/60 px-4 py-2.5 font-mono text-sm transition-opacity sm:max-w-md",
-            disabled && "bg-muted/30 text-muted-foreground/70 ring-1 ring-border/40",
+            "hidden shrink-0 rounded-full px-3 py-1 text-xs font-medium capitalize sm:inline-flex",
+            failed
+              ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200"
+              : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
           )}
         >
-          <LockIcon className={cn("h-4 w-4 text-muted-foreground", disabled && "text-muted-foreground/50")} />
-          <span className="truncate">{baseUrl || "Not available yet"}</span>
-        </div>
-        <IconButton
-          label={copied ? "Copied base URL" : "Copy base URL"}
-          tooltip={copied ? "Copied!" : "Copy base URL"}
-          onClick={copyUrl}
-          disabled={!baseUrl}
-        >
-          {copied ? <CheckIcon className="h-4 w-4 text-emerald-600" /> : <CopyIcon className="h-4 w-4" />}
-        </IconButton>
+          {deploymentStatus.replace(/_/g, " ")}
+        </span>
       </div>
     </div>
-  );
-}
-
-function DownloadTile({ title, disabled = false }: { title: string; disabled?: boolean }) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      className="group flex h-28 w-32 flex-col justify-between rounded-xl border border-border/60 bg-card p-4 text-left transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-muted/50 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:bg-card disabled:hover:shadow-none"
-    >
-      <div className="text-sm font-semibold leading-tight whitespace-pre-line">
-        {title}
-      </div>
-      <div className="flex items-center justify-between gap-2">
-        <CopyIcon className="h-4 w-4 text-muted-foreground transition-transform duration-200 group-hover:scale-110" />
-        {disabled && <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Disabled</span>}
-      </div>
-    </button>
   );
 }
 
 export function ConnectionPage() {
+  const { user } = useUser();
   const { refresh, updateDeploymentStatus } = useWorkspaceState();
   const [orgId, setOrgId] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [deploymentStatus, setDeploymentStatus] = useState("not_started");
   const [deploymentProgress, setDeploymentProgress] = useState<ControlPlaneConnection["deployment"]["progress"] | null>(null);
+  const [plan, setPlan] = useState<WorkspacePlan | null>(null);
+  const [credentialsLocked, setCredentialsLocked] = useState(false);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [error, setError] = useState("");
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
   const lastDeploymentStatusRef = useRef<string | null>(null);
   const lastProvisioningNoticeKeyRef = useRef<string | null>(null);
   const sawProvisioningRef = useRef(false);
@@ -345,7 +369,9 @@ export function ConnectionPage() {
       ];
       const oneTimeSecretById = new Map(oneTimeKeys.map((key) => [key.id, key.secret]));
       setOrgId(connection.organization.id);
-      setBaseUrl(connection.organization.baseUrl || connection.deployment.base_url || "");
+      setPlan(connection.plan ?? null);
+      setCredentialsLocked(Boolean(connection.credentialsLocked));
+      setBaseUrl(connection.credentialsLocked ? "" : connection.organization.baseUrl || connection.deployment.base_url || "");
       setDeploymentStatus(nextStatus);
       updateDeploymentStatus(nextStatus);
       setDeploymentProgress(connection.deployment.progress);
@@ -397,6 +423,9 @@ export function ConnectionPage() {
           updateDeploymentStatus("unavailable");
           setDeploymentProgress(null);
           setError(connectionError instanceof Error ? connectionError.message : "Could not load connection details");
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
         });
     };
 
@@ -414,6 +443,28 @@ export function ConnectionPage() {
   );
   const provisioningActive = ACTIVE_DEPLOYMENT_STATUSES.has(deploymentStatus);
   const failed = deploymentStatus === "failed";
+  const ready = deploymentStatus === "ready" && !error;
+  const workerLinks = getWorkerLinks(baseUrl);
+
+  const startCheckout = async () => {
+    setCheckoutLoading(true);
+    try {
+      const returnBase = `${window.location.origin}/#/connection`;
+      const result = await createBillingCheckout({
+        instanceQuantity: 1,
+        contactEmail: user?.primaryEmailAddress?.emailAddress,
+        successUrl: `${returnBase}?billing=success`,
+        cancelUrl: `${returnBase}?billing=cancelled`,
+      });
+      window.location.assign(result.checkoutUrl);
+    } catch (checkoutError) {
+      toast.error("Could not start checkout", {
+        description: checkoutError instanceof Error ? checkoutError.message : "Checkout failed",
+      });
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
 
   useEffect(() => {
     const progressMessage =
@@ -431,7 +482,7 @@ export function ConnectionPage() {
         lastProvisioningNoticeKeyRef.current = noticeKey;
         toast("Workspace provisioning", {
           id: "workspace-provisioning",
-          description: `${progressMessage} We'll email you when it's ready, or you can wait here.`,
+          description: progressMessage,
           duration: 7000,
           icon: <RefreshCwIcon className="h-4 w-4 animate-spin" />,
         });
@@ -446,7 +497,7 @@ export function ConnectionPage() {
         terminalNoticeStatusRef.current = "ready";
         toast.success("Workspace ready", {
           id: "workspace-provisioning",
-          description: "Your workspace is ready to use.",
+          description: "Your credentials are ready to use.",
           duration: 6000,
         });
       }
@@ -476,119 +527,97 @@ export function ConnectionPage() {
   ]);
 
   return (
-    <div className="space-y-6 sm:space-y-10">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Connection</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Manage org-level API credentials for every instance in this workspace.
-        </p>
-      </div>
-
-      <div className="rounded-2xl border border-border/60 bg-card p-5">
-        <div className="text-sm text-muted-foreground">Workspace connection status</div>
-        <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-          <div>
-            <div className="text-base font-semibold sm:text-lg">
-              {provisioningActive ? "Provisioning workspace" : failed ? "Connection needs attention" : "Connection ready"}
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {provisioningActive
-                ? "We are preparing the worker, credentials, and routing for this workspace."
-                : failed
-                  ? "Workspace setup did not finish. Advanced details are available below."
-                  : "Org-level credentials are available for every instance in this workspace."}
-            </p>
+    <div className="mx-auto max-w-4xl space-y-8">
+      {loading ? (
+        <ConnectionPageSkeleton />
+      ) : (
+        <>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Connection</h1>
+            {plan?.tier === "pro" && <ProBadge />}
           </div>
-          <span
-            className={cn(
-              "inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs uppercase tracking-wider",
-              failed
-                ? "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"
-                : provisioningActive
-                  ? "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
-                  : "bg-muted text-muted-foreground",
-            )}
-          >
-            {provisioningActive && <RefreshCwIcon className="h-3 w-3 animate-spin" />}
-            {deploymentStatus}
-          </span>
-        </div>
-        {deploymentProgress && (
-          <p
-            role="status"
-            aria-live="polite"
-            className={cn(
-              "mt-3 flex items-center gap-2 text-sm",
-              failed ? "text-red-600 dark:text-red-300" : "text-muted-foreground",
-            )}
-          >
-            {provisioningActive && (
-              <span
-                className="inline-block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent"
-                aria-label="Provisioning"
-              />
-            )}
-            <span>{deploymentProgress.message}</span>
+          <p className="mt-2 max-w-xl text-base text-muted-foreground">
+            Base URL and API keys for every instance in this workspace.
           </p>
-        )}
-        {failed && !error && (
-          <p className="mt-2 text-sm text-muted-foreground">
-            Please retry in a moment or contact support if this keeps happening.
-          </p>
-        )}
-        {error && <p className="mt-3 text-sm text-red-600 dark:text-red-300">{error}</p>}
-        <div className="mt-4 rounded-xl border border-border/60 bg-muted/20">
-          <button
-            type="button"
-            onClick={() => setAdvancedOpen((open) => !open)}
-            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-muted/40"
-            aria-expanded={advancedOpen}
-          >
-            <span>Advanced connection details</span>
-            <ChevronDownIcon className={cn("h-4 w-4 transition-transform", advancedOpen && "rotate-180")} />
-          </button>
-          {advancedOpen && (
-            <div className="space-y-3 border-t border-border/60 px-4 py-4">
-              <div>
-                <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  Organisation base URL
-                </div>
-                <div className="mt-2 break-all font-mono text-sm font-semibold">
-                  {baseUrl || "Not available yet"}
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Use this URL only for advanced worker diagnostics or direct API integrations.
-              </p>
-            </div>
+          {plan?.tier === "pro" && plan.currentPeriodEnd && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Monthly subscription renews{" "}
+              {new Date(plan.currentPeriodEnd).toLocaleDateString(undefined, { month: "short", day: "numeric" })}.
+            </p>
           )}
         </div>
+        {ready && plan?.tier === "pro" && (
+          <span className="inline-flex w-fit items-center gap-2 rounded-full bg-emerald-100 px-3 py-1.5 text-sm font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            Ready
+          </span>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_auto] lg:gap-10">
-        <div className="space-y-6 sm:space-y-10">
-          <BaseUrlCard baseUrl={baseUrl} disabled={!baseUrl} />
-          {keyedRows.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border bg-muted/20 p-6 text-sm text-muted-foreground">
-              API keys will appear here once this workspace has connection credentials.
-            </div>
-          ) : (
-            keyedRows.map(({ key, kind }) => (
-              <KeyRow key={key.id} keyData={key} keyKind={kind} orgId={orgId} disabled={provisioningActive} />
-            ))
-          )}
+      <StatusBanner
+        provisioningActive={provisioningActive}
+        failed={failed}
+        deploymentStatus={deploymentStatus}
+        deploymentProgress={deploymentProgress}
+        error={error}
+      />
+
+      {credentialsLocked ? (
+        <CredentialsProOverlay plan={plan} onUpgrade={() => void startCheckout()} upgrading={checkoutLoading} />
+      ) : (
+      <section className="overflow-hidden rounded-2xl border border-border/60 bg-card">
+        <div className="border-b border-border/60 px-5 py-4">
+          <h2 className="text-lg font-semibold">Credentials</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Use these in your app or automation. Rotate a key to reveal a copyable secret.
+          </p>
         </div>
-        <div className="grid grid-cols-2 gap-3 self-end sm:flex sm:gap-4">
-          <DownloadTile title={"MCP\nJSON"} disabled />
-          <DownloadTile title={"API\nSPEC"} disabled />
-        </div>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Production keys use the sk-prod prefix and Development keys use sk-dev. Copy buttons only copy full secrets that are available in this browser session; they never copy masked dots or public IDs.
+
+        <CredentialRow
+          label="Base URL"
+          hint="API endpoint for this workspace"
+          value={baseUrl || "Not available yet"}
+          copyValue={baseUrl || null}
+          copyLabel="Copy base URL"
+          disabled={!baseUrl}
+        />
+
+        {keyedRows.length === 0 ? (
+          <div className="px-5 py-8 text-sm text-muted-foreground">
+            API keys appear here once provisioning finishes.
+          </div>
+        ) : (
+          keyedRows.map(({ key, kind }) => (
+            <KeyCredentialRow
+              key={key.id}
+              keyData={key}
+              keyKind={kind}
+              orgId={orgId}
+              disabled={provisioningActive}
+            />
+          ))
+        )}
+      </section>
+      )}
+
+      <p className="text-sm text-muted-foreground">
+        Production keys use <span className="font-mono text-foreground/80">sk-prod</span>, development keys use{" "}
+        <span className="font-mono text-foreground/80">sk-dev</span>. Full secrets are only shown once after rotation.
+        {ready && workerLinks.playgroundUrl && (
+          <>
+            {" "}
+            Paste a key into the{" "}
+            <a href={workerLinks.playgroundUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-foreground underline-offset-4 hover:underline">
+              worker test console
+            </a>
+            .
+          </>
+        )}
       </p>
-      <p className="text-xs text-muted-foreground">
-        MCP configuration and OpenAPI copy/download actions are disabled in the customer dashboard for now.
-      </p>
+        </>
+      )}
     </div>
   );
 }

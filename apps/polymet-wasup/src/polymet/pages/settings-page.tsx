@@ -1,19 +1,18 @@
 import { useEffect, useState } from "react";
 import { useClerk, useOrganization, useUser } from "@clerk/clerk-react";
-import { AlertTriangleIcon, CheckIcon, ExternalLinkIcon, Trash2Icon, UploadIcon } from "lucide-react";
+import { AlertTriangleIcon, ExternalLinkIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
-import { REGION_OPTIONS } from "@/polymet/data/dashboard-data";
 import {
   createBillingCheckout,
   createBillingPortalSession,
   getBillingEntitlements,
-  importProxyPool,
-  listProxyPool,
-  regionLabelToCode,
   resetCustomerWorkspace,
   type BillingEntitlementsResult,
 } from "@/polymet/lib/control-plane-api";
-import { isPlatformAdminEmail } from "@/polymet/lib/platform-admin";
+import { ProBadge } from "@/polymet/components/pro-badge";
+import { SettingsPageSkeleton } from "@/polymet/components/page-skeletons";
+import { showBillingPlanToast } from "@/polymet/lib/billing-plan-toast";
+import { wasupProPlanHint, wasupProSubscribeLabel } from "@/polymet/lib/billing-copy";
 import {
   Dialog,
   DialogContent,
@@ -47,38 +46,13 @@ export function SettingsPage() {
   const { user } = useUser();
   const { signOut } = useClerk();
   const { membership } = useOrganization();
-  const [region, setRegion] = useState<(typeof REGION_OPTIONS)[number]>("Finland");
-  const [proxyText, setProxyText] = useState("");
-  const [proxies, setProxies] = useState<Array<{ id: string; label: string | null; host: string; port: number; status: string; credential: string; instance_id: string | null }>>([]);
-  const [proxyMessage, setProxyMessage] = useState("");
-  const [loading, setLoading] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [billing, setBilling] = useState<BillingEntitlementsResult | null>(null);
   const [billingLoading, setBillingLoading] = useState(true);
   const [billingActionLoading, setBillingActionLoading] = useState<"checkout" | "portal" | null>(null);
-  const regionCode = regionLabelToCode(region);
-  const isPlatformAdmin = isPlatformAdminEmail(user?.primaryEmailAddress?.emailAddress);
   const canRequestReset = !!membership && membership.role.includes("owner");
-
-  const refreshProxies = async () => {
-    if (!isPlatformAdmin) {
-      setProxies([]);
-      return;
-    }
-
-    try {
-      const result = await listProxyPool(regionCode);
-      setProxies(result.proxies);
-    } catch {
-      setProxies([]);
-    }
-  };
-
-  useEffect(() => {
-    void refreshProxies();
-  }, [isPlatformAdmin, regionCode]);
 
   useEffect(() => {
     getBillingEntitlements()
@@ -93,6 +67,7 @@ export function SettingsPage() {
       const returnBase = `${window.location.origin}/#/settings`;
       const result = await createBillingCheckout({
         instanceQuantity: 1,
+        contactEmail: user?.primaryEmailAddress?.emailAddress,
         successUrl: `${returnBase}?billing=success`,
         cancelUrl: `${returnBase}?billing=cancelled`,
       });
@@ -105,6 +80,11 @@ export function SettingsPage() {
       setBillingActionLoading(null);
     }
   };
+
+  useEffect(() => {
+    if (billingLoading || !billing?.plan || billing.plan.tier === "pro") return;
+    showBillingPlanToast(billing.plan, () => void startCheckout());
+  }, [billing, billingLoading]);
 
   const openBillingPortal = async () => {
     setBillingActionLoading("portal");
@@ -119,28 +99,6 @@ export function SettingsPage() {
       });
     } finally {
       setBillingActionLoading(null);
-    }
-  };
-
-  const submitProxies = async () => {
-    if (!isPlatformAdmin) return;
-
-    setLoading(true);
-    setProxyMessage("");
-    try {
-      const result = await importProxyPool({
-        regionCode,
-        proxies: proxyText,
-        providerName: "Webshare",
-        labelPrefix: `webshare-${regionCode}`,
-      });
-      setProxyMessage(`Imported ${result.imported} proxies${result.parseErrors.length ? ` with ${result.parseErrors.length} skipped lines` : ""}.`);
-      setProxyText("");
-      await refreshProxies();
-    } catch (error) {
-      setProxyMessage(error instanceof Error ? error.message : "Could not import proxies");
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -173,6 +131,10 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6 sm:space-y-8">
+      {billingLoading ? (
+        <SettingsPageSkeleton />
+      ) : (
+        <>
       <div>
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -185,30 +147,45 @@ export function SettingsPage() {
           Billing
         </h2>
         <div className="rounded-xl border border-border/60 bg-card px-4 sm:px-5">
-          <Row label="Plan" hint="Each paid WhatsApp instance seat is billed at $39/month.">
+          <Row label="Plan" hint={wasupProPlanHint()}>
             <div className="space-y-1 text-sm">
-              <div className="font-medium capitalize">
-                {billingLoading ? "Loading..." : billing?.billing.billing_status || "inactive"}
+              <div className="flex items-center justify-end gap-2 sm:justify-end">
+                {billing?.plan?.tier === "pro" ? (
+                  <>
+                    <ProBadge />
+                    <span className="text-muted-foreground">
+                      {billing.billing.active_instance_count}/
+                      {billing.plan?.proInstanceLimit || billing.billing.paid_instance_limit || 5} instances
+                    </span>
+                  </>
+                ) : billingLoading ? (
+                  "Loading..."
+                ) : (
+                  <span className="font-medium capitalize">
+                    {billing?.plan?.tier || billing?.billing.billing_status || "Free"}
+                  </span>
+                )}
               </div>
-              <div className="text-xs text-muted-foreground">
-                {billing
-                  ? `${billing.billing.active_instance_count} active / ${billing.billing.paid_instance_limit} paid seats`
-                  : "Billing state unavailable"}
-              </div>
+              {billing?.plan?.currentPeriodEnd && (
+                <div className="text-xs text-muted-foreground">
+                  {billing.plan.billingStatus === "trialing" ? "Trial ends" : "Renews"}{" "}
+                  {new Date(billing.plan.trialEndsAt || billing.plan.currentPeriodEnd).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                </div>
+              )}
             </div>
           </Row>
-          <Row label="Instance seats" hint="Buy another paid seat before creating more instances after the trial allowance is used.">
+          <Row label="Wasup Pro" hint={wasupProPlanHint()}>
             <button
               type="button"
               onClick={startCheckout}
               disabled={billingActionLoading !== null}
               className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-foreground px-3 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
             >
-              {billingActionLoading === "checkout" ? "Opening..." : "Add $39/month seat"}
+              {billingActionLoading === "checkout" ? "Opening..." : billing?.plan?.tier === "pro" ? "Manage upgrade" : wasupProSubscribeLabel()}
               <ExternalLinkIcon className="h-3.5 w-3.5" />
             </button>
           </Row>
-          <Row label="Stripe customer portal" hint="Update payment method, invoices, cancel, or manage subscription quantity.">
+          <Row label="Stripe customer portal" hint="Update payment method, invoices, or cancel your monthly subscription.">
             <button
               type="button"
               onClick={openBillingPortal}
@@ -221,61 +198,6 @@ export function SettingsPage() {
           </Row>
         </div>
       </section>
-
-      {isPlatformAdmin && (
-        <section>
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-            Proxy Pool
-          </h2>
-          <div className="rounded-xl border border-border/60 bg-card px-4 sm:px-5">
-            <Row label="Region" hint="Imported proxies are only offered to instances created in the matching hosting zone.">
-              <select
-                value={region}
-                onChange={(event) => setRegion(event.target.value as (typeof REGION_OPTIONS)[number])}
-                className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none sm:w-auto"
-              >
-                {REGION_OPTIONS.map((item) => (
-                  <option key={item}>{item}</option>
-                ))}
-              </select>
-            </Row>
-            <div className="border-b border-border/60 py-5">
-              <div className="mb-2 text-sm font-medium">Add Webshare proxies</div>
-              <p className="mb-3 text-xs text-muted-foreground">
-                Paste one per line as `host:port:user:pass`, `host:port`, or a full proxy URL. Credentials are redacted from list views.
-              </p>
-              <textarea
-                value={proxyText}
-                onChange={(event) => setProxyText(event.target.value)}
-                placeholder="proxy.example.com:8080:username:password"
-                className="min-h-28 w-full rounded-xl border border-border/60 bg-background p-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring/30"
-              />
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                <span className="text-sm text-muted-foreground">{proxyMessage}</span>
-                <button
-                  type="button"
-                  onClick={submitProxies}
-                  disabled={loading || !proxyText.trim()}
-                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-foreground px-3 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-                >
-                  {loading ? <CheckIcon className="h-3.5 w-3.5" /> : <UploadIcon className="h-3.5 w-3.5" />}
-                  {loading ? "Importing" : "Import proxies"}
-                </button>
-              </div>
-            </div>
-            <Row label={`${region} pool`} hint={`${proxies.filter((proxy) => proxy.status === "free").length} free of ${proxies.length} imported proxies.`}>
-              <div className="overflow-x-auto text-left text-xs text-muted-foreground sm:text-right">
-                {proxies.slice(0, 4).map((proxy) => (
-                  <div key={proxy.id} className="font-mono">
-                    {proxy.host}:{proxy.port} · {proxy.status}{proxy.instance_id ? " · assigned" : ""}
-                  </div>
-                ))}
-                {!proxies.length && <span>No proxies imported yet</span>}
-              </div>
-            </Row>
-          </div>
-        </section>
-      )}
 
       <section>
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
@@ -355,6 +277,8 @@ export function SettingsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+        </>
+      )}
     </div>
   );
 }

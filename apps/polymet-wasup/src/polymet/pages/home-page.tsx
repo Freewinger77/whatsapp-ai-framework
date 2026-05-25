@@ -10,6 +10,7 @@ import {
   type VolumePoint,
 } from "@/polymet/data/dashboard-data";
 import { StatCard } from "@/polymet/components/stat-card";
+import { HomeInstanceTabSkeleton, HomePageSkeleton } from "@/polymet/components/page-skeletons";
 import { VolumeChart } from "@/polymet/components/volume-chart";
 import { getDeepDive, listInstances } from "@/polymet/lib/control-plane-api";
 import { cn } from "@/lib/utils";
@@ -20,6 +21,7 @@ export function HomePage() {
   const [instances, setInstances] = useState<Instance[]>([]);
   const [logs, setLogs] = useState<ActivityLogItem[]>([]);
   const [feed, setFeed] = useState<LiveFeedItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState("");
   const { user } = useUser();
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
@@ -32,6 +34,7 @@ export function HomePage() {
   }, []);
 
   useEffect(() => {
+    setLoading(true);
     Promise.all([listInstances(), getDeepDive({ type: "all" })])
       .then(([nextInstances, activity]) => {
         setInstances(nextInstances);
@@ -61,7 +64,8 @@ export function HomePage() {
         setFeed([]);
         setLogs([]);
         setApiError(error instanceof Error ? error.message : "Could not load dashboard data");
-      });
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   const greeting = () => {
@@ -81,8 +85,8 @@ export function HomePage() {
     <div className="space-y-6 sm:space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            {greeting()}, <span className="font-normal">{user?.firstName || user?.fullName || "there"}</span>
+          <h1 className="wasup-display-headline font-serif text-[2.125rem] font-normal italic sm:text-[2.75rem]">
+            {greeting()}, {user?.firstName || user?.fullName || "there"}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">Let's catch up.</p>
         </div>
@@ -105,6 +109,9 @@ export function HomePage() {
       </div>
 
       {tab === "Conversations" ? (
+        loading ? (
+          <HomePageSkeleton />
+        ) : (
         <>
           {apiError && (
             <div className="rounded-2xl border border-red-200 bg-red-50/70 p-4 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
@@ -119,6 +126,9 @@ export function HomePage() {
 
           <VolumeChart data={volumeSeries} />
         </>
+        )
+      ) : loading ? (
+        <HomeInstanceTabSkeleton />
       ) : (
         <InstanceOverview instances={instances} logs={logs} feed={feed} />
       )}

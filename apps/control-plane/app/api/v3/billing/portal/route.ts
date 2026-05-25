@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { ensureStripeCustomerForOrg } from '../../../../../lib/billing';
-import { isAuthError, requireWasupPrincipal } from '../../../../../lib/auth';
+import { getAuthenticatedClerkEmail, isAuthError, requireWasupPrincipal } from '../../../../../lib/auth';
 import { getStripe, getWasupAppUrl } from '../../../../../lib/stripe';
 
 const PortalSchema = z.object({
@@ -23,7 +23,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const customer = await ensureStripeCustomerForOrg(orgId);
+  let contactEmail: string | null = null;
+  if (principal.source === 'clerk') {
+    contactEmail = await getAuthenticatedClerkEmail(principal.actorId);
+  }
+
+  const customer = await ensureStripeCustomerForOrg(orgId, contactEmail);
   const appUrl = getWasupAppUrl(req);
   const session = await getStripe().billingPortal.sessions.create({
     customer,

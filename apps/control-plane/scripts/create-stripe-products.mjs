@@ -8,18 +8,18 @@ if (!stripeSecretKey) {
 
 const stripe = new Stripe(stripeSecretKey);
 const currency = process.env.STRIPE_CURRENCY || 'usd';
-const instanceAmount = Number(process.env.STRIPE_INSTANCE_AMOUNT || 3900);
+const instanceAmount = Number(process.env.STRIPE_INSTANCE_AMOUNT || 19900);
 const creditPackAmount = Number(process.env.STRIPE_MESSAGE_CREDIT_PACK_AMOUNT || 1000);
 const creditPackSize = Number(process.env.STRIPE_MESSAGE_CREDIT_PACK_SIZE || 1000);
-const promoCode = process.env.STRIPE_PROMOTION_CODE || 'VIPER100';
+const promoCode = process.env.STRIPE_PROMOTION_CODE || 'wasup100';
 
-const instanceProduct = await findProductByMetadata('wasupPlanKey', 'instance-seat') || await stripe.products.create({
-  name: 'Wasup WhatsApp Instance Seat',
-  description: 'One paid WhatsApp worker instance with isolated auth, webhook settings, and proxy allocation.',
+const instanceProduct = await findProductByMetadata('wasupPlanKey', 'pro') || await findProductByMetadata('wasupPlanKey', 'instance-seat') || await stripe.products.create({
+  name: 'Wasup Pro',
+  description: 'Monthly Wasup Pro subscription — up to 5 WhatsApp instances, worker URL, API keys, and storage.',
   metadata: {
     wasupEntitlement: 'instance',
-    wasupInstanceSlots: '1',
-    wasupPlanKey: 'instance-seat'
+    wasupInstanceSlots: '5',
+    wasupPlanKey: 'pro'
   }
 });
 
@@ -30,8 +30,8 @@ const instancePrice = await findPrice(instanceProduct.id, currency, instanceAmou
   recurring: { interval: 'month' },
   metadata: {
     wasupEntitlement: 'instance',
-    wasupInstanceSlots: '1',
-    wasupPlanKey: 'instance-seat'
+    wasupInstanceSlots: '5',
+    wasupPlanKey: 'pro'
   }
 });
 
@@ -57,8 +57,8 @@ const creditPrice = await findPrice(creditProduct.id, currency, creditPackAmount
   }
 });
 
-const coupon = await findCoupon('VIPER100') || await stripe.coupons.create({
-  name: 'VIPER100',
+const coupon = await findCoupon('wasup100') || await findCoupon('VIPER100') || await stripe.coupons.create({
+  name: 'wasup100',
   percent_off: 100,
   duration: 'forever',
   metadata: {
@@ -82,8 +82,8 @@ const promotionCode = await findPromotionCode(promoCode) || await stripe.promoti
 console.log(JSON.stringify({
   STRIPE_INSTANCE_PRICE_ID: instancePrice.id,
   STRIPE_MESSAGE_CREDIT_PRICE_ID: creditPrice.id,
-  STRIPE_VIPER100_COUPON_ID: coupon.id,
-  STRIPE_VIPER100_PROMOTION_CODE_ID: promotionCode.id,
+  STRIPE_WASUP100_COUPON_ID: coupon.id,
+  STRIPE_WASUP100_PROMOTION_CODE_ID: promotionCode.id,
   products: {
     instance: instanceProduct.id,
     messageCredits: creditProduct.id

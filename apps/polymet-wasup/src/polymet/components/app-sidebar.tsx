@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useClerk, useOrganization, useUser } from "@clerk/clerk-react";
 import { Link, useLocation } from "react-router-dom";
 import {
+  HardDriveIcon,
   NewspaperIcon,
   BoxIcon,
   TerminalIcon,
@@ -10,16 +11,20 @@ import {
   BookOpenIcon,
   Gamepad2Icon,
   SettingsIcon,
+  ShieldIcon,
   LogOutIcon,
   UserPlusIcon,
   UsersRoundIcon,
   XIcon,
+  ExternalLinkIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { instanceGradient } from "@/polymet/data/instance-colors";
 import { useSidebar } from "@/polymet/hooks/use-sidebar";
 import { useWorkspaceState } from "@/polymet/hooks/use-workspace-state";
 import { inviteOrganizationMember } from "@/polymet/lib/control-plane-api";
+import { ProBadge } from "@/polymet/components/pro-badge";
+import { isPlatformAdminEmail } from "@/polymet/lib/platform-admin";
 import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
@@ -29,13 +34,30 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-const NAV = [
-  { to: "/", label: "Home", icon: NewspaperIcon },
-  { to: "/instances", label: "Instances", icon: BoxIcon },
-  { to: "/connection", label: "Connection", icon: TerminalIcon },
-  { to: "/playground", label: "Playground", icon: Gamepad2Icon },
-  { to: "/deep-dive", label: "Deep Dive", icon: SearchIcon },
-  { to: "/docs", label: "Docs", icon: BookOpenIcon },
+type NavInternalItem = {
+  type: "internal";
+  to: string;
+  label: string;
+  icon: typeof NewspaperIcon;
+};
+
+type NavExternalItem = {
+  type: "external";
+  externalKey: "playground" | "docs";
+  label: string;
+  icon: typeof NewspaperIcon;
+};
+
+type NavItem = NavInternalItem | NavExternalItem;
+
+const NAV: NavItem[] = [
+  { type: "internal", to: "/", label: "Home", icon: NewspaperIcon },
+  { type: "internal", to: "/connection", label: "Connection", icon: TerminalIcon },
+  { type: "internal", to: "/instances", label: "Instances", icon: BoxIcon },
+  { type: "internal", to: "/storage", label: "Storage", icon: HardDriveIcon },
+  { type: "internal", to: "/deep-dive", label: "Deep Dive", icon: SearchIcon },
+  { type: "external", externalKey: "playground", label: "Playground", icon: Gamepad2Icon },
+  { type: "external", externalKey: "docs", label: "Docs", icon: BookOpenIcon },
 ];
 
 type TeamModalTab = "invite" | "members";
@@ -54,7 +76,7 @@ export function AppSidebar() {
   const { user } = useUser();
   const { organization } = useOrganization();
   const { signOut } = useClerk();
-  const { instances, provisioningActive } = useWorkspaceState();
+  const { instances, provisioningActive, workerLinks, plan } = useWorkspaceState();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [teamModalTab, setTeamModalTab] = useState<TeamModalTab | null>(null);
 
@@ -65,6 +87,7 @@ export function AppSidebar() {
 
   const displayName = user?.fullName || user?.primaryEmailAddress?.emailAddress || "Wasup user";
   const email = user?.primaryEmailAddress?.emailAddress || "";
+  const isPlatformAdmin = isPlatformAdminEmail(email);
   const avatar = user?.imageUrl;
   const openTeamModal = (tab: TeamModalTab) => {
     setUserMenuOpen(false);
@@ -81,31 +104,74 @@ export function AppSidebar() {
       )}
     >
       <div className={cn("pb-8", collapsed ? "px-0 text-center" : "px-2")}>
-        <Link to="/" className="font-mono text-sm tracking-tight text-foreground" aria-label="Wasup home">
-          {collapsed ? "<>" : "<wasup.co/>"}
+        <Link to="/" className="inline-flex items-center gap-2 font-mono text-sm tracking-tight text-foreground" aria-label="Wasup home">
+          <span>{collapsed ? "<>" : "<wasup.co/>"}</span>
+          {!collapsed && plan?.tier === "pro" && <ProBadge />}
         </Link>
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto">
         {NAV.map((item) => {
           const Icon = item.icon;
+          const navKey = item.type === "internal" ? item.to : item.externalKey;
+
+          if (item.type === "external") {
+            const href = item.externalKey === "playground" ? workerLinks.playgroundUrl : workerLinks.docsUrl;
+            const disabled = provisioningActive || !href;
+
+            return (
+              <div key={navKey}>
+                <a
+                  href={disabled ? undefined : href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={collapsed ? item.label : undefined}
+                  aria-disabled={disabled}
+                  onClick={(event) => {
+                    if (disabled) event.preventDefault();
+                  }}
+                  className={cn(
+                    "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-200",
+                    collapsed && "justify-center gap-0 px-0",
+                    "text-muted-foreground hover:text-foreground hover:bg-muted/60 hover:translate-x-0.5",
+                    disabled && "pointer-events-none opacity-45",
+                  )}
+                >
+                  <Icon
+                    className="h-4 w-4 shrink-0 transition-transform duration-200 group-hover:scale-110"
+                    fill="none"
+                    strokeWidth={2}
+                  />
+                  {!collapsed && (
+                    <>
+                      <span className="flex-1">{item.label}</span>
+                      <ExternalLinkIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+                    </>
+                  )}
+                </a>
+              </div>
+            );
+          }
+
           const active = isActive(item.to);
+          const locked = provisioningActive && item.to !== "/connection";
+
           return (
-            <div key={item.to}>
+            <div key={navKey}>
               <Link
                 to={item.to}
                 onClick={(event) => {
-                  if (provisioningActive && item.to !== "/connection") event.preventDefault();
+                  if (locked) event.preventDefault();
                 }}
                 aria-label={collapsed ? item.label : undefined}
-                aria-disabled={provisioningActive && item.to !== "/connection"}
+                aria-disabled={locked}
                 className={cn(
                   "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-200",
                   collapsed && "justify-center gap-0 px-0",
                   active
                     ? "bg-muted text-foreground font-medium"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/60 hover:translate-x-0.5",
-                  provisioningActive && item.to !== "/connection" && "pointer-events-none opacity-45"
+                  locked && "pointer-events-none opacity-45",
                 )}
               >
                 <Icon
@@ -144,6 +210,32 @@ export function AppSidebar() {
             </div>
           );
         })}
+
+        {isPlatformAdmin && (
+          <Link
+            to="/admin"
+            onClick={(event) => {
+              if (provisioningActive) event.preventDefault();
+            }}
+            aria-label={collapsed ? "Platform Admin" : undefined}
+            aria-disabled={provisioningActive}
+            className={cn(
+              "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-200",
+              collapsed && "justify-center gap-0 px-0",
+              isActive("/admin")
+                ? "bg-muted text-foreground font-medium"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/60 hover:translate-x-0.5",
+              provisioningActive && "pointer-events-none opacity-45",
+            )}
+          >
+            <ShieldIcon
+              className="h-4 w-4 transition-transform duration-200 group-hover:scale-110"
+              fill="none"
+              strokeWidth={2}
+            />
+            {!collapsed && <span>Platform Admin</span>}
+          </Link>
+        )}
 
         <Link
           to="/settings"

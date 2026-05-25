@@ -5,14 +5,18 @@ import { releasePaidInstanceSlot } from '../../../../../lib/billing';
 import { releaseProxyForInstance } from '../../../../../lib/proxy-pool';
 import { recordAppNotification } from '../../../../../lib/notifications';
 import { getSupabaseAdmin } from '../../../../../lib/supabase-admin';
-import { deleteWorkerInstance, getWorkerInstance, updateWorkerInstance } from '../../../../../lib/worker-client';
+import { attachMessagesToday, countMessagesTodayByInstance } from '../../../../../lib/instance-message-stats';
+import { deleteWorkerInstance, updateWorkerInstance } from '../../../../../lib/worker-client';
+import {
+  shouldLiveSyncInstanceFromWorker,
+  syncInstanceFromWorker
+} from '../../../../../lib/sync-instance-worker-status';
 
 const UpdateInstanceSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   webhookUrl: z.union([z.string().url(), z.literal(''), z.null()]).optional(),
   webhookSigningSecret: z.string().max(256).nullable().optional()
 });
-import { mapWorkerInstanceStatus, workerPhoneFromResult, workerStatusFromResult } from '../../../../../lib/worker-instance-state';
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const principal = await requireWasupPrincipal(_req, {
@@ -36,7 +40,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   if (error) return NextResponse.json({ error: error.message }, { status: 404 });
   const synced = await syncTransientInstanceFromWorker(supabase, principal.orgId, data);
-  return NextResponse.json({ success: true, instance: synced ?? data });
+  const instance = synced ?? data;
+  const counts = await countMessagesTodayByInstance(supabase, principal.orgId, [id]).catch(
+    () => ({} as Record<string, number>)
+  );
+
+  return NextResponse.json({
+    success: true,
+    instance: attachMessagesToday([instance], counts)[0]
+  });
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -262,12 +274,7 @@ async function loadWorkerTarget(supabase: any, orgId: string, instanceId: string
 }
 
 async function syncTransientInstanceFromWorker(supabase: any, orgId: string, instance: any) {
-  const shouldSync =
-    ['provisioning', 'connecting'].includes(instance.status) ||
-    instance.provisioning_state === 'desired' ||
-    (instance.status === 'connected' && !instance.phone);
-
-  if (!shouldSync) {
+  if (!shouldLiveSyncInstanceFromWorker(instance)) {
     return null;
   }
 
@@ -278,53 +285,8 @@ async function syncTransientInstanceFromWorker(supabase: any, orgId: string, ins
     .eq('environment', 'production')
     .maybeSingle();
 
-  const endpoint = instance.worker_endpoint || deployment?.base_url || null;
-  if (!endpoint || !process.env.WASUP_WORKER_SHARED_SECRET) return null;
-
   try {
-    const worker = await getWorkerInstance({
-      endpoint,
-      publicIp: deployment?.public_ip ?? null,
-      sharedSecret: process.env.WASUP_WORKER_SHARED_SECRET,
-      instanceId: instance.id
-    });
-
-    if (!worker.found) return null;
-
-    const workerStatus = workerStatusFromResult(worker.result);
-    const status = mapWorkerInstanceStatus(workerStatus);
-    const phone = status === 'connected' ? workerPhoneFromResult(worker.result) : null;
-    const syncedAt = new Date().toISOString();
-    const updatePayload: Record<string, unknown> = {
-      status,
-      provisioning_state: 'provisioned',
-      metadata: {
-        ...(instance.metadata || {}),
-        last_error: null,
-        lastWorkerStatusSync: {
-          status: workerStatus,
-          syncedAt,
-          phoneSynced: Boolean(phone)
-        }
-      },
-      updated_at: syncedAt
-    };
-
-    if (phone) updatePayload.phone = phone;
-
-    const { data: updated } = await supabase
-      .from('instances')
-      .update(updatePayload)
-      .eq('id', instance.id)
-      .eq('org_id', orgId)
-      .select(`
-        *,
-        proxy_allocations(id, region_code, host, port, source, status, assigned_at),
-        instance_profiles(display_name, about, picture_url, picture_status)
-      `)
-      .single();
-
-    return updated ?? null;
+    return await syncInstanceFromWorker(supabase, orgId, instance, deployment);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await supabase

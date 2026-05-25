@@ -10,6 +10,9 @@ import { PlaygroundPage } from "@/polymet/pages/playground-page";
 import { DeepDivePage } from "@/polymet/pages/deep-dive-page";
 import { DocsPage } from "@/polymet/pages/docs-page";
 import { SettingsPage } from "@/polymet/pages/settings-page";
+import { StoragePage } from "@/polymet/pages/storage-page";
+import { AdminPage } from "@/polymet/pages/admin-page";
+import { PlatformAdminGate } from "@/polymet/components/platform-admin-gate";
 
 export default function WasupPrototype() {
   return (
@@ -22,8 +25,19 @@ export default function WasupPrototype() {
           <Route path="/connection" element={<MainLayout><ConnectionPage /></MainLayout>} />
           <Route path="/playground" element={<MainLayout><PlaygroundPage /></MainLayout>} />
           <Route path="/deep-dive" element={<MainLayout><DeepDivePage /></MainLayout>} />
+          <Route path="/storage" element={<MainLayout><StoragePage /></MainLayout>} />
           <Route path="/docs" element={<MainLayout><DocsPage /></MainLayout>} />
           <Route path="/settings" element={<MainLayout><SettingsPage /></MainLayout>} />
+          <Route
+            path="/admin"
+            element={
+              <MainLayout>
+                <PlatformAdminGate>
+                  <AdminPage />
+                </PlatformAdminGate>
+              </MainLayout>
+            }
+          />
           <Route path="*" element={<Navigate to="/connection" replace />} />
         </Routes>
         <Toaster closeButton richColors position="top-center" />

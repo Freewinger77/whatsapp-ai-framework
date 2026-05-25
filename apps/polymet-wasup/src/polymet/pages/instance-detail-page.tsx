@@ -30,16 +30,15 @@ import {
 } from "lucide-react";
 import {
   BEHAVIOR_OPTIONS,
-  INSTANCE_ACTIVITY_LOG,
   INSTANCES,
-  LIVE_FEED,
   type ActivityLogItem,
   type Instance,
   type LiveFeedItem,
 } from "@/polymet/data/dashboard-data";
 import { instanceGradient } from "@/polymet/data/instance-colors";
 import { InlineProvisioningSpinner, useWorkspaceState } from "@/polymet/hooks/use-workspace-state";
-import { clearInstanceAuth, connectInstance, deleteInstance, getInstance, getInstanceQr, updateInstanceSettings } from "@/polymet/lib/control-plane-api";
+import { InstanceDetailSkeleton } from "@/polymet/components/page-skeletons";
+import { clearInstanceAuth, connectInstance, deleteInstance, getDeepDive, getInstance, getInstanceQr, updateInstanceSettings } from "@/polymet/lib/control-plane-api";
 import { cn } from "@/lib/utils";
 
 type ConnectMode = "menu" | "qr" | "pairing" | "clear";
@@ -68,6 +67,7 @@ export function InstanceDetailPage() {
   const navigate = useNavigate();
   const { refresh } = useWorkspaceState();
   const [liveInstance, setLiveInstance] = useState<Instance | null>(null);
+  const [instanceLoading, setInstanceLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const inst =
     liveInstance ??
@@ -123,9 +123,10 @@ export function InstanceDetailPage() {
   const [deleteSheetOpen, setDeleteSheetOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [instanceFeed, setInstanceFeed] = useState<LiveFeedItem[]>([]);
+  const [instanceLogs, setInstanceLogs] = useState<ActivityLogItem[]>([]);
+  const [activityError, setActivityError] = useState("");
 
-  const instanceLogs = INSTANCE_ACTIVITY_LOG.filter((item) => item.instanceId === inst.id);
-  const instanceFeed = LIVE_FEED.filter((item) => item.instanceId === inst.id);
   const statusLabel = inst.status === "provisioning" ? "provisioning" : inst.status === "connecting" ? "connecting" : connected ? "active" : "disconnected";
   const health = getInstanceHealth(connected, inst.status, inst.qualityScore);
 
@@ -133,13 +134,13 @@ export function InstanceDetailPage() {
     () =>
       [
         ...instanceFeed.map((item) => ({
-          id: `feed-${item.timestamp}-${item.direction}`,
+          id: `feed-${item.timestamp}-${item.direction}-${item.phone}`,
           type: "feed" as const,
           timestamp: item.timestamp,
           item,
         })),
         ...instanceLogs.map((item) => ({
-          id: `log-${item.timestamp}-${item.level}`,
+          id: `log-${item.timestamp}-${item.level}-${item.source.slice(0, 24)}`,
           type: "log" as const,
           timestamp: item.timestamp,
           item,
@@ -150,30 +151,78 @@ export function InstanceDetailPage() {
 
   useEffect(() => {
     if (!id) return;
-    getInstance(id)
-      .then((nextInstance) => {
-        setLiveInstance(nextInstance);
-        setLoadError("");
-      })
-      .catch((error) => {
-        setLiveInstance(null);
-        setLoadError(error instanceof Error ? error.message : "Instance not found");
-      });
+
+    let cancelled = false;
+    const loadActivity = () => {
+      getDeepDive({ type: "all", instanceId: id })
+        .then((activity) => {
+          if (cancelled) return;
+          setInstanceFeed(
+            activity.messages.map((message) => ({
+              direction: message.direction === "outbound" ? "Sent" : "Received",
+              phone: message.phone || "Unknown",
+              text: message.body || "",
+              instanceId: message.instance_id || id,
+              time: formatActivityTime(message.created_at),
+              timestamp: message.created_at,
+            })),
+          );
+          setInstanceLogs(
+            activity.logs.map((log) => ({
+              source: log.summary || log.event_type,
+              level: mapSeverity(log.severity),
+              instanceId: log.instance_id || id,
+              time: formatActivityTime(log.created_at),
+              timestamp: log.created_at,
+            })),
+          );
+          setActivityError("");
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setInstanceFeed([]);
+          setInstanceLogs([]);
+          setActivityError(error instanceof Error ? error.message : "Could not load live activity");
+        });
+    };
+
+    loadActivity();
+    const timer = window.setInterval(loadActivity, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [id]);
 
   useEffect(() => {
-    if (!id || (liveInstance?.status !== "provisioning" && liveInstance?.status !== "connecting")) return;
-    const timer = window.setInterval(() => {
+    if (!id) return;
+
+    let cancelled = false;
+    setInstanceLoading(true);
+    const refreshInstance = () => {
       getInstance(id)
         .then((nextInstance) => {
+          if (cancelled) return;
           setLiveInstance(nextInstance);
           setLoadError("");
         })
-        .catch((error) => setLoadError(error instanceof Error ? error.message : "Could not refresh instance status"));
-    }, 5000);
+        .catch((error) => {
+          if (cancelled) return;
+          setLiveInstance(null);
+          setLoadError(error instanceof Error ? error.message : "Could not refresh instance status");
+        })
+        .finally(() => {
+          if (!cancelled) setInstanceLoading(false);
+        });
+    };
 
-    return () => window.clearInterval(timer);
-  }, [id, liveInstance?.status]);
+    refreshInstance();
+    const timer = window.setInterval(refreshInstance, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [id]);
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -313,6 +362,10 @@ export function InstanceDetailPage() {
 
   return (
     <div className="space-y-6 sm:space-y-8">
+      {instanceLoading && !liveInstance ? (
+        <InstanceDetailSkeleton />
+      ) : (
+        <>
       {loadError && !liveInstance && (
         <div className="rounded-2xl border border-red-200 bg-red-50/70 p-4 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
           {loadError}
@@ -424,7 +477,7 @@ export function InstanceDetailPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:auto-rows-fr md:grid-cols-3">
         {[
           { icon: ActivityIcon, label: "Messages today", value: inst.messagesToday },
           { icon: ClockIcon, label: "Uptime", value: connected ? inst.uptime : "Disconnected" },
@@ -432,9 +485,9 @@ export function InstanceDetailPage() {
         ].map((stat) => {
           const Icon = stat.icon;
           return (
-            <div key={stat.label} className="rounded-xl border border-border/60 bg-card p-5">
+            <div key={stat.label} className="flex h-full flex-col rounded-xl border border-border/60 bg-card p-5">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Icon className="h-4 w-4" />
+                <Icon className="h-4 w-4 shrink-0" />
                 {stat.label}
               </div>
               <div className="mt-3 text-2xl font-semibold tracking-tight">{stat.value}</div>
@@ -443,9 +496,9 @@ export function InstanceDetailPage() {
         })}
       </div>
 
-      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[420px_minmax(0,1fr)] xl:items-stretch">
-        <section className="min-h-0 xl:self-stretch">
-          <LiveActivityPanel instanceId={inst.id} items={activityItems} />
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+        <section className="min-h-0">
+          <LiveActivityPanel instanceId={inst.id} items={activityItems} error={activityError} />
         </section>
 
         <section className="flex min-h-0 flex-col gap-4">
@@ -647,6 +700,8 @@ export function InstanceDetailPage() {
           onClose={() => setPictureModalOpen(false)}
           onConfirm={confirmProfilePicture}
         />
+      )}
+        </>
       )}
     </div>
   );
@@ -1072,12 +1127,14 @@ function ToggleRow({
 function LiveActivityPanel({
   instanceId,
   items,
+  error,
 }: {
   instanceId: string;
   items: Array<
     | { id: string; type: "feed"; timestamp: string; item: LiveFeedItem }
     | { id: string; type: "log"; timestamp: string; item: ActivityLogItem }
   >;
+  error?: string;
 }) {
   const visibleItems = items.slice(0, 8);
 
@@ -1089,8 +1146,18 @@ function LiveActivityPanel({
           <p className="mt-1 text-sm text-muted-foreground">Combined message feed and system log for this instance.</p>
         </div>
       </div>
+      {error ? (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50/70 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+          {error}
+        </div>
+      ) : null}
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-        {visibleItems.map((entry, index) => (
+        {visibleItems.length === 0 ? (
+          <div className="grid h-full min-h-[220px] place-items-center rounded-xl border border-dashed border-border/70 bg-muted/20 px-6 text-center text-sm text-muted-foreground">
+            No activity yet for this instance. Connect, send a message, or wait for inbound traffic — logs and conversations will appear here.
+          </div>
+        ) : (
+          visibleItems.map((entry, index) => (
           <div
             key={entry.id}
             style={{ animationDelay: `${index * 35}ms` }}
@@ -1133,7 +1200,8 @@ function LiveActivityPanel({
               )}
             </div>
           </div>
-        ))}
+          ))
+        )}
       </div>
       <Link
         to={`/deep-dive?instance=${instanceId}`}
@@ -1823,4 +1891,21 @@ function levelHeadingClass(level: string) {
     level === "High" && "text-amber-600 dark:text-amber-300",
     level === "Low" && "text-zinc-600 dark:text-zinc-300",
   );
+}
+
+function mapSeverity(severity: string): ActivityLogItem["level"] {
+  if (severity === "critical" || severity === "error") return "Critical";
+  if (severity === "warning") return "High";
+  if (severity === "debug") return "Low";
+  return "Medium";
+}
+
+function formatActivityTime(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "Live";
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 60_000) return "Just now";
+  if (diffMs < 3_600_000) return `${Math.max(1, Math.floor(diffMs / 60_000))}m ago`;
+  if (diffMs < 86_400_000) return `${Math.max(1, Math.floor(diffMs / 3_600_000))}h ago`;
+  return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }

@@ -13,7 +13,7 @@ type OrgNotificationInput = {
 };
 
 type AppNotificationSeverity = 'info' | 'success' | 'warning' | 'error';
-type AppNotificationKind = 'deployment' | 'instance' | 'security' | 'trial';
+type AppNotificationKind = 'deployment' | 'instance' | 'security' | 'trial' | 'billing';
 type AppNotificationEventType =
   | 'deployment.queued'
   | 'deployment.provisioning'
@@ -30,7 +30,13 @@ type AppNotificationEventType =
   | 'trial.warning'
   | 'trial.locked'
   | 'trial.vm_deletion_warning'
-  | 'trial.vm_deleted';
+  | 'trial.vm_deleted'
+  | 'billing.grace_started'
+  | 'billing.grace_warning'
+  | 'billing.locked'
+  | 'billing.restored'
+  | 'billing.instance_deletion_warning'
+  | 'billing.instances_deleted';
 
 type ClerkEmailAddress = {
   id: string;

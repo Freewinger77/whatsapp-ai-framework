@@ -4,6 +4,7 @@ import { releasePaidInstanceSlot } from '../../../../../lib/billing';
 import { isAuthError, requireWasupPrincipal } from '../../../../../lib/auth';
 import { ensureOrgDeployment } from '../../../../../lib/org-deployments';
 import { recordAppNotification, recordDeploymentStatusNotification } from '../../../../../lib/notifications';
+import { getOrgPlanAccess } from '../../../../../lib/plan-access';
 import { claimProxyForInstance, releaseProxyForInstance } from '../../../../../lib/proxy-pool';
 import { getSupabaseAdmin } from '../../../../../lib/supabase-admin';
 import { checkWorkerHealth, createWorkerInstance } from '../../../../../lib/worker-client';
@@ -38,6 +39,31 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
   const supabase = getSupabaseAdmin() as any;
+  const plan = await getOrgPlanAccess(targetOrgId);
+  if (!plan.canCreateInstances) {
+    return NextResponse.json(
+      {
+        error: plan.tier === 'free'
+          ? 'Subscribe to Wasup Pro to create instances.'
+          : plan.tier === 'locked'
+            ? 'Billing is suspended. Update payment to create instances again.'
+            : plan.tier === 'grace'
+              ? 'Payment failed. Update billing during the grace period.'
+              : 'You reached the Pro instance limit.',
+        reason:
+          plan.tier === 'free'
+            ? 'pro_subscription_required'
+            : plan.tier === 'locked'
+              ? 'billing_locked'
+              : plan.tier === 'grace'
+                ? 'billing_grace'
+                : 'instance_limit_reached',
+        plan
+      },
+      { status: 402 }
+    );
+  }
+
   const { data: entitlementData, error: entitlementError } = await supabase.rpc('ensure_org_entitlement_or_trial', {
     p_org_id: targetOrgId,
     p_trial_days: Number(process.env.WASUP_TRIAL_DAYS || 14)

@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { generateApiKey } from '../../../../lib/api-keys';
-import { getWasupPrincipal, isAuthError, requireWasupPrincipal } from '../../../../lib/auth';
+import { isAuthError, requireWasupPrincipal } from '../../../../lib/auth';
 import { getServerEnv } from '../../../../lib/env';
+import { requirePlatformAdmin } from '../../../../lib/platform-admin';
 import { getSupabaseAdmin } from '../../../../lib/supabase-admin';
 
 const CreateOrgSchema = z.object({
@@ -13,8 +14,15 @@ const CreateOrgSchema = z.object({
   createApiKey: z.boolean().default(true)
 });
 
-export async function GET() {
-  const principal = await getWasupPrincipal();
+export async function GET(req: Request) {
+  const principal = await requireWasupPrincipal(req);
+  if (isAuthError(principal)) return principal;
+
+  const platformAdmin = await requirePlatformAdmin();
+  if (!platformAdmin.allowed) {
+    return NextResponse.json({ error: 'Platform admin required' }, { status: 403 });
+  }
+
   const supabase = getSupabaseAdmin() as any;
 
   const { data, error } = await supabase
@@ -24,7 +32,7 @@ export async function GET() {
     .limit(100);
 
   if (error) {
-    return NextResponse.json({ error: error.message, fallbackOrg: principal }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
   return NextResponse.json({ success: true, organizations: data ?? [] });
@@ -42,6 +50,25 @@ export async function POST(req: Request) {
   const body = parsed.data;
   const supabase = getSupabaseAdmin() as any;
   const env = getServerEnv();
+
+  const { data: existingMembership, error: membershipError } = await supabase
+    .from('organization_members')
+    .select('org_id')
+    .eq('clerk_user_id', principal.actorId)
+    .limit(1)
+    .maybeSingle();
+
+  if (membershipError) {
+    return NextResponse.json({ error: membershipError.message }, { status: 500 });
+  }
+
+  if (existingMembership?.org_id) {
+    return NextResponse.json(
+      { error: 'This account already owns a Wasup workspace. One workspace per user.' },
+      { status: 409 }
+    );
+  }
+
   const subdomain = body.slug;
   const apiBaseUrl = `https://${subdomain}.${env.WASUP_BASE_DOMAIN}`;
 

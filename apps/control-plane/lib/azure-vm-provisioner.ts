@@ -47,11 +47,14 @@ export async function startAzureVmProvisioning(input: ProvisionInput) {
         location,
         vmName,
         vmSize: input.deployment.vm_size || env.AZURE_VM_SIZE,
+        osDiskGb: env.AZURE_VM_OS_DISK_GB,
         adminUsername: env.AZURE_VM_ADMIN_USERNAME,
         sshPublicKey: env.AZURE_SSH_PUBLIC_KEY,
         fqdn,
+        orgId: input.org.id,
         workerSecret: process.env.WASUP_WORKER_SHARED_SECRET,
         controlPlaneUrl: env.WASUP_CONTROL_PLANE_URL,
+        dashboardUrl: env.WASUP_DASHBOARD_URL,
         workerGitRepo: env.WASUP_WORKER_GIT_REPO,
         workerGitRef: env.WASUP_WORKER_GIT_REF
       }),
@@ -102,15 +105,89 @@ export async function deleteAzureVmResourceGroup(resourceGroup: string) {
   return { accepted: true, operationState: poller.getOperationState().status, resourceGroup };
 }
 
+export async function standardizeWorkerRuntime(input: {
+  resourceGroup: string;
+  vmName: string;
+  workerGitRepo: string;
+  workerGitRef: string;
+}) {
+  const env = getServerEnv();
+  if (!env.AZURE_SUBSCRIPTION_ID) throw new Error('AZURE_SUBSCRIPTION_ID is required');
+
+  const credential = new DefaultAzureCredential();
+  const compute = new ComputeManagementClient(credential, env.AZURE_SUBSCRIPTION_ID);
+  const script = buildWorkerStandardizeScript(input.workerGitRepo, input.workerGitRef);
+
+  const poller = await compute.virtualMachines.beginRunCommand(
+    input.resourceGroup,
+    input.vmName,
+    {
+      commandId: 'RunShellScript',
+      script: [script]
+    }
+  );
+
+  const result = await poller.pollUntilDone();
+  const message = result.value?.[0]?.message || '';
+  const testOk = /test:ok|interactive-message-playground/i.test(message);
+  const docsOk = /docs:ok|createApiReference/i.test(message);
+
+  return {
+    accepted: true,
+    succeeded: testOk && docsOk,
+    testOk,
+    docsOk,
+    message: message.slice(0, 4000)
+  };
+}
+
+function buildWorkerStandardizeScript(workerGitRepo: string, workerGitRef: string) {
+  const repo = shellQuote(workerGitRepo);
+  const ref = shellQuote(workerGitRef);
+  return `#!/bin/bash
+set -eu
+APP_DIR=$(ls -d /opt/wasup-*/app 2>/dev/null | head -1 || true)
+if [ -z "$APP_DIR" ] && [ -d /opt/whatsapp-ai/app ]; then APP_DIR=/opt/whatsapp-ai/app; fi
+if [ -z "$APP_DIR" ]; then echo "worker-app-missing"; exit 1; fi
+TMP=$(mktemp -d)
+git clone --depth 1 --branch ${ref} ${repo} "$TMP"
+rsync -a --delete \
+  --exclude node_modules \
+  --exclude instances \
+  --exclude logs \
+  --exclude auth \
+  --exclude .env \
+  "$TMP/app/" "$APP_DIR/"
+rm -rf "$TMP"
+if [ -f /opt/wasup-worker.env ]; then
+  grep -q '^DOCS_REVEAL_PASSWORD=' /opt/wasup-worker.env || echo 'DOCS_REVEAL_PASSWORD=Wasup@123' >> /opt/wasup-worker.env
+  grep -q '^ALLOW_PUBLIC_DASHBOARD=' /opt/wasup-worker.env || echo 'ALLOW_PUBLIC_DASHBOARD=true' >> /opt/wasup-worker.env
+  grep -q '^WASUP_DASHBOARD_URL=' /opt/wasup-worker.env || echo 'WASUP_DASHBOARD_URL=https://dev.wasup.co' >> /opt/wasup-worker.env
+  cp /opt/wasup-worker.env "$APP_DIR/.env"
+fi
+cd "$APP_DIR"
+npm install --omit=dev --legacy-peer-deps --ignore-scripts
+pm2 reload wasup-worker || pm2 restart wasup-worker || pm2 start server.js --name wasup-worker
+sleep 4
+TEST_BODY=$(curl -sf http://127.0.0.1:3000/test || true)
+DOCS_BODY=$(curl -sf http://127.0.0.1:3000/docs || true)
+echo "$TEST_BODY" | grep -q interactive-message-playground && echo test:ok || echo test:missing-markers
+echo "$DOCS_BODY" | grep -q createApiReference && echo docs:ok || echo docs:missing-markers
+`.trim();
+}
+
 function buildWorkerTemplate(input: {
   location: string;
   vmName: string;
   vmSize: string;
+  osDiskGb: number;
   adminUsername: string;
   sshPublicKey: string;
   fqdn: string;
+  orgId: string;
   workerSecret: string;
   controlPlaneUrl?: string;
+  dashboardUrl?: string;
   workerGitRepo: string;
   workerGitRef: string;
 }) {
@@ -211,6 +288,7 @@ function buildWorkerTemplate(input: {
             },
             osDisk: {
               createOption: 'FromImage',
+              diskSizeGB: input.osDiskGb,
               managedDisk: { storageAccountType: 'Premium_LRS' }
             }
           },
@@ -246,8 +324,10 @@ function buildWorkerTemplate(input: {
 
 function buildCloudInit(input: {
   fqdn: string;
+  orgId: string;
   workerSecret: string;
   controlPlaneUrl?: string;
+  dashboardUrl?: string;
   workerGitRepo: string;
   workerGitRef: string;
 }) {
@@ -295,6 +375,10 @@ write_files:
       ADMIN_PASSWORD=${input.workerSecret}
       WASUP_WORKER_SHARED_SECRET=${input.workerSecret}
       WASUP_CONTROL_PLANE_URL=${input.controlPlaneUrl || 'https://control-plane.wasup.co'}
+      WASUP_ORG_ID=${input.orgId}
+      WASUP_DASHBOARD_URL=${input.dashboardUrl || 'https://dev.wasup.co'}
+      DOCS_REVEAL_PASSWORD=Wasup@123
+      ALLOW_PUBLIC_DASHBOARD=true
       NODE_ENV=production
 runcmd:
 ${runcmd}

@@ -14,7 +14,9 @@ export async function GET(req: Request) {
     baseUrl,
     links: {
       docs: baseUrl ? `${baseUrl}/docs` : null,
+      playground: baseUrl ? `${baseUrl}/test` : null,
       openapi: baseUrl ? `${baseUrl}/openapi.yaml` : null,
+      admin: baseUrl ? `${baseUrl}/` : null,
       health: baseUrl ? `${baseUrl}/api/health` : null
     }
   });

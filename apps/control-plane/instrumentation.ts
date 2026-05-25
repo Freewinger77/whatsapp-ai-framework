@@ -8,6 +8,7 @@ export async function register() {
   const run = () => {
     void callInternal('/api/internal/azure/reconcile');
     void callInternal('/api/internal/trials/sweep');
+    void callInternal('/api/internal/billing/sweep');
   };
 
   setTimeout(run, 60_000);

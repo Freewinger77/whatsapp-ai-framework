@@ -201,6 +201,43 @@ export async function deleteWorkerInstance(input: WorkerRequestInput) {
   throw new Error(`Worker instance delete failed (${response.status}): ${JSON.stringify(body)}`);
 }
 
+export async function listWorkerInstanceMedia(
+  input: WorkerRequestInput,
+  query: { mediaType?: string; limit?: number } = {}
+) {
+  const search = new URLSearchParams();
+  if (query.mediaType) search.set('type', query.mediaType);
+  if (query.limit) search.set('limit', String(query.limit));
+  const suffix = search.size ? `?${search.toString()}` : '';
+  const response = await requestWorker(
+    input,
+    `/api/instances/${encodeURIComponent(input.instanceId)}/media${suffix}`
+  );
+  return parseWorkerResponse(response, 'Worker media list failed');
+}
+
+export async function fetchWorkerInstanceMedia(input: WorkerRequestInput, mediaId: string) {
+  const response = await requestWorker(
+    input,
+    `/api/instances/${encodeURIComponent(input.instanceId)}/media/${encodeURIComponent(mediaId)}`
+  );
+
+  if (!response.ok) {
+    const body = await safeJson(response);
+    throw new Error(`Worker media fetch failed (${response.status}): ${JSON.stringify(body)}`);
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const contentType = response.headers.get('content-type') || 'application/octet-stream';
+  const contentDisposition = response.headers.get('content-disposition') || '';
+  const fileNameMatch = contentDisposition.match(/filename="([^"]+)"/i);
+  return {
+    buffer,
+    contentType,
+    fileName: fileNameMatch?.[1] || `${mediaId}.bin`
+  };
+}
+
 async function parseWorkerResponse(response: Response, message: string) {
   const body = await safeJson(response);
   if (!response.ok) {

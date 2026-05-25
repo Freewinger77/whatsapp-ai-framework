@@ -1,4 +1,4 @@
-import { auth } from '@clerk/nextjs/server';
+import { auth, clerkClient, currentUser } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 import { constantTimeEqual, hashApiKeySecret, parseApiKey } from './api-keys';
 import { getPlaceholderPrincipal } from './placeholder-auth';
@@ -70,6 +70,42 @@ export async function requireWasupPrincipal(
 
 export function isAuthError(value: WasupPrincipal | NextResponse): value is NextResponse {
   return value instanceof NextResponse;
+}
+
+export async function getClerkUserEmail(userId: string): Promise<string | null> {
+  try {
+    const clerk = await clerkClient();
+    const user = await clerk.users.getUser(userId);
+    return user.primaryEmailAddress?.emailAddress || user.emailAddresses[0]?.emailAddress || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getAuthenticatedClerkEmail(userId?: string | null): Promise<string | null> {
+  const session = await auth();
+  const claims = session.sessionClaims as Record<string, unknown> | null | undefined;
+  const claimEmail =
+    stringClaim(claims?.email) ||
+    stringClaim(claims?.primary_email_address) ||
+    stringClaim(claims?.primaryEmailAddress);
+
+  if (claimEmail) return claimEmail;
+
+  const activeUser = await currentUser();
+  const currentUserEmail =
+    activeUser?.primaryEmailAddress?.emailAddress || activeUser?.emailAddresses?.[0]?.emailAddress || null;
+  if (currentUserEmail) return currentUserEmail;
+
+  if (userId || session.userId) {
+    return getClerkUserEmail(userId || session.userId!);
+  }
+
+  return null;
+}
+
+function stringClaim(value: unknown) {
+  return typeof value === 'string' && value.includes('@') ? value.trim() : '';
 }
 
 function mapClerkRole(role: string | null | undefined): WasupPrincipal['role'] {
@@ -253,8 +289,30 @@ async function createClerkBackedOrg(
     clerkOrgRole: string | null | undefined;
   }
 ) {
-  const slug = buildWorkspaceSlug(input.clerkOrgSlug || input.clerkOrgId || input.userId);
-  const name = input.clerkOrgSlug ? titleize(input.clerkOrgSlug) : 'Workspace';
+  const { data: existingMembership, error: existingMembershipError } = await supabase
+    .from('organization_members')
+    .select('role, organizations(id, slug, name)')
+    .eq('clerk_user_id', input.userId)
+    .limit(1)
+    .maybeSingle();
+
+  if (existingMembershipError) throw new Error(existingMembershipError.message);
+
+  const existingOrg = Array.isArray(existingMembership?.organizations)
+    ? existingMembership.organizations[0]
+    : existingMembership?.organizations;
+
+  if (existingOrg) {
+    return existingOrg;
+  }
+
+  const clerkOrgDetails = await resolveClerkOrganizationDetails(input.clerkOrgId);
+  const slugSource =
+    clerkOrgDetails?.name || input.clerkOrgSlug || input.clerkOrgId || input.userId;
+  const slug = buildWorkspaceSlug(slugSource);
+  const name =
+    clerkOrgDetails?.name ||
+    (input.clerkOrgSlug ? titleize(input.clerkOrgSlug) : 'Workspace');
 
   const { data: org, error } = await supabase
     .from('organizations')
@@ -286,6 +344,20 @@ async function createClerkBackedOrg(
 
   await upsertMembership(supabase, org.id, input.userId, mapClerkRole(input.clerkOrgRole) === 'viewer' ? 'viewer' : 'owner');
   return org;
+}
+
+async function resolveClerkOrganizationDetails(clerkOrgId: string | null | undefined) {
+  if (!clerkOrgId) return null;
+
+  try {
+    const clerk = await clerkClient();
+    const organization = await clerk.organizations.getOrganization({ organizationId: clerkOrgId });
+    const name = organization.name?.trim();
+    if (!name) return null;
+    return { name };
+  } catch {
+    return null;
+  }
 }
 
 async function upsertMembership(

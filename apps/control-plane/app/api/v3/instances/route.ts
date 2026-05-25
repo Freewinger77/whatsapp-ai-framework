@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { isAuthError, requireWasupPrincipal } from '../../../../lib/auth';
 import { getSupabaseAdmin } from '../../../../lib/supabase-admin';
-import { getWorkerInstance } from '../../../../lib/worker-client';
-import { mapWorkerInstanceStatus, workerPhoneFromResult, workerStatusFromResult } from '../../../../lib/worker-instance-state';
+import { attachMessagesToday, countMessagesTodayByInstance } from '../../../../lib/instance-message-stats';
+import { syncInstanceFromWorker } from '../../../../lib/sync-instance-worker-status';
 
 export async function GET(req: Request) {
   const principal = await requireWasupPrincipal(req, {
@@ -27,11 +27,28 @@ export async function GET(req: Request) {
   }
 
   const instances = await syncConnectedPhonesFromWorker(getSupabaseAdmin() as any, principal.orgId, data ?? []);
-  return NextResponse.json({ success: true, instances });
+  const counts = await countMessagesTodayByInstance(
+    getSupabaseAdmin() as any,
+    principal.orgId,
+    instances.map((instance) => instance.id)
+  ).catch(() => ({} as Record<string, number>));
+
+  return NextResponse.json({
+    success: true,
+    instances: attachMessagesToday(instances, counts)
+  });
 }
 
 async function syncConnectedPhonesFromWorker(supabase: any, orgId: string, instances: any[]) {
-  const candidates = instances.filter((instance) => instance.status === 'connected' && !instance.phone);
+  const candidates = instances.filter(
+    (instance) =>
+      !instance.deleted_at &&
+      instance.status !== "suspended" &&
+      (instance.provisioning_state === "provisioned" ||
+        instance.status === "connected" ||
+        instance.status === "connecting" ||
+        instance.status === "disconnected")
+  );
   if (!candidates.length || !process.env.WASUP_WORKER_SHARED_SECRET) return instances;
 
   const { data: deployment } = await supabase
@@ -44,52 +61,8 @@ async function syncConnectedPhonesFromWorker(supabase: any, orgId: string, insta
   const updatedById = new Map<string, any>();
 
   for (const instance of candidates) {
-    const endpoint = instance.worker_endpoint || deployment?.base_url || null;
-    if (!endpoint) continue;
-
     try {
-      const worker = await getWorkerInstance({
-        endpoint,
-        publicIp: deployment?.public_ip ?? null,
-        sharedSecret: process.env.WASUP_WORKER_SHARED_SECRET,
-        instanceId: instance.id
-      });
-
-      if (!worker.found) continue;
-
-      const workerStatus = workerStatusFromResult(worker.result);
-      const status = mapWorkerInstanceStatus(workerStatus);
-      const phone = status === 'connected' ? workerPhoneFromResult(worker.result) : null;
-      const syncedAt = new Date().toISOString();
-      const updatePayload: Record<string, unknown> = {
-        status,
-        provisioning_state: 'provisioned',
-        metadata: {
-          ...(instance.metadata || {}),
-          last_error: null,
-          lastWorkerStatusSync: {
-            status: workerStatus,
-            syncedAt,
-            phoneSynced: Boolean(phone)
-          }
-        },
-        updated_at: syncedAt
-      };
-
-      if (phone) updatePayload.phone = phone;
-
-      const { data: updated } = await supabase
-        .from('instances')
-        .update(updatePayload)
-        .eq('id', instance.id)
-        .eq('org_id', orgId)
-        .select(`
-          *,
-          proxy_allocations(id, region_code, host, port, source, status, assigned_at),
-          instance_profiles(display_name, about, picture_url, picture_status)
-        `)
-        .single();
-
+      const updated = await syncInstanceFromWorker(supabase, orgId, instance, deployment);
       if (updated) updatedById.set(instance.id, updated);
     } catch {
       // List reads should stay available even if a worker is temporarily unreachable.
