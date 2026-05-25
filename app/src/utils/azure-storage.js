@@ -9,7 +9,6 @@
  *   AZURE_STORAGE_CONTAINER        - Container name (default: "whatsapp-media")
  */
 
-import { BlobServiceClient } from '@azure/storage-blob';
 import crypto from 'crypto';
 
 let containerClient = null;
@@ -24,11 +23,12 @@ export function isStorageEnabled() {
 export async function initAzureStorage() {
     const connStr = process.env.AZURE_STORAGE_CONNECTION_STRING;
     if (!connStr) {
-        console.log('[AzureStorage] No AZURE_STORAGE_CONNECTION_STRING set — media storage disabled');
+        console.log('[AzureStorage] No AZURE_STORAGE_CONNECTION_STRING set — cloud media upload disabled (local disk still used)');
         return false;
     }
 
     try {
+        const { BlobServiceClient } = await import('@azure/storage-blob');
         const blobService = BlobServiceClient.fromConnectionString(connStr);
         containerClient = blobService.getContainerClient(CONTAINER_NAME);
         await containerClient.createIfNotExists({ access: 'blob' });
@@ -43,14 +43,6 @@ export async function initAzureStorage() {
 
 /**
  * Upload a buffer to Azure Blob Storage.
- *
- * @param {Buffer} buffer - File data
- * @param {object} opts
- * @param {string} opts.extension   - e.g. "jpg", "ogg", "mp4"
- * @param {string} opts.mimeType    - e.g. "image/jpeg"
- * @param {string} opts.instanceId  - Instance ID (used as folder prefix)
- * @param {string} [opts.folder]    - Subfolder, defaults to media type
- * @returns {Promise<{url: string, blobName: string} | null>}
  */
 export async function uploadMedia(buffer, opts = {}) {
     if (!enabled || !containerClient) return null;

@@ -90,7 +90,7 @@ export function buildWhatsAppMessage(messagePayload = {}) {
                 requestedTypes,
                 mode: 'native_interactive',
                 limitations: [
-                    'Sent via baileys_helpers with native WhatsApp interactive buttons.'
+                    'Sent as native WhatsApp interactive buttons.'
                 ]
             }
         };

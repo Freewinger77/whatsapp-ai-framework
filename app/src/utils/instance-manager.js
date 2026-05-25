@@ -28,12 +28,19 @@ import {
     resolveEffectiveProxy,
 } from './proxy.js';
 import { ProxyPoolManager } from './proxy-pool.js';
-import {
-    buildApiKeyMetaFromPlaintext,
+import { buildApiKeyMetaFromPlaintext,
     generateInstanceApiKey,
     redactApiKeyMeta,
     verifyApiKeyForInstance,
 } from './instance-api-keys.js';
+import { downloadMediaMessage } from 'baileys';
+import {
+    reportActivityLog,
+    reportConnectionStatus,
+    reportMessageEvent,
+} from './control-plane-reporter.js';
+import { buildOutgoingMediaMessage } from './media-builder.js';
+import { storeMediaBuffer, storeMediaMetadata } from './media-storage.js';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
@@ -324,6 +331,7 @@ class WhatsAppInstance {
         // Paths
         this.authFolder = path.join(INSTANCES_FOLDER, this.id, 'auth');
         this.logsFolder = path.join(INSTANCES_FOLDER, this.id, 'logs');
+        this.mediaFolder = path.join(INSTANCES_FOLDER, this.id, 'media');
         this.lidCacheFile = path.join(this.authFolder, 'lid-mapping.json');
         this.savedContactsFile = path.join(this.authFolder, 'saved-contacts.json');
         
@@ -1090,6 +1098,13 @@ class WhatsAppInstance {
         
         if (result.sent) {
             this._log(`Sent to ${to}: ${builtMessage.logText.substring(0, 50)}...`, 'success');
+            reportMessageEvent(this.id, {
+                direction: 'outbound',
+                phone: normalizedTo,
+                body: builtMessage.logText,
+                status: 'sent',
+                metadata: { delivery: builtMessage.delivery },
+            });
         } else {
             this._log(`Send not sent to ${to}: ${result.reason || 'Unknown send failure'}`, 'warning');
         }
@@ -1098,6 +1113,99 @@ class WhatsAppInstance {
             ...result,
             messageText: builtMessage.logText,
             interactive: builtMessage.delivery
+        };
+    }
+
+    /**
+     * Send image, document, audio, or location media.
+     */
+    async sendMedia(to, mediaPayload, options = {}) {
+        if (this.status !== 'connected' || !this.socket) {
+            const reason = `Instance not connected (status=${this.status}, socket=${this.socket ? 'present' : 'missing'})`;
+            this._log(`Send blocked to ${to || 'unknown recipient'}: ${reason}`, 'error');
+            throw new Error(reason);
+        }
+
+        const normalizedTo = to.includes('@') ? to : to.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
+        const jid = normalizedTo.includes('@') ? normalizedTo : `${normalizedTo}@s.whatsapp.net`;
+
+        const canSend = this.antiBanManager.canSendMessage(jid);
+        if (!canSend.allowed) {
+            throw new Error(`Rate limited: ${canSend.reason}`);
+        }
+
+        if (!options.skipContactSave) {
+            await this._saveContactBeforeMessage(jid, options.contactName);
+        }
+
+        const behaviorOptions = normalizeBehaviorSettings({
+            ...this.behaviorSettings,
+            behaviorProfile: options.behaviorProfile || this.behaviorSettings.behaviorProfile,
+            typingSimulation: options.typingSimulation !== undefined
+                ? options.typingSimulation
+                : this.behaviorSettings.typingSimulation,
+            delayEnabled: options.delayEnabled !== undefined
+                ? options.delayEnabled
+                : this.behaviorSettings.delayEnabled,
+        });
+
+        const builtMedia = await buildOutgoingMediaMessage(this.id, mediaPayload);
+
+        let result;
+        try {
+            result = await safeSendMessage(
+                this.socket,
+                jid,
+                builtMedia.content,
+                builtMedia.logText,
+                this.antiBanManager,
+                behaviorOptions
+            );
+        } catch (error) {
+            this._log(`Send failed to ${to}: ${formatErrorForLog(error)}`, 'error');
+            throw error;
+        }
+
+        let storedMedia = null;
+        if (result.sent) {
+            try {
+                if (builtMedia.storage?.buffer) {
+                    const stored = await storeMediaBuffer(this.id, builtMedia.storage.buffer, {
+                        mimeType: builtMedia.storage.mimeType,
+                        fileName: builtMedia.storage.fileName,
+                        mediaType: builtMedia.storage.mediaType,
+                        direction: 'outbound',
+                    });
+                    storedMedia = { id: stored.id, mediaType: stored.mediaType, downloadUrl: `/api/instances/${encodeURIComponent(this.id)}/media/${encodeURIComponent(stored.id)}` };
+                } else if (builtMedia.storage?.location) {
+                    const stored = await storeMediaMetadata(this.id, {
+                        mediaType: 'location',
+                        direction: 'outbound',
+                        location: builtMedia.storage.location,
+                    });
+                    storedMedia = { id: stored.id, mediaType: 'location', location: stored.location };
+                }
+            } catch (storageError) {
+                console.warn(`[Instance ${this.id}] Outbound media metadata store failed:`, storageError.message);
+            }
+
+            this._log(`Sent ${builtMedia.mediaType} to ${to}: ${builtMedia.logText.substring(0, 50)}...`, 'success');
+            reportMessageEvent(this.id, {
+                direction: 'outbound',
+                phone: normalizedTo,
+                body: builtMedia.logText,
+                status: 'sent',
+                metadata: { mediaType: builtMedia.mediaType, media: storedMedia },
+            });
+        } else {
+            this._log(`Send not sent to ${to}: ${result.reason || 'Unknown send failure'}`, 'warning');
+        }
+
+        return {
+            ...result,
+            messageText: builtMedia.logText,
+            mediaType: builtMedia.mediaType,
+            media: storedMedia || null,
         };
     }
 
@@ -1361,13 +1469,49 @@ class WhatsAppInstance {
             
             const from = msg.key.remoteJid;
             const messageContent = this._extractMessageContent(msg.message);
+            let storedMedia = await this._persistIncomingMedia(msg, messageContent.messageType);
+            if (!storedMedia && messageContent.messageType === 'location' && msg.message?.locationMessage) {
+                const locationNode = msg.message.locationMessage;
+                const stored = await storeMediaMetadata(this.id, {
+                    mediaType: 'location',
+                    direction: 'inbound',
+                    sourceMessageId: msgId,
+                    location: {
+                        latitude: locationNode.degreesLatitude,
+                        longitude: locationNode.degreesLongitude,
+                        name: locationNode.name || null,
+                        address: locationNode.address || null,
+                    },
+                });
+                storedMedia = {
+                    id: stored.id,
+                    mediaType: 'location',
+                    location: stored.location,
+                };
+            }
             
-            if (!messageContent.text || from === 'status@broadcast') return;
+            if (!messageContent.text && !storedMedia) return;
+            if (!messageContent.text && storedMedia) {
+                messageContent.text = `[${storedMedia.mediaType}]`;
+            }
+            
+            if (messageContent.text && from === 'status@broadcast') return;
             
             // Handle LID (Local Identifier) to PN (Phone Number) mapping
             let phoneNumber = await this._resolvePhoneNumber(msg, from);
             
             this._log(`Received from ${phoneNumber}: ${messageContent.text.substring(0, 50)}...`, 'info');
+            reportMessageEvent(this.id, {
+                direction: 'inbound',
+                phone: phoneNumber,
+                body: messageContent.text,
+                externalMessageId: msgId,
+                status: 'received',
+                metadata: {
+                    messageType: messageContent.messageType,
+                    media: storedMedia || null,
+                },
+            });
             
             // Anti-ban: Send read receipt before replying (blue ticks)
             await this._sendReadReceipt(msg.key);
@@ -1387,6 +1531,7 @@ class WhatsAppInstance {
                     fromJid: from,
                     message: messageContent.text,
                     messageType: messageContent.messageType,
+                    media: storedMedia || null,
                     isReply: messageContent.isReply,
                     quotedMessage: messageContent.quotedText,
                     timestamp: new Date().toISOString(),
@@ -1400,7 +1545,7 @@ class WhatsAppInstance {
             // Only forward if this instance has its own webhook configured
             if (this.webhookUrl) {
                 this._log(`Forwarding to webhook: ${this.webhookUrl.substring(0, 50)}...`, 'info');
-                await this._forwardToWebhook(msg, messageContent, from, phoneNumber, this.webhookUrl);
+                await this._forwardToWebhook(msg, messageContent, from, phoneNumber, this.webhookUrl, storedMedia);
             } else {
                 this._log('No instance webhook configured - message logged only', 'info');
             }
@@ -1418,8 +1563,9 @@ class WhatsAppInstance {
      * @param {string} from - Sender JID
      * @param {string} phoneNumber - Sender phone number
      * @param {string} webhookUrl - Webhook URL to forward to
+     * @param {object|null} storedMedia - Persisted media metadata when inbound message includes media
      */
-    async _forwardToWebhook(msg, messageContent, from, phoneNumber, webhookUrl) {
+    async _forwardToWebhook(msg, messageContent, from, phoneNumber, webhookUrl, storedMedia = null) {
         const axios = (await import('axios')).default;
         
         console.log(`[Instance ${this.id}] Calling webhook: ${webhookUrl}`);
@@ -1456,6 +1602,7 @@ class WhatsAppInstance {
             
             const payload = {
                 message_id: generateUUID(),
+                whatsapp_message_id: msg.key?.id || null,
                 created_at: new Date().toISOString(),
                 from_phone: normalizePhone(phoneNumber),
                 to_phone: normalizePhone(this.connectedPhone),
@@ -1463,8 +1610,22 @@ class WhatsAppInstance {
                 media_type: mediaTypeMap[messageContent.messageType] || 'text',
                 status: 'received',
                 webhook_id: this.id,
+                instance_id: this.id,
                 event: 'message',
-                quoted_message: messageContent.quotedText || null
+                quoted_message: messageContent.quotedText || null,
+                media: storedMedia
+                    ? {
+                        id: storedMedia.id,
+                        mediaType: storedMedia.mediaType,
+                        mimeType: storedMedia.mimeType || null,
+                        fileName: storedMedia.fileName || null,
+                        size: storedMedia.size || null,
+                        publicUrl: storedMedia.publicUrl || null,
+                        downloadUrl: storedMedia.downloadUrl || null,
+                        location: storedMedia.location || null,
+                    }
+                    : null,
+                media_id: storedMedia?.id || null,
             };
             
             console.log(`[Instance ${this.id}] Webhook payload:`, JSON.stringify(payload, null, 2));
@@ -1563,6 +1724,9 @@ class WhatsAppInstance {
         } else if (message.audioMessage) {
             text = '[Voice Note]';
             messageType = 'audio';
+        } else if (message.locationMessage) {
+            text = message.locationMessage.name || message.locationMessage.address || '[Location]';
+            messageType = 'location';
         } else if (message.stickerMessage) {
             text = '[Sticker]';
             messageType = 'sticker';
@@ -1580,6 +1744,57 @@ class WhatsAppInstance {
             isReply: !!quotedText,
             messageType
         };
+    }
+    
+    async _persistIncomingMedia(msg, messageType) {
+        const downloadableTypes = new Set(['image', 'video', 'audio', 'document', 'sticker']);
+        if (!downloadableTypes.has(messageType)) return null;
+
+        try {
+            const buffer = await downloadMediaMessage(
+                msg,
+                'buffer',
+                {},
+                {
+                    logger,
+                    reuploadRequest: this.socket?.updateMediaMessage?.bind(this.socket),
+                }
+            );
+
+            if (!buffer?.length) return null;
+
+            const message = msg.message || {};
+            const mediaNode = message.imageMessage
+                || message.videoMessage
+                || message.audioMessage
+                || message.documentMessage
+                || message.stickerMessage;
+
+            const mimeType = mediaNode?.mimetype || 'application/octet-stream';
+            const fileName = mediaNode?.fileName || null;
+
+            const stored = await storeMediaBuffer(this.id, buffer, {
+                mimeType,
+                fileName,
+                mediaType: messageType === 'sticker' ? 'image' : messageType,
+                direction: 'inbound',
+                sourceMessageId: msg.key?.id || null,
+            });
+
+            this._log(`Stored inbound ${messageType}: ${stored.id}`, 'info');
+            return {
+                id: stored.id,
+                mediaType: stored.mediaType,
+                mimeType: stored.mimeType,
+                fileName: stored.fileName,
+                publicUrl: stored.publicUrl,
+                downloadUrl: `/api/instances/${encodeURIComponent(this.id)}/media/${encodeURIComponent(stored.id)}`,
+                size: stored.size,
+            };
+        } catch (error) {
+            console.warn(`[Instance ${this.id}] Could not persist inbound media:`, error.message);
+            return null;
+        }
     }
     
     /**
@@ -1824,6 +2039,8 @@ class WhatsAppInstance {
             this.onLog(this.id, entry);
         }
 
+        reportActivityLog(this.id, entry);
+
         const logFile = path.join(this.logsFolder, `${entry.timestamp.slice(0, 10)}.jsonl`);
         fs.mkdir(this.logsFolder, { recursive: true })
             .then(() => fs.appendFile(logFile, `${JSON.stringify(entry)}\n`))
@@ -1839,9 +2056,11 @@ class WhatsAppInstance {
      * Emit status change
      */
     _emitStatusChange() {
+        const status = this.getStatus();
         if (this.onStatusChange) {
-            this.onStatusChange(this.id, this.getStatus());
+            this.onStatusChange(this.id, status);
         }
+        reportConnectionStatus(this.id, status);
     }
 }
 
@@ -2336,6 +2555,14 @@ class InstanceManager {
             throw new Error(`Instance ${instanceId} not found`);
         }
         return await instance.sendMessage(to, text, options);
+    }
+
+    async sendMedia(instanceId, to, mediaPayload, options = {}) {
+        const instance = this.instances.get(instanceId);
+        if (!instance) {
+            throw new Error(`Instance ${instanceId} not found`);
+        }
+        return await instance.sendMedia(to, mediaPayload, options);
     }
 
     async sendReaction(instanceId, to, payload) {

@@ -117,7 +117,7 @@ export function buildNativeFlowRelayPlan(content, { jid, isGroup = false } = {})
         additionalNodes,
         mode: 'native_flow',
         limitations: [
-            'Native flow buttons use Baileys interactiveMessage.nativeFlowMessage with biz/bot relay nodes.',
+            'Quick reply buttons are delivered as native WhatsApp interactive messages.',
             'WhatsApp may still reject unsupported button combinations on some accounts or client versions.'
         ]
     };

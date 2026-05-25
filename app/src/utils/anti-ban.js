@@ -564,7 +564,7 @@ async function safeSendMessageDirect(socket, jid, message, incomingText, antiBan
         await sendInteractiveViaHelper(socket, jid, messageObj.__wasupInteractiveContent);
     } else if (messageObj?.__wasupRelayContent) {
         if (typeof relayMessage !== 'function') {
-            throw new Error('Raw Baileys relay is not configured for this message type');
+            throw new Error('This message type is not configured for direct delivery on this instance');
         }
         await relayMessage(socket, jid, messageObj.__wasupRelayContent, {
             mode: messageObj.__wasupRelayMode || null
