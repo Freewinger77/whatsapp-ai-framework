@@ -1,5 +1,5 @@
 import type { ComponentType, FormEvent, KeyboardEvent, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -1488,6 +1488,22 @@ function ConnectOverlay({
   const [qrExpiresInMs, setQrExpiresInMs] = useState<number | null>(null);
   const [qrRefreshRestartCount, setQrRefreshRestartCount] = useState(0);
   const [pairingStatus, setPairingStatus] = useState("");
+  const qrRefreshInFlight = useRef(false);
+
+  const requestFreshQr = async () => {
+    if (qrRefreshInFlight.current) return;
+    qrRefreshInFlight.current = true;
+    try {
+      await connectInstance(instanceId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/connection in progress/i.test(message)) {
+        throw error;
+      }
+    } finally {
+      qrRefreshInFlight.current = false;
+    }
+  };
 
   useEffect(() => {
     if (mode !== "qr") return;
@@ -1510,7 +1526,12 @@ function ConnectOverlay({
             setQrExpiresInMs(0);
             setPairingStatus("Refreshing QR...");
             setConnectError("");
-            setLoading(false);
+            setLoading(true);
+            requestFreshQr().catch(() => {
+              if (!cancelled) {
+                setLoading(false);
+              }
+            });
             return;
           }
           setQrCode(latest.qrCode);
@@ -1533,12 +1554,21 @@ function ConnectOverlay({
         }
 
         if (latest.status === "disconnected") {
-          setLoading(false);
-          setConnectError(
-            latest.connectionIssue?.message ||
-              latest.message ||
-              "QR pairing stopped. Clear auth, then start QR pairing again.",
-          );
+          setLoading(true);
+          setPairingStatus("Refreshing QR...");
+          setConnectError("");
+          requestFreshQr().catch((error) => {
+            if (!cancelled) {
+              setLoading(false);
+              setConnectError(
+                error instanceof Error
+                  ? error.message
+                  : latest.connectionIssue?.message ||
+                      latest.message ||
+                      "QR pairing stopped. Retrying automatically...",
+              );
+            }
+          });
           return;
         }
 
@@ -1571,7 +1601,7 @@ function ConnectOverlay({
     setLoading(true);
     let keepPreparing = false;
     try {
-      await connectInstance(instanceId);
+      await requestFreshQr();
       const qr = await waitForQr(instanceId);
       if (qr.status === "connected") {
         onConnected();
@@ -1709,7 +1739,7 @@ function ConnectOverlay({
                 {!loading && !connectError && pairingStatus && (
                   <div className="rounded-2xl border border-border/60 bg-background p-5">
                     <LoadingState label={pairingStatus} />
-                    <p className="mt-3 text-xs text-muted-foreground">Keep WhatsApp open while the link finishes. A new QR will appear only if this attempt times out.</p>
+                    <p className="mt-3 text-xs text-muted-foreground">Keep WhatsApp open while the link finishes. A fresh QR will appear automatically if this attempt times out.</p>
                   </div>
                 )}
                 {!loading && qrCode && (

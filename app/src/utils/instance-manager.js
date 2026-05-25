@@ -418,6 +418,89 @@ class WhatsAppInstance {
         }
     }
 
+    async _readAuthRegistrationState() {
+        const credsPath = path.join(this.authFolder, 'creds.json');
+        try {
+            const raw = await fs.readFile(credsPath, 'utf8');
+            const creds = JSON.parse(raw);
+            return {
+                exists: true,
+                registered: !!creds.registered,
+            };
+        } catch {
+            return { exists: false, registered: false };
+        }
+    }
+
+    async _teardownPairingSocket() {
+        this._cancelPairingRestartTimer();
+        this.activeConnectGeneration += 1;
+        if (this.socket) {
+            try {
+                this.socket.ev.removeAllListeners();
+                this.socket.end();
+            } catch (e) {
+                console.log(`[Instance ${this.id}] Teardown error:`, e.message);
+            }
+            this.socket = null;
+            this.rawSocket = null;
+        }
+        this.connectInFlight = false;
+        this.status = 'disconnected';
+        this.qrCode = null;
+        this.qrContent = null;
+        this.qrCodeUpdatedAt = null;
+        this.qrScanReceivedAt = null;
+        this.linkingGraceUntil = null;
+        this.pairingCode = null;
+        this.connectionIssue = null;
+        this._emitStatusChange();
+    }
+
+    /**
+     * Reset stale partial pairing state so WhatsApp accepts a fresh QR scan.
+     * Partial creds.json (registered=false) from a timed-out or abandoned attempt
+     * causes phones to show "QR code out of date" until auth is cleared manually.
+     */
+    async _prepareFreshQrPairingSession() {
+        const authState = await this._readAuthRegistrationState();
+        const qrAgeMs = this.qrCodeUpdatedAt
+            ? Date.now() - new Date(this.qrCodeUpdatedAt).getTime()
+            : null;
+        const qrExpired = typeof qrAgeMs === 'number' && qrAgeMs >= (QR_CODE_TTL_MS - 15_000);
+        const inLinkingGrace = this._isPostScanGraceActive();
+        const staleUnregisteredAuth = authState.exists && !authState.registered && !inLinkingGrace;
+        const staleConnectingSession = this.status === 'connecting'
+            && !inLinkingGrace
+            && (qrExpired || staleUnregisteredAuth || (!this.qrCode && !this.qrContent));
+
+        if (staleUnregisteredAuth && this.status !== 'connecting') {
+            this._log('Auto-clearing stale unregistered auth before fresh QR pairing', 'info');
+            await this._teardownPairingSocket();
+            await this._clearLocalAuthFiles();
+            return;
+        }
+
+        if (staleConnectingSession) {
+            this._log(
+                `Restarting stale pairing session (${qrExpired ? 'QR expired' : staleUnregisteredAuth ? 'unregistered auth' : 'missing QR'})`,
+                'info',
+            );
+            await this._teardownPairingSocket();
+            if (staleUnregisteredAuth) {
+                await this._clearLocalAuthFiles();
+            }
+            return;
+        }
+
+        if (this.status === 'connecting') {
+            throw new Error('Connection in progress');
+        }
+        if (this.connectInFlight) {
+            throw new Error('Connection in progress');
+        }
+    }
+
     _isQrTimeoutDisconnect(statusCode, summary = {}) {
         const detail = [summary.error, summary.reason].filter(Boolean).join(' ');
         return statusCode === DisconnectReason.timedOut || /qr refs attempts ended|qr.*timeout|timed?\s*out/i.test(detail);
@@ -507,6 +590,12 @@ class WhatsAppInstance {
             if (generation !== this.activeConnectGeneration) return;
             this.pairingRestartTimer = null;
             try {
+                if (mode === 'qr-timeout') {
+                    const authState = await this._readAuthRegistrationState();
+                    if (authState.exists && !authState.registered && !this._isPostScanGraceActive()) {
+                        await this._clearLocalAuthFiles('Cleared stale unregistered auth during QR refresh');
+                    }
+                }
                 await this.connect({ _pairingRecovery: mode });
             } catch (err) {
                 this.status = 'disconnected';
@@ -537,10 +626,11 @@ class WhatsAppInstance {
         if (this.status === 'connected') {
             throw new Error('Already connected');
         }
-        if (this.status === 'connecting' && !isPairingRecovery) {
+        if (!isPairingRecovery && !usePairingCode) {
+            await this._prepareFreshQrPairingSession();
+        } else if (this.status === 'connecting' && !isPairingRecovery) {
             throw new Error('Connection in progress');
-        }
-        if (this.connectInFlight) {
+        } else if (this.connectInFlight && !isPairingRecovery) {
             throw new Error('Connection in progress');
         }
         this.connectInFlight = true;
@@ -3509,14 +3599,21 @@ class InstanceManager {
                     this.instances.set(instance.id, instance);
                     console.log(`[InstanceManager] Loaded instance: ${instance.id} (${instance.name})`);
                     
-                    // Auto-connect if instance has saved credentials
+                    // Auto-connect only when credentials are fully registered.
+                    // Partial unregistered creds from an abandoned QR attempt cause
+                    // "QR code out of date" until cleared — wipe them on startup instead.
                     const credsFile = path.join(instance.authFolder, 'creds.json');
                     if (fsSync.existsSync(credsFile)) {
-                        console.log(`[InstanceManager] Auto-reconnecting instance: ${instance.id}`);
-                        // Connect in background (don't block)
-                        instance.connect().catch(err => {
-                            console.error(`[InstanceManager] Auto-reconnect failed for ${instance.id}:`, err.message);
-                        });
+                        const authState = await instance._readAuthRegistrationState();
+                        if (authState.registered) {
+                            console.log(`[InstanceManager] Auto-reconnecting instance: ${instance.id}`);
+                            instance.connect().catch(err => {
+                                console.error(`[InstanceManager] Auto-reconnect failed for ${instance.id}:`, err.message);
+                            });
+                        } else if (authState.exists) {
+                            console.log(`[InstanceManager] Clearing stale unregistered auth for ${instance.id} on startup`);
+                            await instance._clearLocalAuthFiles('Cleared stale unregistered auth on startup');
+                        }
                     }
                 }
                 console.log(`[InstanceManager] Finished loading ${this.instances.size} instances`);
