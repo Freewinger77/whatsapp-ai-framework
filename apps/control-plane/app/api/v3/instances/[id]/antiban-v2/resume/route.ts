@@ -1,26 +1,16 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { isAuthError, requireWasupPrincipal } from '../../../../../../../lib/auth';
 import { getSupabaseAdmin } from '../../../../../../../lib/supabase-admin';
-import { graduateWorkerWarmup } from '../../../../../../../lib/worker-client';
+import { resumeWorkerAntibanV2 } from '../../../../../../../lib/worker-client';
 import { unwrapWorkerAntibanV2 } from '../../../../../../../lib/worker-antiban-response';
 import { loadWorkerTarget, workerRequestInput } from '../../../../../../../lib/worker-target';
 
-const WarmupActionSchema = z.object({
-  action: z.literal('graduate')
-});
-
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const principal = await requireWasupPrincipal(req, {
+export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const principal = await requireWasupPrincipal(_req, {
     allowApiKey: true,
     requiredScope: 'instances:write'
   });
   if (isAuthError(principal)) return principal;
-
-  const parsed = WarmupActionSchema.safeParse(await req.json().catch(() => ({ action: 'graduate' })));
-  if (!parsed.success) {
-    return NextResponse.json({ error: 'Invalid payload', issues: parsed.error.flatten() }, { status: 400 });
-  }
 
   const { id } = await params;
   const supabase = getSupabaseAdmin() as any;
@@ -33,11 +23,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   try {
-    const workerBody = await graduateWorkerWarmup(workerRequestInput(target, id));
+    const workerBody = await resumeWorkerAntibanV2(workerRequestInput(target, id));
     return NextResponse.json({
       success: true,
       antibanV2: unwrapWorkerAntibanV2(workerBody),
-      message: 'Warm-up graduated — daily send cap lifted.'
+      message: 'Anti-ban v2 resumed.'
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

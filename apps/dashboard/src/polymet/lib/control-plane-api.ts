@@ -617,34 +617,59 @@ export type AntibanV2Status = {
   enabled?: boolean;
   running?: boolean;
   preset?: string;
-  health?: { risk?: string; isPaused?: boolean } | null;
+  health?: { risk?: string; isPaused?: boolean; recommendation?: string } | null;
   warmup?: {
+    phase?: string;
     day?: number;
     totalDays?: number;
     todayLimit?: number;
     todaySent?: number;
+    progress?: number;
     complete?: boolean;
   } | null;
   rateLimiter?: {
+    lastHour?: number;
     lastDay?: number;
-    limits?: { maxPerHour?: number; maxPerDay?: number };
+    limits?: {
+      perHour?: number;
+      perDay?: number;
+      maxPerHour?: number;
+      maxPerDay?: number;
+    };
   } | null;
   config?: {
     overrides?: { maxPerHour?: number; maxPerDay?: number };
-    modules?: { warmup?: { enabled?: boolean; day1Limit?: number } };
+    modules?: Record<string, { enabled?: boolean; day1Limit?: number }>;
   };
 };
 
+function normalizeAntibanV2Status(raw: unknown): AntibanV2Status | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  if (record.antibanV2 && typeof record.antibanV2 === "object") {
+    return normalizeAntibanV2Status(record.antibanV2);
+  }
+  return raw as AntibanV2Status;
+}
+
+function readRateLimitHour(status: AntibanV2Status | null) {
+  return status?.rateLimiter?.limits?.maxPerHour
+    ?? status?.rateLimiter?.limits?.perHour
+    ?? status?.config?.overrides?.maxPerHour;
+}
+
+function readRateLimitDay(status: AntibanV2Status | null) {
+  return status?.rateLimiter?.limits?.maxPerDay
+    ?? status?.rateLimiter?.limits?.perDay
+    ?? status?.config?.overrides?.maxPerDay;
+}
+
 export async function getInstanceAntibanV2(instanceId: string) {
-  const payload = await api<{ success: boolean; antibanV2?: { antibanV2?: AntibanV2Status } & AntibanV2Status }>(
+  const payload = await api<{ success: boolean; antibanV2?: unknown }>(
     `/api/v3/instances/${encodeURIComponent(instanceId)}/antiban-v2`,
     { cache: "no-store" },
   );
-  const nested = payload.antibanV2;
-  if (nested && typeof nested === "object" && "antibanV2" in nested) {
-    return (nested as { antibanV2?: AntibanV2Status }).antibanV2 ?? null;
-  }
-  return (nested as AntibanV2Status | undefined) ?? null;
+  return normalizeAntibanV2Status(payload.antibanV2);
 }
 
 export async function updateInstanceAntibanV2(
@@ -665,6 +690,20 @@ export async function graduateInstanceWarmup(instanceId: string) {
   return api<{ success: boolean; antibanV2?: AntibanV2Status }>(
     `/api/v3/instances/${encodeURIComponent(instanceId)}/antiban-v2/warmup`,
     { method: "POST", body: JSON.stringify({ action: "graduate" }) },
+  );
+}
+
+export async function pauseInstanceAntibanV2(instanceId: string) {
+  return api<{ success: boolean; antibanV2?: AntibanV2Status }>(
+    `/api/v3/instances/${encodeURIComponent(instanceId)}/antiban-v2/pause`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+export async function resumeInstanceAntibanV2(instanceId: string) {
+  return api<{ success: boolean; antibanV2?: AntibanV2Status }>(
+    `/api/v3/instances/${encodeURIComponent(instanceId)}/antiban-v2/resume`,
+    { method: "POST", body: JSON.stringify({}) },
   );
 }
 

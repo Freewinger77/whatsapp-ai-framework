@@ -39,7 +39,7 @@ import {
 import { instanceGradient } from "@/polymet/data/instance-colors";
 import { InlineProvisioningSpinner, useWorkspaceState } from "@/polymet/hooks/use-workspace-state";
 import { InstanceDetailSkeleton } from "@/polymet/components/page-skeletons";
-import { clearInstanceAuth, connectInstance, deleteInstance, getDeepDive, getInstance, getInstanceAntibanV2, getInstanceQr, graduateInstanceWarmup, updateInstanceAntibanV2, updateInstanceSettings } from "@/polymet/lib/control-plane-api";
+import { clearInstanceAuth, connectInstance, deleteInstance, getDeepDive, getInstance, getInstanceAntibanV2, getInstanceQr, graduateInstanceWarmup, pauseInstanceAntibanV2, resumeInstanceAntibanV2, updateInstanceAntibanV2, updateInstanceSettings } from "@/polymet/lib/control-plane-api";
 import { cn } from "@/lib/utils";
 
 type ConnectMode = "menu" | "qr" | "pairing" | "clear";
@@ -53,7 +53,7 @@ const DEFAULT_OPEN_SETTINGS_CARDS: Record<MainSettingsCard, boolean> = {
   handoff: false,
   profile: false,
   behaviour: false,
-  "anti-ban": false,
+  "anti-ban": true,
   proxy: false,
 };
 
@@ -131,6 +131,7 @@ export function InstanceDetailPage() {
   const [antibanV2, setAntibanV2] = useState<Awaited<ReturnType<typeof getInstanceAntibanV2>>>(null);
   const [antibanLoading, setAntibanLoading] = useState(false);
   const [antibanSaving, setAntibanSaving] = useState(false);
+  const [antibanError, setAntibanError] = useState("");
   const [maxPerHour, setMaxPerHour] = useState("200");
   const [maxPerDay, setMaxPerDay] = useState("1500");
   const [warmupEnabled, setWarmupEnabled] = useState(true);
@@ -211,13 +212,26 @@ export function InstanceDetailPage() {
         .then((status) => {
           if (cancelled) return;
           setAntibanV2(status);
-          const limits = status?.rateLimiter?.limits || status?.config?.overrides;
-          if (limits?.maxPerHour) setMaxPerHour(String(limits.maxPerHour));
-          if (limits?.maxPerDay) setMaxPerDay(String(limits.maxPerDay));
-          if (status?.config?.modules?.warmup?.enabled === false) setWarmupEnabled(false);
+          setAntibanError("");
+          const hour =
+            status?.rateLimiter?.limits?.maxPerHour
+            ?? status?.rateLimiter?.limits?.perHour
+            ?? status?.config?.overrides?.maxPerHour;
+          const day =
+            status?.rateLimiter?.limits?.maxPerDay
+            ?? status?.rateLimiter?.limits?.perDay
+            ?? status?.config?.overrides?.maxPerDay;
+          if (hour) setMaxPerHour(String(hour));
+          if (day) setMaxPerDay(String(day));
+          const warmupMod = status?.config?.modules?.warmup;
+          if (warmupMod?.enabled === false || status?.warmup?.complete) setWarmupEnabled(false);
+          else if (warmupMod?.enabled !== false) setWarmupEnabled(true);
         })
-        .catch(() => {
-          if (!cancelled) setAntibanV2(null);
+        .catch((error) => {
+          if (!cancelled) {
+            setAntibanV2(null);
+            setAntibanError(error instanceof Error ? error.message : "Could not load anti-ban status");
+          }
         })
         .finally(() => {
           if (!cancelled) setAntibanLoading(false);
@@ -698,18 +712,37 @@ export function InstanceDetailPage() {
             open={openSettingsCards["anti-ban"]}
             onToggle={() => toggleSettingsCard("anti-ban")}
           >
+            <p className="mb-3 text-xs text-muted-foreground">
+              Control this instance&apos;s worker anti-ban limits from dev.wasup — no need to open the org worker URL.
+              Changes apply live without disconnecting WhatsApp.
+            </p>
+            {antibanError ? (
+              <p className="mb-3 text-xs text-destructive">{antibanError}</p>
+            ) : null}
+            <StaticRow
+              label="Worker v2"
+              value={antibanLoading ? "Loading..." : antibanV2?.running ? "Running" : connected ? "Configured (offline)" : "Offline"}
+            />
             <StaticRow
               label="Warm-up status"
               value={
                 antibanLoading
                   ? "Loading..."
-                  : antibanV2?.warmup?.complete
+                  : antibanV2?.warmup?.complete || antibanV2?.warmup?.phase === "graduated"
                     ? "Graduated"
                     : antibanV2?.warmup
                       ? `Day ${antibanV2.warmup.day}/${antibanV2.warmup.totalDays} — ${antibanV2.warmup.todaySent}/${antibanV2.warmup.todayLimit === -1 ? "∞" : antibanV2.warmup.todayLimit} today`
                       : connected
                         ? "Active"
                         : "Offline"
+              }
+            />
+            <StaticRow
+              label="Sends today (v2)"
+              value={
+                antibanV2?.rateLimiter
+                  ? `${antibanV2.rateLimiter.lastDay ?? 0}/${antibanV2.rateLimiter.limits?.perDay ?? antibanV2.rateLimiter.limits?.maxPerDay ?? maxPerDay}`
+                  : "—"
               }
             />
             <StaticRow
@@ -781,6 +814,48 @@ export function InstanceDetailPage() {
                 }}
               >
                 Graduate warm-up
+              </button>
+              <button
+                type="button"
+                disabled={antibanSaving || !id || antibanV2?.health?.isPaused}
+                className="inline-flex items-center rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50"
+                onClick={async () => {
+                  if (!id) return;
+                  setAntibanSaving(true);
+                  try {
+                    await pauseInstanceAntibanV2(id);
+                    toast.warning("Anti-ban paused — outbound sends blocked");
+                    const next = await getInstanceAntibanV2(id);
+                    setAntibanV2(next);
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : "Could not pause anti-ban");
+                  } finally {
+                    setAntibanSaving(false);
+                  }
+                }}
+              >
+                Pause sends
+              </button>
+              <button
+                type="button"
+                disabled={antibanSaving || !id || !antibanV2?.health?.isPaused}
+                className="inline-flex items-center rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50"
+                onClick={async () => {
+                  if (!id) return;
+                  setAntibanSaving(true);
+                  try {
+                    await resumeInstanceAntibanV2(id);
+                    toast.success("Anti-ban resumed");
+                    const next = await getInstanceAntibanV2(id);
+                    setAntibanV2(next);
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : "Could not resume anti-ban");
+                  } finally {
+                    setAntibanSaving(false);
+                  }
+                }}
+              >
+                Resume sends
               </button>
             </div>
             <p className="text-xs text-muted-foreground">

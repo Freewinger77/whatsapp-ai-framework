@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { isAuthError, requireWasupPrincipal } from '../../../../../../../lib/auth';
 import { getSupabaseAdmin } from '../../../../../../../lib/supabase-admin';
 import { updateWorkerAntibanV2 } from '../../../../../../../lib/worker-client';
+import { unwrapWorkerAntibanV2 } from '../../../../../../../lib/worker-antiban-response';
 import { loadWorkerTarget, workerRequestInput } from '../../../../../../../lib/worker-target';
 
 const UpdateAntibanV2Schema = z.object({
@@ -60,8 +61,14 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   };
 
   try {
-    const result = await updateWorkerAntibanV2(workerRequestInput(target, id), body);
-    return NextResponse.json(result);
+    const workerBody = await updateWorkerAntibanV2(workerRequestInput(target, id), body);
+    return NextResponse.json({
+      success: true,
+      antibanV2: unwrapWorkerAntibanV2(workerBody),
+      message: typeof (workerBody as { message?: unknown })?.message === 'string'
+        ? (workerBody as { message: string }).message
+        : 'Config updated'
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: 502 });

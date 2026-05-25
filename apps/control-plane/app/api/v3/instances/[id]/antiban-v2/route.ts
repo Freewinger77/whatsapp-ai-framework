@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { isAuthError, requireWasupPrincipal } from '../../../../../../lib/auth';
 import { getSupabaseAdmin } from '../../../../../../lib/supabase-admin';
 import { getWorkerAntibanV2 } from '../../../../../../lib/worker-client';
+import { unwrapWorkerAntibanV2 } from '../../../../../../lib/worker-antiban-response';
 import { loadWorkerTarget, workerRequestInput } from '../../../../../../lib/worker-target';
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -22,8 +23,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
 
   try {
-    const antibanV2 = await getWorkerAntibanV2(workerRequestInput(target, id));
-    return NextResponse.json({ success: true, antibanV2 });
+    const workerBody = await getWorkerAntibanV2(workerRequestInput(target, id));
+    return NextResponse.json({ success: true, antibanV2: unwrapWorkerAntibanV2(workerBody) });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: 502 });

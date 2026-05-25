@@ -261,6 +261,24 @@ export async function graduateWorkerWarmup(input: WorkerRequestInput) {
   return parseWorkerResponse(response, 'Worker warmup graduate failed');
 }
 
+export async function pauseWorkerAntibanV2(input: WorkerRequestInput) {
+  const response = await requestWorker(
+    input,
+    `/api/instances/${encodeURIComponent(input.instanceId)}/antiban-v2/pause`,
+    { method: 'POST', body: {} }
+  );
+  return parseWorkerResponse(response, 'Worker antiban v2 pause failed');
+}
+
+export async function resumeWorkerAntibanV2(input: WorkerRequestInput) {
+  const response = await requestWorker(
+    input,
+    `/api/instances/${encodeURIComponent(input.instanceId)}/antiban-v2/resume`,
+    { method: 'POST', body: {} }
+  );
+  return parseWorkerResponse(response, 'Worker antiban v2 resume failed');
+}
+
 async function parseWorkerResponse(response: Response, message: string) {
   const body = await safeJson(response);
   if (!response.ok) {
