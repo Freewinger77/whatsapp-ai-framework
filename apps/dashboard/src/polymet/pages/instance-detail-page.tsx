@@ -39,7 +39,7 @@ import {
 import { instanceGradient } from "@/polymet/data/instance-colors";
 import { InlineProvisioningSpinner, useWorkspaceState } from "@/polymet/hooks/use-workspace-state";
 import { InstanceDetailSkeleton } from "@/polymet/components/page-skeletons";
-import { clearInstanceAuth, connectInstance, deleteInstance, getDeepDive, getInstance, getInstanceQr, updateInstanceSettings } from "@/polymet/lib/control-plane-api";
+import { clearInstanceAuth, connectInstance, deleteInstance, getDeepDive, getInstance, getInstanceAntibanV2, getInstanceQr, graduateInstanceWarmup, updateInstanceAntibanV2, updateInstanceSettings } from "@/polymet/lib/control-plane-api";
 import { cn } from "@/lib/utils";
 
 type ConnectMode = "menu" | "qr" | "pairing" | "clear";
@@ -128,6 +128,12 @@ export function InstanceDetailPage() {
   const [instanceFeed, setInstanceFeed] = useState<LiveFeedItem[]>([]);
   const [instanceLogs, setInstanceLogs] = useState<ActivityLogItem[]>([]);
   const [activityError, setActivityError] = useState("");
+  const [antibanV2, setAntibanV2] = useState<Awaited<ReturnType<typeof getInstanceAntibanV2>>>(null);
+  const [antibanLoading, setAntibanLoading] = useState(false);
+  const [antibanSaving, setAntibanSaving] = useState(false);
+  const [maxPerHour, setMaxPerHour] = useState("200");
+  const [maxPerDay, setMaxPerDay] = useState("1500");
+  const [warmupEnabled, setWarmupEnabled] = useState(true);
 
   const statusLabel = inst.status === "provisioning" ? "provisioning" : inst.status === "connecting" ? "connecting" : connected ? "active" : "disconnected";
   const health = getInstanceHealth(connected, inst.status, inst.qualityScore);
@@ -190,6 +196,35 @@ export function InstanceDetailPage() {
 
     loadActivity();
     const timer = window.setInterval(loadActivity, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    const loadAntiban = () => {
+      setAntibanLoading(true);
+      getInstanceAntibanV2(id)
+        .then((status) => {
+          if (cancelled) return;
+          setAntibanV2(status);
+          const limits = status?.rateLimiter?.limits || status?.config?.overrides;
+          if (limits?.maxPerHour) setMaxPerHour(String(limits.maxPerHour));
+          if (limits?.maxPerDay) setMaxPerDay(String(limits.maxPerDay));
+          if (status?.config?.modules?.warmup?.enabled === false) setWarmupEnabled(false);
+        })
+        .catch(() => {
+          if (!cancelled) setAntibanV2(null);
+        })
+        .finally(() => {
+          if (!cancelled) setAntibanLoading(false);
+        });
+    };
+    loadAntiban();
+    const timer = window.setInterval(loadAntiban, 20_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -663,10 +698,125 @@ export function InstanceDetailPage() {
             open={openSettingsCards["anti-ban"]}
             onToggle={() => toggleSettingsCard("anti-ban")}
           >
-            <StaticRow label="Quality score" value={connected ? inst.qualityScore : "Disconnected"} />
-            <StaticRow label="Daily send cap" value="1,000 messages" />
+            <StaticRow
+              label="Warm-up status"
+              value={
+                antibanLoading
+                  ? "Loading..."
+                  : antibanV2?.warmup?.complete
+                    ? "Graduated"
+                    : antibanV2?.warmup
+                      ? `Day ${antibanV2.warmup.day}/${antibanV2.warmup.totalDays} — ${antibanV2.warmup.todaySent}/${antibanV2.warmup.todayLimit === -1 ? "∞" : antibanV2.warmup.todayLimit} today`
+                      : connected
+                        ? "Active"
+                        : "Offline"
+              }
+            />
+            <StaticRow
+              label="Risk / pause"
+              value={
+                antibanV2?.health?.isPaused
+                  ? "Paused"
+                  : antibanV2?.health?.risk || (connected ? "ok" : "offline")
+              }
+            />
             <StaticRow label="Credits consumed today" value={inst.messagesToday} />
-            <StaticRow label="Presence cycling" value="Unavailable between bursts" />
+            <EditableTextRow label="Max sends / hour" value={maxPerHour} onSave={setMaxPerHour} onDirty={markDirty} monospace />
+            <EditableTextRow label="Max sends / day" value={maxPerDay} onSave={setMaxPerDay} onDirty={markDirty} monospace />
+            <ToggleRow
+              label="Warm-up ramp (day 1 ~20/day default)"
+              checked={warmupEnabled}
+              onChange={(value) => {
+                setWarmupEnabled(value);
+                markDirty();
+              }}
+            />
+            <div className="flex flex-wrap gap-2 pt-2">
+              <button
+                type="button"
+                disabled={antibanSaving || !id}
+                className="inline-flex items-center rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50"
+                onClick={async () => {
+                  if (!id) return;
+                  setAntibanSaving(true);
+                  try {
+                    await updateInstanceAntibanV2(id, {
+                      overrides: {
+                        maxPerHour: Number(maxPerHour) || undefined,
+                        maxPerDay: Number(maxPerDay) || undefined,
+                      },
+                      modules: { warmup: { enabled: warmupEnabled } },
+                    });
+                    toast.success("Anti-ban limits updated");
+                    setDirty(false);
+                    const next = await getInstanceAntibanV2(id);
+                    setAntibanV2(next);
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : "Could not update anti-ban limits");
+                  } finally {
+                    setAntibanSaving(false);
+                  }
+                }}
+              >
+                {antibanSaving ? "Saving..." : "Save limits"}
+              </button>
+              <button
+                type="button"
+                disabled={antibanSaving || !id}
+                className="inline-flex items-center rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50"
+                onClick={async () => {
+                  if (!id) return;
+                  setAntibanSaving(true);
+                  try {
+                    await graduateInstanceWarmup(id);
+                    toast.success("Warm-up graduated — daily cap lifted");
+                    const next = await getInstanceAntibanV2(id);
+                    setAntibanV2(next);
+                    setWarmupEnabled(false);
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : "Could not graduate warm-up");
+                  } finally {
+                    setAntibanSaving(false);
+                  }
+                }}
+              >
+                Graduate warm-up
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Presets: conservative 100/hr · balanced 200/hr · aggressive 400/hr. Changes apply live without disconnecting.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {(["conservative", "balanced", "aggressive"] as const).map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  disabled={antibanSaving || !id}
+                  className={cn(
+                    "rounded-lg border px-3 py-1 text-xs font-medium capitalize",
+                    antibanV2?.preset === preset || (preset === "balanced" && antibanV2?.preset === "moderate")
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border hover:bg-muted",
+                  )}
+                  onClick={async () => {
+                    if (!id) return;
+                    setAntibanSaving(true);
+                    try {
+                      await updateInstanceAntibanV2(id, { preset });
+                      toast.success(`Anti-ban preset: ${preset}`);
+                      const next = await getInstanceAntibanV2(id);
+                      setAntibanV2(next);
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Preset update failed");
+                    } finally {
+                      setAntibanSaving(false);
+                    }
+                  }}
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
           </SettingsAccordionCard>
 
           <SettingsAccordionCard

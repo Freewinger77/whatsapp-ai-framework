@@ -5,14 +5,22 @@ export async function register() {
 
   (globalThis as typeof globalThis & { __wasupSchedulerStarted?: boolean }).__wasupSchedulerStarted = true;
 
-  const run = () => {
+  const runFullSweep = () => {
     void callInternal('/api/internal/azure/reconcile');
     void callInternal('/api/internal/trials/sweep');
     void callInternal('/api/internal/billing/sweep');
   };
 
-  setTimeout(run, 60_000);
-  setInterval(run, 15 * 60_000);
+  const runDnsPendingSweep = () => {
+    void callInternal('/api/internal/azure/reconcile');
+  };
+
+  // Fast path for dns_pending / provisioning — avoids 15+ minute UI stalls.
+  setTimeout(runDnsPendingSweep, 15_000);
+  setInterval(runDnsPendingSweep, 60_000);
+
+  setTimeout(runFullSweep, 60_000);
+  setInterval(runFullSweep, 15 * 60_000);
 }
 
 async function callInternal(path: string) {

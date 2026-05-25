@@ -4909,6 +4909,39 @@
                                     <span class="usage-value" id="usage-msgs-day">0/5000</span>
                 </div>
                 </div>
+                            <div class="v2-antiban-panel" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--zinc-800);">
+                                <div class="card-subtitle" style="margin-bottom: 10px;">Anti-Ban v2 (live limits)</div>
+                                <div class="usage-row">
+                                    <span class="usage-label">Warm-up</span>
+                                    <span class="usage-value" id="v2-warmup-status">—</span>
+                                </div>
+                                <div class="usage-row">
+                                    <span class="usage-label">v2 sent today</span>
+                                    <span class="usage-value" id="v2-rate-day">—</span>
+                                </div>
+                                <div class="usage-row">
+                                    <span class="usage-label">Risk</span>
+                                    <span class="usage-value" id="v2-health-risk">—</span>
+                                </div>
+                                <div class="form-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0;">
+                                    <label style="font-size: 12px; color: var(--zinc-400);">Max / hour
+                                        <input type="number" id="v2-max-hour" min="1" max="2000" class="input-sm" style="width:100%; margin-top:4px;">
+                                    </label>
+                                    <label style="font-size: 12px; color: var(--zinc-400);">Max / day
+                                        <input type="number" id="v2-max-day" min="1" max="50000" class="input-sm" style="width:100%; margin-top:4px;">
+                                    </label>
+                                </div>
+                                <label style="font-size: 12px; color: var(--zinc-400); display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+                                    <input type="checkbox" id="v2-warmup-enabled" checked>
+                                    Warm-up ramp enabled (day 1 default ~20/day)
+                                </label>
+                                <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                                    <button class="btn btn-primary btn-sm" id="btn-save-v2-antiban" type="button">Save v2 limits</button>
+                                    <button class="btn btn-sm" id="btn-graduate-warmup" type="button">Graduate warm-up</button>
+                                    <button class="btn btn-sm" id="btn-pause-v2" type="button">Pause</button>
+                                    <button class="btn btn-sm" id="btn-resume-v2" type="button">Resume</button>
+                                </div>
+                            </div>
             </div>
 
                         <!-- Behavior -->
@@ -5635,9 +5668,13 @@
                 el.infoMessages.textContent = stats.messagesThisDay || 0;
             }
 
+            renderAntibanV2Panel(instance);
+
             const preset = instance.antiBanSettings?.preset || 'balanced';
+            const v2Preset = instance.antibanV2?.preset;
+            const activePreset = v2Preset === 'moderate' ? 'balanced' : (v2Preset || preset);
             document.querySelectorAll('.preset-btn').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.preset === preset);
+                btn.classList.toggle('active', btn.dataset.preset === activePreset);
             });
 
             if (instance.behaviorSettings) {
@@ -6441,6 +6478,102 @@
             } catch (e) { showToast('Error: ' + e.message, 'error'); }
         });
 
+        function renderAntibanV2Panel(instance) {
+            const v2 = instance.antibanV2;
+            const warmupEl = document.getElementById('v2-warmup-status');
+            const rateDayEl = document.getElementById('v2-rate-day');
+            const riskEl = document.getElementById('v2-health-risk');
+            const maxHourEl = document.getElementById('v2-max-hour');
+            const maxDayEl = document.getElementById('v2-max-day');
+            const warmupToggle = document.getElementById('v2-warmup-enabled');
+            if (!warmupEl) return;
+
+            if (!v2) {
+                warmupEl.textContent = 'v2 not configured';
+                rateDayEl.textContent = '—';
+                riskEl.textContent = '—';
+                return;
+            }
+
+            const warmup = v2.warmup;
+            if (warmup) {
+                const limitLabel = warmup.todayLimit === -1 ? '∞' : warmup.todayLimit;
+                warmupEl.textContent = warmup.complete
+                    ? 'Graduated'
+                    : `Day ${warmup.day}/${warmup.totalDays} — ${warmup.todaySent}/${limitLabel} today`;
+            } else {
+                warmupEl.textContent = v2.running ? 'Active' : 'Offline';
+            }
+
+            const rl = v2.rateLimiter;
+            if (rl?.limits) {
+                rateDayEl.textContent = `${rl.lastDay || 0}/${rl.limits.maxPerDay || '—'}`;
+                if (maxHourEl && document.activeElement !== maxHourEl) {
+                    maxHourEl.value = rl.limits.maxPerHour || '';
+                }
+                if (maxDayEl && document.activeElement !== maxDayEl) {
+                    maxDayEl.value = rl.limits.maxPerDay || '';
+                }
+            } else if (v2.config?.overrides) {
+                if (maxHourEl && document.activeElement !== maxHourEl) {
+                    maxHourEl.value = v2.config.overrides.maxPerHour || v2.config.overrides.messagesPerHour || '';
+                }
+                if (maxDayEl && document.activeElement !== maxDayEl) {
+                    maxDayEl.value = v2.config.overrides.maxPerDay || v2.config.overrides.messagesPerDay || '';
+                }
+                rateDayEl.textContent = '—';
+            }
+
+            riskEl.textContent = v2.health?.risk || (v2.running ? 'ok' : 'offline');
+            if (warmupToggle) {
+                warmupToggle.checked = v2.modules?.warmup !== false;
+            }
+        }
+
+        async function saveAntibanV2Config() {
+            if (!selectedInstanceId) return;
+            const maxHour = parseInt(document.getElementById('v2-max-hour')?.value || '', 10);
+            const maxDay = parseInt(document.getElementById('v2-max-day')?.value || '', 10);
+            const warmupEnabled = document.getElementById('v2-warmup-enabled')?.checked !== false;
+            const body = {
+                modules: { warmup: { enabled: warmupEnabled } },
+                overrides: {}
+            };
+            if (Number.isFinite(maxHour) && maxHour > 0) body.overrides.maxPerHour = maxHour;
+            if (Number.isFinite(maxDay) && maxDay > 0) body.overrides.maxPerDay = maxDay;
+            await apiCall(`/instances/${selectedInstanceId}/antiban-v2/config`, 'PUT', body);
+            showToast('Anti-ban v2 limits updated', 'success');
+            await refreshInstancesFromApi();
+        }
+
+        document.getElementById('btn-save-v2-antiban')?.addEventListener('click', () => {
+            saveAntibanV2Config().catch(e => showToast('Error: ' + e.message, 'error'));
+        });
+        document.getElementById('btn-graduate-warmup')?.addEventListener('click', async () => {
+            if (!selectedInstanceId) return;
+            try {
+                await apiCall(`/instances/${selectedInstanceId}/antiban-v2/warmup`, 'POST', { action: 'graduate' });
+                showToast('Warm-up graduated — daily cap lifted', 'success');
+                await refreshInstancesFromApi();
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        });
+        document.getElementById('btn-pause-v2')?.addEventListener('click', async () => {
+            if (!selectedInstanceId) return;
+            try {
+                await apiCall(`/instances/${selectedInstanceId}/antiban-v2/pause`, 'POST', {});
+                showToast('Anti-ban v2 paused', 'warning');
+                await refreshInstancesFromApi();
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        });
+        document.getElementById('btn-resume-v2')?.addEventListener('click', async () => {
+            if (!selectedInstanceId) return;
+            try {
+                await apiCall(`/instances/${selectedInstanceId}/antiban-v2/resume`, 'POST', {});
+                showToast('Anti-ban v2 resumed', 'success');
+                await refreshInstancesFromApi();
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        });
+
         document.querySelectorAll('.preset-btn').forEach(btn => {
             btn.addEventListener('click', async () => {
                 if (!selectedInstanceId) return;
@@ -6451,8 +6584,12 @@
 
                 try {
                     await apiCall(`/instances/${selectedInstanceId}/anti-ban`, 'PUT', { preset });
+                    const v2Preset = preset === 'balanced' ? 'moderate' : preset;
+                    await apiCall(`/instances/${selectedInstanceId}/antiban-v2/config`, 'PUT', { preset: v2Preset });
+                    await refreshInstancesFromApi();
                 } catch (e) {
                     console.error('Failed to update anti-ban:', e);
+                    showToast('Anti-ban update failed: ' + e.message, 'error');
                 }
                 });
             });

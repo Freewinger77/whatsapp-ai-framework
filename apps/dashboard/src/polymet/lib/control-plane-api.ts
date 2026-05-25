@@ -613,6 +613,61 @@ export function instanceMediaPreviewUrl(instanceId: string, mediaId: string) {
   return `${API_BASE}/api/v3/instances/${encodeURIComponent(instanceId)}/media/${encodeURIComponent(mediaId)}`;
 }
 
+export type AntibanV2Status = {
+  enabled?: boolean;
+  running?: boolean;
+  preset?: string;
+  health?: { risk?: string; isPaused?: boolean } | null;
+  warmup?: {
+    day?: number;
+    totalDays?: number;
+    todayLimit?: number;
+    todaySent?: number;
+    complete?: boolean;
+  } | null;
+  rateLimiter?: {
+    lastDay?: number;
+    limits?: { maxPerHour?: number; maxPerDay?: number };
+  } | null;
+  config?: {
+    overrides?: { maxPerHour?: number; maxPerDay?: number };
+    modules?: { warmup?: { enabled?: boolean; day1Limit?: number } };
+  };
+};
+
+export async function getInstanceAntibanV2(instanceId: string) {
+  const payload = await api<{ success: boolean; antibanV2?: { antibanV2?: AntibanV2Status } & AntibanV2Status }>(
+    `/api/v3/instances/${encodeURIComponent(instanceId)}/antiban-v2`,
+    { cache: "no-store" },
+  );
+  const nested = payload.antibanV2;
+  if (nested && typeof nested === "object" && "antibanV2" in nested) {
+    return (nested as { antibanV2?: AntibanV2Status }).antibanV2 ?? null;
+  }
+  return (nested as AntibanV2Status | undefined) ?? null;
+}
+
+export async function updateInstanceAntibanV2(
+  instanceId: string,
+  body: {
+    preset?: "conservative" | "moderate" | "aggressive" | "balanced";
+    overrides?: { maxPerHour?: number; maxPerDay?: number };
+    modules?: { warmup?: { enabled?: boolean; day1Limit?: number } };
+  },
+) {
+  return api<{ success: boolean; antibanV2?: AntibanV2Status }>(
+    `/api/v3/instances/${encodeURIComponent(instanceId)}/antiban-v2/config`,
+    { method: "PUT", body: JSON.stringify(body) },
+  );
+}
+
+export async function graduateInstanceWarmup(instanceId: string) {
+  return api<{ success: boolean; antibanV2?: AntibanV2Status }>(
+    `/api/v3/instances/${encodeURIComponent(instanceId)}/antiban-v2/warmup`,
+    { method: "POST", body: JSON.stringify({ action: "graduate" }) },
+  );
+}
+
 export function regionLabelToCode(region: string) {
   const map: Record<string, string> = {
     Finland: "fi",

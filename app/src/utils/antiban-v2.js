@@ -362,3 +362,71 @@ export async function rampPresence(sock, abortSignal, opts = {}) {
 // ----------------------------------------------------------------------------
 
 export { STEALTH_BROWSER_POOL, getStealthSocketConfig, classifyDisconnect };
+
+/** v2 preset rate-limit baselines (mirrors baileys-antiban presets). */
+export const V2_PRESET_LIMITS = {
+    conservative: { maxPerMinute: 5, maxPerHour: 100, maxPerDay: 800 },
+    moderate: { maxPerMinute: 8, maxPerHour: 200, maxPerDay: 1500 },
+    aggressive: { maxPerMinute: 12, maxPerHour: 400, maxPerDay: 4000 },
+};
+
+/** Map legacy dashboard preset names to v2 preset keys. */
+export function legacyPresetToV2(preset) {
+    return LEGACY_PRESET_MAP[preset] || preset || 'moderate';
+}
+
+/**
+ * Apply config changes to a running AntiBan instance without reconnecting.
+ * Returns which fields were hot-applied.
+ */
+export function applyLiveAntibanConfig(antibanCtx, v2config) {
+    if (!antibanCtx?.antiban) {
+        return { applied: false, reason: 'not_running' };
+    }
+
+    const ab = antibanCtx.antiban;
+    const preset = v2config?.preset || 'moderate';
+    const overrides = v2config?.overrides || {};
+    const base = V2_PRESET_LIMITS[preset] || V2_PRESET_LIMITS.moderate;
+    const applied = [];
+
+    const rateLimiter = ab.rateLimiter || ab['rateLimiter'];
+    if (rateLimiter?.config) {
+        const next = {
+            ...rateLimiter.config,
+            maxPerMinute: overrides.maxPerMinute ?? base.maxPerMinute,
+            maxPerHour: overrides.maxPerHour ?? overrides.messagesPerHour ?? base.maxPerHour,
+            maxPerDay: overrides.maxPerDay ?? overrides.messagesPerDay ?? base.maxPerDay,
+        };
+        if (overrides.minDelayMs != null) next.minDelayMs = overrides.minDelayMs;
+        if (overrides.maxDelayMs != null) next.maxDelayMs = overrides.maxDelayMs;
+        rateLimiter.config = next;
+        applied.push('rateLimiter');
+    }
+
+    const warmUp = ab.warmUp || ab['warmUp'];
+    const warmupMod = v2config?.modules?.warmup;
+    if (warmUp) {
+        if (warmupMod?.enabled === false) {
+            warmUp.state.graduated = true;
+            warmUp.state.lastActiveAt = Date.now();
+            applied.push('warmupDisabled');
+        } else if (warmupMod) {
+            if (warmupMod.warmupDays != null) warmUp.config.warmUpDays = warmupMod.warmupDays;
+            if (warmupMod.day1Limit != null) warmUp.config.day1Limit = warmupMod.day1Limit;
+            if (warmupMod.growthFactor != null) warmUp.config.growthFactor = warmupMod.growthFactor;
+            applied.push('warmupConfig');
+        }
+    }
+
+    return { applied: applied.length > 0, fields: applied };
+}
+
+/** Mark warm-up as graduated on a live AntiBan instance (removes day-1 ~20 msg cap). */
+export function graduateWarmupLive(antibanCtx) {
+    const warmUp = antibanCtx?.antiban?.warmUp || antibanCtx?.antiban?.['warmUp'];
+    if (!warmUp) return false;
+    warmUp.state.graduated = true;
+    warmUp.state.lastActiveAt = Date.now();
+    return true;
+}

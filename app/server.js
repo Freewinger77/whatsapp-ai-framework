@@ -1280,6 +1280,24 @@ app.post('/api/instances/:id/antiban-v2/resume', (req, res) => {
 });
 
 /**
+ * POST /api/instances/:id/antiban-v2/warmup
+ * Body: { action: 'graduate' } — lift day-1 warm-up caps without reconnecting.
+ */
+app.post('/api/instances/:id/antiban-v2/warmup', async (req, res) => {
+    try {
+        const action = req.body?.action || 'graduate';
+        if (action !== 'graduate') {
+            return res.status(400).json({ error: 'Unsupported action. Use { action: "graduate" }.' });
+        }
+        const result = await instanceManager.graduateWarmupAntiban(req.params.id);
+        broadcastToAll({ type: 'antibanV2_warmup', instanceId: req.params.id, action });
+        res.json({ success: true, antibanV2: result, message: 'Warm-up graduated — daily send cap lifted.' });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
  * POST /api/instances/:id/antiban-v2/reset
  * Nuclear reset — clears warmup, rate-limit history, health stats, retry-tracker
  * state. Use after serving a real ban period. Fingerprint is preserved.

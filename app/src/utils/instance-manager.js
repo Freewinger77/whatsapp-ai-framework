@@ -32,6 +32,9 @@ import { ProxyPoolManager } from './proxy-pool.js';
 import {
     buildAntibanContext,
     legacyToV2Config,
+    legacyPresetToV2,
+    applyLiveAntibanConfig,
+    graduateWarmupLive,
     pickOrLoadFingerprint,
     planReconnect,
     rampPresence,
@@ -2703,14 +2706,62 @@ class WhatsAppInstance {
             throw new Error('updates must be an object');
         }
         const before = this.antibanV2 || legacyToV2Config(this.antiBanSettings);
+        const mergedModules = { ...(before.modules || {}) };
+        for (const [key, val] of Object.entries(updates.modules || {})) {
+            mergedModules[key] = { ...(mergedModules[key] || {}), ...val };
+        }
         const next = {
             ...before,
             ...updates,
-            modules: { ...(before.modules || {}), ...(updates.modules || {}) },
+            modules: mergedModules,
             overrides: { ...(before.overrides || {}), ...(updates.overrides || {}) },
         };
+        if (updates.preset) {
+            next.preset = legacyPresetToV2(updates.preset);
+        }
         this.antibanV2 = next;
-        this._log('Anti-ban v2 config updated (full effect on next reconnect)', 'info');
+
+        // Keep legacy anti-ban settings in sync for dashboard preset buttons / health display.
+        if (updates.preset || updates.overrides) {
+            const legacyPreset = updates.preset || this.antiBanSettings?.preset || 'balanced';
+            const patch = { preset: legacyPreset === 'moderate' ? 'balanced' : legacyPreset };
+            if (next.overrides?.maxPerHour || next.overrides?.messagesPerHour) {
+                patch.messagesPerHour = next.overrides.maxPerHour ?? next.overrides.messagesPerHour;
+            }
+            if (next.overrides?.maxPerDay || next.overrides?.messagesPerDay) {
+                patch.messagesPerDay = next.overrides.maxPerDay ?? next.overrides.messagesPerDay;
+            }
+            this.updateAntiBanSettings({ ...this.antiBanSettings, ...patch });
+        }
+
+        const live = applyLiveAntibanConfig(this.antibanCtx, next);
+        if (live.applied) {
+            this._log(`Anti-ban v2 live update: ${live.fields.join(', ')}`, 'success');
+            try { await this.antibanCtx?.saveAll?.(); } catch (_) {}
+        } else {
+            this._log('Anti-ban v2 config saved (applies on next connect if instance is offline)', 'info');
+        }
+        return this.getAntibanV2Status();
+    }
+
+    /**
+     * Graduate warm-up on a live instance — removes the day-1 ~20 message cap immediately.
+     */
+    async graduateWarmupAntiban() {
+        if (!this.antibanV2) {
+            this.antibanV2 = legacyToV2Config(this.antiBanSettings);
+        }
+        this.antibanV2.modules = {
+            ...(this.antibanV2.modules || {}),
+            warmup: { ...(this.antibanV2.modules?.warmup || {}), enabled: false },
+        };
+        const graduated = graduateWarmupLive(this.antibanCtx);
+        if (graduated) {
+            this._log('Anti-ban v2 warm-up graduated (daily cap lifted)', 'success');
+            try { await this.antibanCtx?.saveAll?.(); } catch (_) {}
+        } else {
+            this._log('Anti-ban v2 warm-up marked graduated in config (applies on next connect)', 'info');
+        }
         return this.getAntibanV2Status();
     }
 
@@ -3504,7 +3555,17 @@ class InstanceManager {
     async resetAntibanV2(id) {
         const instance = this.instances.get(id);
         if (!instance) throw new Error(`Instance ${id} not found`);
-        return await instance.resetAntibanV2();
+        const result = await instance.resetAntibanV2();
+        await this._saveInstances();
+        return result;
+    }
+
+    async graduateWarmupAntiban(id) {
+        const instance = this.instances.get(id);
+        if (!instance) throw new Error(`Instance ${id} not found`);
+        const result = await instance.graduateWarmupAntiban();
+        await this._saveInstances();
+        return result;
     }
 
     getLidMappings(id) {

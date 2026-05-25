@@ -173,7 +173,7 @@ export async function notifyDeploymentReady(input: {
     metadata: { deploymentId: input.deploymentId, baseUrl: input.baseUrl }
   });
 
-  return notifyOrgAdmins({
+  await notifyOrgAdmins({
     orgId: input.orgId,
     eventType: 'deployment.ready',
     subject: 'Your Wasup workspace is ready',
@@ -182,6 +182,50 @@ export async function notifyDeploymentReady(input: {
     idempotencyKey: `email:deployment-ready:${input.deploymentId}`,
     metadata: { deploymentId: input.deploymentId, baseUrl: input.baseUrl }
   });
+
+  return retryFailedDeploymentReadyEmails({
+    orgId: input.orgId,
+    deploymentId: input.deploymentId,
+    baseUrl: input.baseUrl,
+    dashboardUrl
+  });
+}
+
+/** Retry SMTP delivery when the first deployment.ready email failed (e.g. transient host block). */
+export async function retryFailedDeploymentReadyEmails(input: {
+  orgId: string;
+  deploymentId: string;
+  baseUrl: string;
+  dashboardUrl: string;
+}) {
+  const supabase = getSupabaseAdmin() as any;
+  const { data: failedRows } = await supabase
+    .from('notification_events')
+    .select('id, recipient')
+    .eq('org_id', input.orgId)
+    .eq('event_type', 'deployment.ready')
+    .eq('provider', 'smtp')
+    .eq('status', 'failed')
+    .limit(10);
+
+  if (!failedRows?.length) return { retried: 0, sent: 0 };
+
+  let sent = 0;
+  for (const row of failedRows) {
+    const result = await sendNotificationEmail({
+      orgId: input.orgId,
+      eventType: 'deployment.ready',
+      subject: 'Your Wasup workspace is ready',
+      text: `Your Wasup worker is ready at ${input.baseUrl}. You can now connect your WhatsApp instances.\n\nOpen Wasup: ${input.dashboardUrl}`,
+      html: `<p>Your Wasup worker is ready at <a href="${input.baseUrl}">${input.baseUrl}</a>.</p><p>You can now connect your WhatsApp instances.</p><p><a href="${input.dashboardUrl}">Open Wasup</a></p>`,
+      idempotencyKey: `email:deployment-ready:${input.deploymentId}:${row.recipient}:retry`,
+      metadata: { deploymentId: input.deploymentId, baseUrl: input.baseUrl, retryOf: row.id },
+      recipient: row.recipient
+    });
+    if (result.sent) sent += 1;
+  }
+
+  return { retried: failedRows.length, sent };
 }
 
 export async function recordDeploymentStatusNotification(input: {

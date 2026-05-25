@@ -86,6 +86,23 @@ export async function POST(req: Request) {
     }
 
     try {
+      // VM already has a public IP but health/DNS verification failed earlier — retry directly.
+      if (deployment.status === 'dns_pending' && deployment.public_ip) {
+        const ready = await markDeploymentPublicIp({
+          orgId: deployment.org_id,
+          publicIp: deployment.public_ip,
+          deployedVersion: process.env.WASUP_WORKER_GIT_REF
+        });
+        results.push({
+          id: deployment.id,
+          ready: ready.deployment.status === 'ready',
+          publicIp: deployment.public_ip,
+          deployment: ready.deployment,
+          dnsPendingRetry: true
+        });
+        continue;
+      }
+
       const state = await reconcileAzureVmDeployment({
         resourceGroup: deployment.azure_resource_group,
         vmName: deployment.vm_name

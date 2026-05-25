@@ -238,6 +238,29 @@ export async function fetchWorkerInstanceMedia(input: WorkerRequestInput, mediaI
   };
 }
 
+export async function getWorkerAntibanV2(input: WorkerRequestInput) {
+  const response = await requestWorker(input, `/api/instances/${encodeURIComponent(input.instanceId)}/antiban-v2`);
+  return parseWorkerResponse(response, 'Worker antiban v2 status failed');
+}
+
+export async function updateWorkerAntibanV2(input: WorkerRequestInput, body: Record<string, unknown>) {
+  const response = await requestWorker(
+    input,
+    `/api/instances/${encodeURIComponent(input.instanceId)}/antiban-v2/config`,
+    { method: 'PUT', body }
+  );
+  return parseWorkerResponse(response, 'Worker antiban v2 update failed');
+}
+
+export async function graduateWorkerWarmup(input: WorkerRequestInput) {
+  const response = await requestWorker(
+    input,
+    `/api/instances/${encodeURIComponent(input.instanceId)}/antiban-v2/warmup`,
+    { method: 'POST', body: { action: 'graduate' } }
+  );
+  return parseWorkerResponse(response, 'Worker warmup graduate failed');
+}
+
 async function parseWorkerResponse(response: Response, message: string) {
   const body = await safeJson(response);
   if (!response.ok) {
