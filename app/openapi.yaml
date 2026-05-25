@@ -35,18 +35,28 @@ servers:
   - url: http://localhost:3000
     description: Local development server
 tags:
+  - name: Whitelabel
+    description: Single-call helpers that create, configure, and connect a number in one request — ideal for onboarding flows.
   - name: Instances
     description: Create, read, update, and delete WhatsApp instances. An instance is one linked phone number plus its settings.
   - name: Connection
     description: Start or stop the live WhatsApp session, fetch QR/pairing codes, and check whether a number is linked.
   - name: Messaging
     description: Send text, media, buttons, lists, and reactions to customers. Auto-select routes pick the first connected instance when you omit an instance id.
+  - name: Reactions
+    description: Attach or remove emoji reactions on existing messages using the message id from webhooks or send responses.
+  - name: Handoff
+    description: Pause automated replies for specific chats while a human agent takes over the conversation.
+  - name: Profile
+    description: Read or update the WhatsApp display name, profile photo, and About text for a linked instance.
   - name: Webhook
     description: Configure where inbound messages are delivered and inspect the JSON shape your receiver should expect.
   - name: Behavior
     description: Control typing indicators, human-like delays, and whether the linked phone should receive push notifications before the API marks messages read.
   - name: Anti-Ban
     description: Legacy rate-limit presets and usage counters that protect a number from sending too fast.
+  - name: Wasup Anti-Ban
+    description: Advanced per-instance protection modules (warm-up, rate limits, health monitoring, presence timing). State is stored on disk per instance.
   - name: Logs
     description: Read recent connection and messaging activity for troubleshooting.
   - name: System
@@ -55,6 +65,99 @@ security:
   - ApiKeyAuth: []
   - BearerAuth: []
 paths:
+  /api/onboard:
+    post:
+      tags:
+        - Whitelabel
+      summary: Onboard a new WhatsApp number
+      description: "**Onboard a new WhatsApp number in one call.** Creates an instance (or reuses an existing one for the same phone), sets optional webhook and profile fields, starts pairing, and returns a pairing code when applicable. Use this when your product wizard should not make separate create/connect/webhook calls."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - phone
+              properties:
+                phone:
+                  type: string
+                  description: Phone number with country code (+ prefix optional)
+                  example: "447393002183"
+                name:
+                  type: string
+                  description: Friendly name for the instance
+                  example: Acme Corp
+                webhookUrl:
+                  type: string
+                  format: uri
+                  description: URL to forward inbound messages to
+                  example: https://acme.com/webhook
+                profileName:
+                  type: string
+                  description: WhatsApp display name (applied once connected)
+                  example: Acme Support
+                profileStatus:
+                  type: string
+                  description: WhatsApp "About" text (applied once connected)
+                  example: We reply within minutes
+                behaviorSettings:
+                  $ref: "#/components/schemas/BehaviorSettings"
+                  description: |
+                    Optional behavior overrides at onboarding time. For
+                    human-monitored deployments (clinics, support desks), use
+                    `behaviorProfile: notification-balanced` so inbound
+                    webhooks stay immediate while handset alerts are prioritized.
+            examples:
+              minimal:
+                summary: Phone only
+                value:
+                  phone: "447393002183"
+              full:
+                summary: Full onboarding
+                value:
+                  phone: "447393002183"
+                  name: Acme Corp
+                  webhookUrl: https://acme.com/webhook
+                  profileName: Acme Support
+                  profileStatus: We reply within minutes
+              clinic:
+                summary: Clinic / human-monitored (phone notifications on)
+                value:
+                  phone: "447393002183"
+                  name: Smile Dental
+                  webhookUrl: https://wasup.co/webhook/...
+                  behaviorSettings:
+                    behaviorProfile: notification-balanced
+                    notificationGraceMs: 12000
+                    typingSimulation: true
+      responses:
+        "200":
+          description: Instance already exists for this phone
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnboardResponse"
+              example:
+                success: true
+                instanceId: wa_abc123
+                pairingCode: null
+                status: connected
+                message: Instance already exists for this phone number
+        "201":
+          description: Instance created and pairing code generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnboardResponse"
+              example:
+                success: true
+                instanceId: wa_abc123
+                pairingCode: A1B2-C3D4
+                status: connecting
+                message: Enter code A1B2-C3D4 in WhatsApp > Linked Devices > Link a Device
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /api/instances:
     get:
       tags:
@@ -215,6 +318,17 @@ paths:
         - Connection
       summary: Connect instance
       description: "**Start linking this instance to WhatsApp.** Opens a pairing session. By default returns QR mode — poll `GET .../qr` and show the code to the user. Pass `pairingPhone` to receive a numeric pairing code instead of QR. Safe to retry while status is `connecting`."
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pairingPhone:
+                  type: string
+                  description: Phone number with country code (no + prefix). If provided, uses pairing code instead of QR.
+                  example: "447393002183"
       responses:
         "200":
           description: Connection started
@@ -228,7 +342,12 @@ paths:
                     example: true
                   message:
                     type: string
-                    example: Connection started
+                    example: Connection started (QR mode)
+                  pairingCode:
+                    type: string
+                    nullable: true
+                    description: Pairing code (only when pairingPhone was provided)
+                    example: A1B2-C3D4
                   instance:
                     $ref: "#/components/schemas/Instance"
         "400":
@@ -251,7 +370,7 @@ paths:
                 revoke:
                   type: boolean
                   default: false
-                  description: Log out from WhatsApp and revoke the linked device session. Reconnecting will require QR scan or pairing again.
+                  description: If true, revoke the session on WhatsApp servers (optional).
       responses:
         "200":
           description: Disconnected
@@ -296,17 +415,67 @@ paths:
                     $ref: "#/components/schemas/Instance"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /api/instances/{instanceId}/pair:
+    parameters:
+      - $ref: "#/components/parameters/instanceId"
+    post:
+      tags:
+        - Connection
+      summary: Connect via pairing code
+      description: "**Connect using a pairing code instead of QR.** Requires the phone number in the body. Returns a short code the user enters under WhatsApp → Linked devices. Automatically starts the connection if not already connecting."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - phoneNumber
+              properties:
+                phoneNumber:
+                  type: string
+                  description: Phone number with country code, no + prefix
+                  example: "447393002183"
+      responses:
+        "200":
+          description: Pairing code generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  pairingCode:
+                    type: string
+                    example: A1B2-C3D4
+                  message:
+                    type: string
+                    example: Enter code A1B2-C3D4 in WhatsApp > Linked Devices > Link a Device
+                  instance:
+                    $ref: "#/components/schemas/Instance"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /api/instances/{instanceId}/qr:
     parameters:
       - $ref: "#/components/parameters/instanceId"
     get:
       tags:
         - Connection
-      summary: Get QR code
+      summary: Get QR / pairing code
       description: "**Get the current QR image or pairing code.** Poll while status is `connecting`. Append `?format=image` for a raw PNG suitable for mobile apps. Returns connected phone when status is `connected`. Returns 204 when no code is ready yet — call `/connect` first."
+      parameters:
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum:
+              - image
+          description: Set to `image` to receive a raw PNG instead of JSON
       responses:
         "200":
-          description: QR code response
+          description: QR / pairing code (JSON)
           content:
             application/json:
               schema:
@@ -327,13 +496,51 @@ paths:
                     nullable: true
                     description: Base64 data URL of QR code image
                     example: data:image/png;base64,iVBORw0KGgo...
+                  pairingCode:
+                    type: string
+                    nullable: true
+                    description: Pairing code (if using pairing code mode)
+                    example: A1B2-C3D4
                   phone:
                     type: string
                     nullable: true
-                    description: Connected phone number (when status is 'connected')
+                    description: Connected phone (when status is 'connected')
                   message:
                     type: string
-                    example: QR code not yet generated. Call /connect first.
+                    example: Not yet generated. Call /connect or /pair first.
+            image/png:
+              schema:
+                type: string
+                format: binary
+                description: Raw QR code PNG (when ?format=image)
+        "204":
+          description: No QR code available (already connected or not yet generated)
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/instances/{instanceId}/connection:
+    parameters:
+      - $ref: "#/components/parameters/instanceId"
+    get:
+      tags:
+        - Whitelabel
+        - Connection
+      summary: Poll connection status
+      description: "**Lightweight connection poll.** Returns only status, phone, uptime, and pairing/QR hints — faster than fetching the full instance object. Ideal for frontends that refresh every few seconds during onboarding."
+      responses:
+        "200":
+          description: Connection status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionStatus"
+              example:
+                success: true
+                status: connected
+                phone: "447393002183"
+                connectedAt: 2026-01-29T12:00:00.000Z
+                uptime: 3600
+                pairingCode: null
+                qrCode: null
         "404":
           $ref: "#/components/responses/NotFound"
   /api/instances/{instanceId}/send:
@@ -349,137 +556,24 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - to
-                - message
-              properties:
-                to:
-                  type: string
-                  description: Phone number (with country code, no + or spaces)
-                  example: "60123456789"
-                message:
-                  type: string
-                  description: Message text to send. Required unless link, ctaUrl, or buttons are supplied.
-                  example: Hello! How can I help you today?
-                link:
-                  $ref: "#/components/schemas/SendLink"
-                ctaUrl:
-                  $ref: "#/components/schemas/CtaUrl"
-                buttons:
-                  $ref: "#/components/schemas/QuickReplyButtons"
-                linkPreview:
-                  type: boolean
-                  description: Enable WhatsApp link preview generation for text messages that contain a URL
-                  default: true
-                  example: true
-                footer:
-                  type: string
-                  description: Optional footer text for interactive messages
-                  example: Wasup API
-                behaviorProfile:
-                  $ref: "#/components/schemas/BehaviorProfile"
-                typingSimulation:
-                  type: boolean
-                  description: Override instance setting for this message
-                  example: true
-                delayEnabled:
-                  type: boolean
-                  description: Override instance setting for this message
-                  example: true
-                phoneNotificationsEnabled:
-                  type: boolean
-                  description: Override whether this message should favor phone push notifications before read/typing activity
-                  example: false
-                notificationGraceMs:
-                  type: integer
-                  minimum: 0
-                  description: Override notification-first wait time in milliseconds
-                  example: 2500
-      responses:
-        "200":
-          description: Message sent
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  result:
-                    $ref: "#/components/schemas/SendResult"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-  /api/instances/{instanceId}/send/interactive:
-    parameters:
-      - $ref: "#/components/parameters/instanceId"
-    post:
-      tags:
-        - Messaging
-      summary: Send interactive-capable message via instance
-      description: "**Same as `/send` with documentation focused on interactive payloads.** Use for button-heavy examples. Supports combining one CTA URL button with up to two quick-reply buttons (three interactive actions total)."
-      requestBody:
-        required: true
-        content:
-          application/json:
+              $ref: "#/components/schemas/SendMessageBody"
             examples:
-              linkPreview:
-                summary: Text with URL preview
+              text:
+                summary: Plain text
                 value:
                   to: "60123456789"
-                  message: Here is the booking page.
-                  link:
-                    url: https://example.com/booking
-                  linkPreview: true
-              quickReplyNative:
-                summary: Native quick reply buttons
+                  message: Hello from Wasup
+              buttons:
+                summary: Interactive quick-reply buttons
                 value:
                   to: "60123456789"
-                  message: Choose an option and reply with the number.
+                  text: Choose an option
                   buttons:
-                    - id: pricing
-                      text: Pricing
-                    - id: demo
-                      text: Demo
-                    - id: human
-                      text: Human
-              ctaNative:
-                summary: Native CTA URL button
-                value:
-                  to: "60123456789"
-                  message: Ready to book?
-                  ctaUrl:
-                    label: Book now
-                    url: https://example.com/book
-              ctaWithReply:
-                summary: CTA URL plus one quick reply button
-                value:
-                  to: "60123456789"
-                  message: Ready to book your slot?
-                  ctaUrl:
-                    label: Book now
-                    url: https://example.com/book
-                  buttons:
-                    - id: human
-                      text: Talk to human
-              imageSend:
-                summary: Send image with caption
-                value:
-                  to: "60123456789"
-                  image:
-                    url: https://example.com/product.jpg
-                    caption: New arrival
-              locationSend:
-                summary: Send location pin
-                value:
-                  to: "60123456789"
-                  location:
-                    latitude: 51.5074
-                    longitude: -0.1278
-                    name: London office
-            schema:
-              $ref: "#/components/schemas/InteractiveSendRequest"
+                    - id: yes
+                      text: Yes
+                    - id: no
+                      text: No
+                  footer: Wasup
       responses:
         "200":
           description: Message sent
@@ -491,76 +585,13 @@ paths:
                   success:
                     type: boolean
                     example: true
+                  messageType:
+                    type: string
+                    example: text
                   result:
                     $ref: "#/components/schemas/SendResult"
         "400":
           $ref: "#/components/responses/BadRequest"
-  /api/instances/{instanceId}/media:
-    parameters:
-      - $ref: "#/components/parameters/instanceId"
-    get:
-      tags:
-        - Messaging
-      summary: List stored media for an instance
-      description: "**List files stored for this instance.** Includes inbound and outbound media saved on the worker disk. Filter by `type` and paginate with `limit`. Each row includes `downloadUrl` for authenticated file fetch."
-      parameters:
-        - name: type
-          in: query
-          schema:
-            type: string
-            enum:
-              - image
-              - document
-              - audio
-              - video
-              - location
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
-            maximum: 200
-      responses:
-        "200":
-          description: Media index
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  count:
-                    type: integer
-                  media:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/StoredMedia"
-        "404":
-          $ref: "#/components/responses/NotFound"
-  /api/instances/{instanceId}/media/{mediaId}:
-    parameters:
-      - $ref: "#/components/parameters/instanceId"
-      - name: mediaId
-        in: path
-        required: true
-        schema:
-          type: string
-    get:
-      tags:
-        - Messaging
-      summary: Download stored media file
-      responses:
-        "200":
-          description: Media bytes
-          content:
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-        "404":
-          $ref: "#/components/responses/NotFound"
-      description: "**Download one stored media file.** Use the `media_id` from an inbound webhook or from the media list. Requires the same API key as other routes. Returns raw bytes with the original content type."
   /api/send:
     post:
       tags:
@@ -572,49 +603,111 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - to
-                - message
-              properties:
-                instanceId:
-                  type: string
-                  description: Instance ID (optional, auto-selects if not provided)
-                  example: wa_xxx
-                to:
-                  type: string
-                  description: Phone number (with country code)
-                  example: "60123456789"
-                message:
-                  type: string
-                  example: Hello!
-                link:
-                  $ref: "#/components/schemas/SendLink"
-                ctaUrl:
-                  $ref: "#/components/schemas/CtaUrl"
-                buttons:
-                  $ref: "#/components/schemas/QuickReplyButtons"
-                linkPreview:
-                  type: boolean
-                  default: true
-                behaviorProfile:
-                  $ref: "#/components/schemas/BehaviorProfile"
-                typingSimulation:
-                  type: boolean
-                  description: Override instance setting for this message
-                delayEnabled:
-                  type: boolean
-                  description: Override instance setting for this message
-                phoneNotificationsEnabled:
-                  type: boolean
-                  description: Override whether this message should favor phone push notifications before read/typing activity
-                notificationGraceMs:
-                  type: integer
-                  minimum: 0
-                  description: Override notification-first wait time in milliseconds
+              allOf:
+                - $ref: "#/components/schemas/SendMessageBody"
+                - type: object
+                  properties:
+                    from_phone:
+                      type: string
+                      description: Your connected phone number to send from (optional, auto-selects if omitted)
+                      example: "60123456789"
+                    to_phone:
+                      type: string
+                      description: Alias for `to`
+                      example: "60198765432"
+            examples:
+              autoSelectButtons:
+                summary: Auto-select connected instance and send buttons
+                value:
+                  to_phone: "60123456789"
+                  text: Choose an option
+                  buttons:
+                    - id: yes
+                      text: Yes
+                    - id: no
+                      text: No
+                  footer: Wasup
+              fromPhoneButtons:
+                summary: Send buttons from a specific connected phone
+                value:
+                  from_phone: "60111111111"
+                  to_phone: "60123456789"
+                  message: Choose an option
+                  messageType: buttons
+                  buttons:
+                    - id: yes
+                      text: Yes
+                    - id: no
+                      text: No
       responses:
         "200":
           description: Message sent
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    message_id:
+                      type: string
+                      format: uuid
+                    created_at:
+                      type: string
+                      format: date-time
+                    from_phone:
+                      type: string
+                    to_phone:
+                      type: string
+                    message:
+                      type: string
+                    message_type:
+                      type: string
+                      example: text
+                    status:
+                      type: string
+                      enum:
+                        - sent
+                        - rate_limited
+                        - failed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/instances/{instanceId}/messages:
+    parameters:
+      - $ref: "#/components/parameters/instanceId"
+    get:
+      tags:
+        - Whitelabel
+        - Messaging
+      summary: Get message history
+      description: "**Search recent message history stored on the worker.** Filter by phone, direction, or text search. Useful for support consoles; primary automation should still rely on webhooks for real-time inbound events."
+      parameters:
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum:
+              - inbound
+              - outbound
+          description: Filter by message direction (omit for both)
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Max messages to return
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Only return messages after this ISO timestamp
+          example: 2026-01-29T00:00:00.000Z
+      responses:
+        "200":
+          description: Message history
           content:
             application/json:
               schema:
@@ -623,42 +716,30 @@ paths:
                   success:
                     type: boolean
                     example: true
-                  instanceId:
-                    type: string
-                    description: Instance that was used
-                    example: wa_xxx
-                  result:
-                    $ref: "#/components/schemas/SendResult"
-        "400":
-          $ref: "#/components/responses/BadRequest"
+                  count:
+                    type: integer
+                    example: 12
+                  messages:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Message"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/instances/{instanceId}/react:
     parameters:
       - $ref: "#/components/parameters/instanceId"
     post:
       tags:
+        - Reactions
         - Messaging
-      summary: React to a message via instance
+      summary: React to a message (instance)
       description: "**Add or remove a reaction emoji on a message.** Provide `to`, `messageId` from a webhook or send response, and `emoji` (empty string removes the reaction). Set `fromMe: true` when reacting to a message this instance sent."
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ReactionRequest"
-            examples:
-              reactToIncoming:
-                summary: React to an incoming message
-                value:
-                  to: "60123456789"
-                  messageId: 3EB0123456789ABCDEF
-                  emoji: 👍
-                  fromMe: false
-              removeReaction:
-                summary: Remove a reaction
-                value:
-                  to: "60123456789"
-                  messageId: 3EB0123456789ABCDEF
-                  emoji: ""
+              $ref: "#/components/schemas/ReactionBody"
       responses:
         "200":
           description: Reaction sent
@@ -670,13 +751,19 @@ paths:
                   success:
                     type: boolean
                     example: true
-                  result:
-                    $ref: "#/components/schemas/ReactionResult"
+                  emoji:
+                    type: string
+                    example: 🔥
+                  messageId:
+                    type: string
         "400":
           $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/react:
     post:
       tags:
+        - Reactions
         - Messaging
       summary: React to a message (auto-select instance)
       description: "**React using auto-selected instance.** Same body as instance react plus optional `from_phone` to choose which linked number performs the reaction."
@@ -686,13 +773,14 @@ paths:
           application/json:
             schema:
               allOf:
-                - $ref: "#/components/schemas/ReactionRequest"
+                - $ref: "#/components/schemas/ReactionBody"
                 - type: object
                   properties:
                     from_phone:
                       type: string
-                      description: Connected sender phone number used to pick the instance
-                      example: "60198765432"
+                      description: Sender phone number to match an instance (optional)
+                      example: "358942721757"
+                  required: []
       responses:
         "200":
           description: Reaction sent
@@ -704,95 +792,415 @@ paths:
                   success:
                     type: boolean
                     example: true
-                  instanceId:
+                  instance_id:
                     type: string
-                    example: wa_xxx
-                  result:
-                    $ref: "#/components/schemas/ReactionResult"
+                  emoji:
+                    type: string
+                  messageId:
+                    type: string
         "400":
           $ref: "#/components/responses/BadRequest"
-  /api/proxy:
-    get:
-      tags:
-        - Proxy
-      summary: Deployment proxy and pool summary
-      responses:
-        "200":
-          description: Proxy deployment info
-      description: "**Deployment-level proxy summary** — whether a pool is configured and how many slots are in use."
-  /api/proxy/pool:
-    get:
-      tags:
-        - Proxy
-      summary: Proxy pool state
-      responses:
-        "200":
-          description: Pool slots and assignments
-      description: "**List all proxy pool slots** with assignment status and which instance (if any) holds each slot."
-  /api/instances/{instanceId}/proxy:
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/instances/{instanceId}/handoff:
     parameters:
       - $ref: "#/components/parameters/instanceId"
     get:
       tags:
-        - Proxy
-      summary: Get instance proxy status
-      description: "**Read proxy configuration for one instance** — override URL, effective proxy, and live egress state."
+        - Handoff
+      summary: Get active human-handoff chats
+      description: "**List chats currently in human handoff mode.** While handoff is active for a contact, automated replies are suppressed so agents can respond manually from the phone or another tool."
       responses:
         "200":
-          description: Proxy status
+          description: Handoff list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  chats:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        chatId:
+                          type: string
+                          example: 447835156367@s.whatsapp.net
+                        since:
+                          type: string
+                          format: date-time
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags:
+        - Handoff
+      summary: Tag or untag a chat for human handoff
+      description: "**Mark a chat as human-controlled.** Provide customer phone or chat id. Optional resume keywords and message control when the bot should start again."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - phone
+                - active
+              properties:
+                phone:
+                  type: string
+                  description: Phone number or phone or chat id to tag
+                  example: "447835156367"
+                active:
+                  type: boolean
+                  description: "`true` to pause bot, `false` to resume"
+                  example: true
+      responses:
+        "200":
+          description: Handoff updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  chatId:
+                    type: string
+                  active:
+                    type: boolean
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags:
+        - Handoff
+      summary: Clear all human handoff tags
+      description: "**Clear handoff for one contact or all contacts.** Automation resumes for the cleared chats on the next inbound message."
+      responses:
+        "200":
+          description: All handoffs cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  cleared:
+                    type: integer
+                    example: 3
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/instances/{instanceId}/handoff/settings:
+    parameters:
+      - $ref: "#/components/parameters/instanceId"
+    get:
+      tags:
+        - Handoff
+      summary: Get handoff settings
+      description: "**Read handoff keywords, resume message, and managed numbers** configured for this instance."
+      responses:
+        "200":
+          description: Handoff settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  settings:
+                    $ref: "#/components/schemas/HandoffSettings"
+        "404":
+          $ref: "#/components/responses/NotFound"
     put:
       tags:
-        - Proxy
-      summary: Attach proxy to instance
-      description: "**Attach or change the outbound proxy** for an instance. Accepts full proxy URL or `host:port:user:pass` shorthand. Reconnects the instance when already online."
+        - Handoff
+      summary: Update handoff settings
+      description: "**Update handoff rules** such as keywords that return control to the bot and default resume text."
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
               properties:
-                url:
+                resumeKeywords:
+                  type: array
+                  items:
+                    type: string
+                  description: Keywords that resume the AI agent (e.g. `["#ai", "#resume"]`)
+                  example:
+                    - "#ai"
+                    - "#assistant"
+                    - "#bot"
+                    - "#resume"
+                resumeMessage:
                   type: string
-                  example: http://user:pass@212.212.18.198:6849
-                shorthand:
-                  type: string
-                  example: 212.212.18.198:6849:user:pass
-                enabled:
-                  type: boolean
-                  description: Set false to force direct connection
+                  description: |
+                    Auto-reply sent to the chat when the AI agent resumes.
+                    Set to empty string `""` for silent resume.
+                  example: AI assistant is back online. How can I help?
       responses:
         "200":
-          description: Proxy updated
-    delete:
+          description: Updated handoff settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  settings:
+                    $ref: "#/components/schemas/HandoffSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/storage/status:
+    get:
       tags:
-        - Proxy
-      summary: Detach proxy override
-      description: "**Remove proxy override** and return the instance to pool assignment or direct connection."
+        - System
+      summary: Check Azure Blob Storage status
+      description: "**Report media storage backend** (local disk vs cloud) and capacity hints for this deployment."
       responses:
         "200":
-          description: Proxy cleared
-  /api/instances/{instanceId}/proxy/verify:
-    parameters:
-      - $ref: "#/components/parameters/instanceId"
+          description: Storage status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  enabled:
+                    type: boolean
+                    example: true
+                  container:
+                    type: string
+                    example: whatsapp-media
+  /api/upload:
     post:
       tags:
-        - Proxy
-      summary: Verify egress IP through instance proxy
+        - Messaging
+      summary: Upload media to Azure Blob Storage
+      description: "**Upload a file to the worker** for later use in outbound messages. Returns a URL or handle referenced by send payloads."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - data
+                - mimeType
+              properties:
+                data:
+                  type: string
+                  format: byte
+                  description: Base64-encoded file data
+                mimeType:
+                  type: string
+                  description: MIME type of the file
+                  example: image/jpeg
+                fileName:
+                  type: string
+                  description: Original file name (used for extension detection)
+                  example: photo.jpg
+                instanceId:
+                  type: string
+                  description: Instance ID to use as storage folder prefix
+                  example: wa_abc123
       responses:
         "200":
-          description: Egress probe result
-      description: "**Test egress IP** by sending a probe request through the instance proxy and returning the detected public IP."
-  /api/instances/{instanceId}/connection:
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  url:
+                    type: string
+                    description: Public URL of the uploaded file
+                    example: https://whatsappmediastore.blob.core.windows.net/whatsapp-media/wa_abc/uploads/1706000000-a1b2c3d4.jpg
+                  blobName:
+                    type: string
+                    example: wa_abc/uploads/1706000000-a1b2c3d4.jpg
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          description: Azure Blob Storage not configured
+  /api/instances/{instanceId}/profile:
     parameters:
       - $ref: "#/components/parameters/instanceId"
     get:
       tags:
-        - Instances
-      summary: Poll connection status
-      description: "**Lightweight connection poll.** Returns only status, phone, uptime, and pairing/QR hints — faster than fetching the full instance object. Ideal for frontends that refresh every few seconds during onboarding."
+        - Profile
+      summary: Get profile info
+      description: "**Read WhatsApp profile metadata** — display name, About text, and profile picture URL when linked."
       responses:
         "200":
-          description: Connection status
+          description: Profile info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  profile:
+                    type: object
+                    properties:
+                      phone:
+                        type: string
+                        nullable: true
+                        example: "447393002183"
+                      connected:
+                        type: boolean
+                        example: true
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/instances/{instanceId}/profile/name:
+    parameters:
+      - $ref: "#/components/parameters/instanceId"
+    put:
+      tags:
+        - Profile
+      summary: Update display name
+      description: "**Change the WhatsApp display name** shown to customers who have not saved your contact."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  example: Acme Support
+      responses:
+        "200":
+          description: Name updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Display name updated to "Acme Support"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/instances/{instanceId}/profile/picture:
+    parameters:
+      - $ref: "#/components/parameters/instanceId"
+    put:
+      tags:
+        - Profile
+      summary: Set profile picture
+      description: "**Upload or replace the profile photo** for the linked number. Accepts image URL or base64 depending on deployment."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - imageUrl
+              properties:
+                imageUrl:
+                  type: string
+                  format: uri
+                  example: https://example.com/logo.png
+      responses:
+        "200":
+          description: Picture updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Profile picture updated
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    delete:
+      tags:
+        - Profile
+      summary: Remove profile picture
+      description: "**Remove the profile photo** and revert to WhatsApp default avatar."
+      responses:
+        "200":
+          description: Picture removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Profile picture removed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/instances/{instanceId}/profile/status:
+    parameters:
+      - $ref: "#/components/parameters/instanceId"
+    put:
+      tags:
+        - Profile
+      summary: Update "About" text
+      description: "**Update the About / status line** under the profile name."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  example: We reply within minutes!
+      responses:
+        "200":
+          description: About text updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: About text updated to "We reply within minutes!"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /api/instances/{instanceId}/behavior:
     parameters:
       - $ref: "#/components/parameters/instanceId"
@@ -1019,45 +1427,71 @@ paths:
                     type: string
         "400":
           $ref: "#/components/responses/BadRequest"
-  /docs/inbound-webhook:
-    get:
+  /api/instances/{instanceId}/webhook/test:
+    parameters:
+      - $ref: "#/components/parameters/instanceId"
+    post:
       tags:
+        - Whitelabel
         - Webhook
-      summary: Inbound webhook payload reference
-      description: "**Documentation-only reference** for the JSON body Wasup POSTs to your webhook when a customer messages you. Includes text, media, location, `media_id`, and `whatsapp_message_id` fields. Not a callable HTTP route on the worker."
+      summary: Test webhook delivery
+      description: "**Send a sample inbound payload** to the configured webhook URL so you can verify your receiver without waiting for a real message."
       responses:
         "200":
-          description: Example inbound webhook payload
+          description: Webhook test result
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InboundWebhookPayload"
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    description: true if webhook returned 2xx
+                    example: true
+                  webhookUrl:
+                    type: string
+                    example: https://acme.com/webhook
+                  responseStatus:
+                    type: integer
+                    description: HTTP status returned by the webhook
+                    example: 200
+                  responseBody:
+                    description: First 500 chars of the webhook's response body
+                  message:
+                    type: string
+                    example: Webhook test delivered successfully
               examples:
-                imageInbound:
-                  summary: Inbound image with stored media id
+                success:
+                  summary: Webhook reachable
                   value:
-                    message_id: 8b2f4c2e-1d0a-4b1a-9c2e-2a6b8c1d0e3f
-                    whatsapp_message_id: 3EB0123456789ABCDEF
-                    created_at: 2026-05-24T20:15:00.000Z
-                    from_phone: "60123456789"
-                    to_phone: "447835156367"
-                    message: Product photo
-                    media_type: image
-                    status: received
-                    webhook_id: 1f353385-4fa6-435d-87be-a13f3830ea74
-                    instance_id: 1f353385-4fa6-435d-87be-a13f3830ea74
-                    event: message
-                    quoted_message: null
-                    media_id: a1b2c3d4e5f6g7h8
-                    media:
-                      id: a1b2c3d4e5f6g7h8
-                      mediaType: image
-                      mimeType: image/jpeg
-                      fileName: photo.jpg
-                      size: 245760
-                      publicUrl: null
-                      downloadUrl: /api/instances/1f353385-4fa6-435d-87be-a13f3830ea74/media/a1b2c3d4e5f6g7h8
-                      location: null
+                    success: true
+                    webhookUrl: https://acme.com/webhook
+                    responseStatus: 200
+                    responseBody:
+                      ok: true
+                    message: Webhook test delivered successfully
+                failure:
+                  summary: Webhook unreachable
+                  value:
+                    success: false
+                    webhookUrl: https://acme.com/webhook
+                    error: connect ECONNREFUSED
+                    message: Failed to deliver test webhook
+        "400":
+          description: No webhook configured
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: No webhook URL configured for this instance
+                  hint:
+                    type: string
+                    example: Set webhookUrl via PUT /api/instances/:id or during onboarding
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/instances/{instanceId}/logs:
     parameters:
       - $ref: "#/components/parameters/instanceId"
@@ -1164,6 +1598,30 @@ paths:
                           type: string
                           nullable: true
                           example: "60123456789"
+  /api/system/reload-behavior-from-disk:
+    post:
+      tags:
+        - System
+      summary: Hot-reload behavior settings from disk
+      description: "**Reload saved behavior settings from disk** for already-running instances without restarting the whole process. Does not disconnect active numbers."
+      responses:
+        "200":
+          description: Reload outcome per instance id
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  count:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      type: object
+        "503":
+          description: Server still starting
   /api/generate-api-key:
     post:
       tags:
@@ -1187,6 +1645,345 @@ paths:
                   message:
                     type: string
                     example: Add this to your .env file as API_KEY=<key>
+  /api/instances/{instanceId}/antiban-v2:
+    get:
+      tags:
+        - Wasup Anti-Ban
+      summary: Get full v2 status
+      description: "**Read Wasup Anti-Ban v2 module status** — which protection modules are active and their health summary."
+      parameters:
+        - name: instanceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: V2 status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  antibanV2:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                      running:
+                        type: boolean
+                      preset:
+                        type: string
+                        enum:
+                          - conservative
+                          - moderate
+                          - aggressive
+                      health:
+                        type: object
+                        properties:
+                          risk:
+                            type: string
+                            enum:
+                              - low
+                              - medium
+                              - high
+                              - critical
+                          score:
+                            type: integer
+                            minimum: 0
+                            maximum: 100
+                          recommendation:
+                            type: string
+                          isPaused:
+                            type: boolean
+                      warmup:
+                        type: object
+                        properties:
+                          phase:
+                            type: string
+                            enum:
+                              - warming
+                              - graduated
+                          day:
+                            type: integer
+                          totalDays:
+                            type: integer
+                          todayLimit:
+                            type: integer
+                          todaySent:
+                            type: integer
+                          progress:
+                            type: integer
+                          complete:
+                            type: boolean
+  /api/instances/{instanceId}/antiban-v2/config:
+    get:
+      tags:
+        - Wasup Anti-Ban
+      summary: Get v2 config block
+      parameters:
+        - name: instanceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Current config
+      description: "**Read detailed Anti-Ban v2 configuration** per module (warm-up, rate limiter, presence timing, etc.)."
+    put:
+      tags:
+        - Wasup Anti-Ban
+      summary: Update v2 config
+      description: "**Update Anti-Ban v2 module settings** such as warm-up stage, rate multipliers, or pause thresholds."
+      parameters:
+        - name: instanceId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                  description: Master switch. Set false to fall back to legacy AntiBanManager.
+                preset:
+                  type: string
+                  enum:
+                    - conservative
+                    - moderate
+                    - aggressive
+                overrides:
+                  type: object
+                  description: Override individual rate limits + delays
+                  properties:
+                    maxPerMinute:
+                      type: integer
+                      example: 12
+                    maxPerHour:
+                      type: integer
+                      example: 250
+                    maxPerDay:
+                      type: integer
+                      example: 4000
+                    minDelayMs:
+                      type: integer
+                      example: 1500
+                    maxDelayMs:
+                      type: integer
+                      example: 5000
+                modules:
+                  type: object
+                  description: Per-module enable/disable flags
+                  properties:
+                    warmup:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                    replyRatio:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                    contactGraph:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                    presence:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                        circadianProfile:
+                          type: string
+                          enum:
+                            - default
+                            - nightOwl
+                            - earlyBird
+                            - always_on
+                        timezone:
+                          type: string
+                          example: Europe/London
+                    retryTracker:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                    reconnectThrottle:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                    contactMapping:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                    sessionStability:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                    stealthConnect:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                alertsWebhook:
+                  type: string
+                  nullable: true
+                  description: Optional webhook URL fired on risk transitions (Telegram-/Discord-compatible JSON)
+      responses:
+        "200":
+          description: Updated
+  /api/instances/{instanceId}/antiban-v2/health:
+    get:
+      tags:
+        - Wasup Anti-Ban
+      summary: Compact health (risk + score)
+      parameters:
+        - name: instanceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Risk
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  health:
+                    type: object
+                    properties:
+                      risk:
+                        type: string
+                        enum:
+                          - low
+                          - medium
+                          - high
+                          - critical
+                      score:
+                        type: integer
+                      recommendation:
+                        type: string
+                      isPaused:
+                        type: boolean
+      description: "**Health scores and recent warnings** from Anti-Ban v2 monitors for this instance."
+  /api/instances/{instanceId}/antiban-v2/warmup:
+    get:
+      tags:
+        - Wasup Anti-Ban
+      summary: Warmup state (day x/7)
+      parameters:
+        - name: instanceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Warmup
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  warmup:
+                    type: object
+                    properties:
+                      phase:
+                        type: string
+                        enum:
+                          - warming
+                          - graduated
+                      day:
+                        type: integer
+                        example: 4
+                      totalDays:
+                        type: integer
+                        example: 7
+                      todayLimit:
+                        type: integer
+                        example: 117
+                      todaySent:
+                        type: integer
+                        example: 23
+                      progress:
+                        type: integer
+                        example: 57
+                      complete:
+                        type: boolean
+  /api/instances/{instanceId}/antiban-v2/lid-mappings:
+    get:
+      tags:
+        - Wasup Anti-Ban
+      summary: LID↔PN cache snapshot
+      description: "**Inspect contact id mappings** maintained for reliable delivery (internal troubleshooting; most integrations can ignore)."
+      parameters:
+        - name: instanceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Mappings
+  /api/instances/{instanceId}/antiban-v2/pause:
+    post:
+      tags:
+        - Wasup Anti-Ban
+      summary: Emergency pause
+      description: "**Temporarily pause Anti-Ban v2 enforcement** for maintenance or testing — use with caution."
+      parameters:
+        - name: instanceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Paused
+  /api/instances/{instanceId}/antiban-v2/resume:
+    post:
+      tags:
+        - Wasup Anti-Ban
+      summary: Resume after pause
+      parameters:
+        - name: instanceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Resumed
+      description: "**Resume Anti-Ban v2 enforcement** after a manual pause."
+  /api/instances/{instanceId}/antiban-v2/reset:
+    post:
+      tags:
+        - Wasup Anti-Ban
+      summary: Nuclear reset
+      description: "**Reset Anti-Ban v2 counters and state files** for this instance to defaults."
+      parameters:
+        - name: instanceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Reset
 components:
   securitySchemes:
     ApiKeyAuth:
@@ -1206,6 +2003,380 @@ components:
       description: Instance ID
       example: wa_lxyz123_abc45
   schemas:
+    SendMessageBody:
+      type: object
+      required:
+        - to
+      properties:
+        to:
+          type: string
+          description: Recipient phone number (with country code, no + or spaces) or phone or chat id
+          example: "60123456789"
+        message:
+          type: string
+          description: Text body or caption (required for text type, optional caption for media)
+          example: Hello! How can I help you today?
+        text:
+          type: string
+          description: Alias for `message`; useful for concise interactive button payloads
+          example: Choose an option
+        messageType:
+          type: string
+          description: Type of message to send. If omitted, `buttons` implies `buttons` and `sections` implies `list`.
+          enum:
+            - text
+            - image
+            - video
+            - document
+            - audio
+            - buttons
+            - list
+            - location
+            - contact
+          default: text
+          example: text
+        mediaUrl:
+          type: string
+          description: Direct URL to media file (required for image/video/document/audio)
+          example: https://example.com/photo.jpg
+        mimeType:
+          type: string
+          description: MIME type for document/audio
+          example: application/pdf
+        fileName:
+          type: string
+          description: File name for document messages
+          example: report.pdf
+        ptt:
+          type: boolean
+          description: Send audio as voice note (push-to-talk). Default true.
+          default: true
+        footer:
+          type: string
+          description: Footer text for button and list messages
+          example: Powered by WhatsApp AI
+        buttons:
+          type: array
+          description: |
+            Quick-reply buttons. Set `messageType=buttons`, or omit `messageType`
+            and include this array. Native WhatsApp clients generally support up
+            to 3 quick-reply buttons; button titles are capped at 20 characters.
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                example: btn_yes
+              text:
+                type: string
+                example: Yes
+          example:
+            - id: yes
+              text: Yes, proceed
+            - id: no
+              text: No thanks
+            - id: later
+              text: Maybe later
+        title:
+          type: string
+          description: Title for list messages
+          example: Our Services
+        buttonText:
+          type: string
+          description: Menu button label for list messages
+          default: Menu
+          example: View Options
+        sections:
+          type: array
+          description: |
+            List sections (messageType=list). Rendered as a single-select native flow
+            via Wasup's interactive helper.
+          items:
+            type: object
+            properties:
+              title:
+                type: string
+                example: Services
+              rows:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    title:
+                      type: string
+                      example: Consulting
+                    id:
+                      type: string
+                      example: consulting
+                    description:
+                      type: string
+                      example: Expert advice
+        latitude:
+          type: number
+          format: double
+          description: Latitude for location messages
+          example: 3.1577
+        longitude:
+          type: number
+          format: double
+          description: Longitude for location messages
+          example: 101.7117
+        locationName:
+          type: string
+          description: Location name for location messages
+          example: Petronas Twin Towers
+        locationAddress:
+          type: string
+          description: Address for location messages
+          example: KLCC, Kuala Lumpur
+        contactCard:
+          type: object
+          description: Contact card details (for messageType=contact)
+          properties:
+            displayName:
+              type: string
+              example: John Doe
+            phoneNumber:
+              type: string
+              example: "+60123456789"
+        typingSimulation:
+          type: boolean
+          description: Override instance typing simulation setting for this message
+        delayEnabled:
+          type: boolean
+          description: Override instance human-delay setting for this message
+        contactName:
+          type: string
+          description: Name for auto-saving contact before sending
+          example: Unknown User
+        skipContactSave:
+          type: boolean
+          description: Skip auto-saving recipient as a contact
+          default: false
+    ReactionBody:
+      type: object
+      required:
+        - to
+        - messageId
+        - emoji
+      properties:
+        to:
+          type: string
+          description: Recipient phone number or phone or chat id (for instance-scoped endpoint)
+          example: "447835156367"
+        to_phone:
+          type: string
+          description: Recipient phone number (for auto-select endpoint)
+          example: "447835156367"
+        messageId:
+          type: string
+          description: |
+            WhatsApp message id to react to. Obtain from the `message_id` field
+            returned by the send endpoints or from inbound webhook payloads.
+          example: 3EB0DAC5F4A2E1B7
+        emoji:
+          type: string
+          description: Emoji to react with. Pass an empty string `""` to remove a reaction.
+          example: 🔥
+        fromMe:
+          type: boolean
+          description: |
+            Set to `true` if the target message was sent by the connected account.
+            Defaults to `false` (reacting to a received message).
+          default: false
+    HandoffSettings:
+      type: object
+      properties:
+        resumeKeywords:
+          type: array
+          items:
+            type: string
+          description: |
+            Keywords a human agent types from the phone to reactivate the AI bot
+            for that chat. Matched case-insensitively at the start of the message.
+          default:
+            - "#ai"
+            - "#assistant"
+            - "#bot"
+            - "#resume"
+          example:
+            - "#ai"
+            - "#assistant"
+            - "#bot"
+            - "#resume"
+        resumeMessage:
+          type: string
+          description: |
+            Optional auto-reply sent when the AI agent resumes on a chat.
+            Empty string means silent resume.
+          default: ""
+          example: AI assistant is back online. How can I help?
+    OnboardResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        instanceId:
+          type: string
+          example: wa_abc123
+        pairingCode:
+          type: string
+          nullable: true
+          description: Pairing code to enter in WhatsApp (null if already connected)
+          example: A1B2-C3D4
+        status:
+          type: string
+          enum:
+            - disconnected
+            - connecting
+            - connected
+          example: connecting
+        message:
+          type: string
+          example: Enter code A1B2-C3D4 in WhatsApp > Linked Devices > Link a Device
+    ConnectionStatus:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        status:
+          type: string
+          enum:
+            - disconnected
+            - connecting
+            - connected
+          example: connected
+        phone:
+          type: string
+          nullable: true
+          example: "447393002183"
+        connectedAt:
+          type: string
+          format: date-time
+          nullable: true
+        uptime:
+          type: integer
+          nullable: true
+          description: Seconds since connection was established
+          example: 3600
+        pairingCode:
+          type: string
+          nullable: true
+        qrCode:
+          type: string
+          nullable: true
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+          example: 3EB0B430A7F9B1D2
+        direction:
+          type: string
+          enum:
+            - inbound
+            - outbound
+          example: inbound
+        from:
+          type: string
+          description: Sender phone number
+          example: "447393002183"
+        to:
+          type: string
+          description: Recipient phone number
+          example: "60123456789"
+        text:
+          type: string
+          example: Hello, I need help with my order
+        mediaUrl:
+          type: string
+          nullable: true
+          description: |
+            Public URL of the media file (image, audio, video, document, sticker)
+            stored in Azure Blob Storage. Only present for media messages when
+            `AZURE_STORAGE_CONNECTION_STRING` is configured.
+          example: https://whatsappmediastore.blob.core.windows.net/whatsapp-media/wa_abc/image/1706000000-a1b2c3d4.jpg
+        mediaType:
+          type: string
+          nullable: true
+          enum:
+            - image
+            - video
+            - audio
+            - document
+            - sticker
+            - null
+          description: Type of media attachment
+        mimeType:
+          type: string
+          nullable: true
+          description: MIME type of the media file
+          example: image/jpeg
+        fileName:
+          type: string
+          nullable: true
+          description: Original file name (documents only)
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: string
+          example: delivered
+    WebhookPayload:
+      type: object
+      description: |
+        Payload sent to the per-instance webhook URL when a message is received.
+        Your webhook should return `{ reply: "text" }` to auto-respond, or
+        `{ skip: true }` to suppress the bot reply.
+      properties:
+        message_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        from_phone:
+          type: string
+          example: "447835156367"
+        to_phone:
+          type: string
+          example: "358942721757"
+        message:
+          type: string
+        media_type:
+          type: string
+          enum:
+            - text
+            - image
+            - video
+            - audio
+            - document
+            - sticker
+            - location
+            - contact
+        media_url:
+          type: string
+          nullable: true
+          description: Public Azure Blob Storage URL of the media file (null for text)
+        mime_type:
+          type: string
+          nullable: true
+        file_name:
+          type: string
+          nullable: true
+        status:
+          type: string
+          example: received
+        webhook_id:
+          type: string
+          description: Instance ID
+        event:
+          type: string
+          example: message
+        quoted_message:
+          type: string
+          nullable: true
     Instance:
       type: object
       properties:
@@ -1226,6 +2397,10 @@ components:
           type: string
           nullable: true
           description: Base64 QR code (only when connecting)
+        pairingCode:
+          type: string
+          nullable: true
+          description: Pairing code (only when connecting via pairing)
         connectedPhone:
           type: string
           nullable: true
@@ -1234,10 +2409,6 @@ components:
           type: string
           format: date-time
           nullable: true
-        hasSavedCredentials:
-          type: boolean
-          description: True when the instance has saved pairing credentials on the worker. Does not expose credential contents.
-          example: true
         webhookUrl:
           type: string
           example: https://your-api.com/webhook
@@ -1247,46 +2418,38 @@ components:
           $ref: "#/components/schemas/AntiBanSettings"
         antiBanHealth:
           $ref: "#/components/schemas/AntiBanHealth"
-        autoReconnect:
-          type: object
-          properties:
-            enabled:
-              type: boolean
-              example: true
-            attempts:
-              type: integer
-              example: 1
-            maxAttempts:
-              type: integer
-              example: 8
-            nextAttemptAt:
-              type: string
-              format: date-time
-              nullable: true
         createdAt:
           type: string
           format: date-time
-    BehaviorProfile:
-      type: string
-      enum:
-        - bot-native
-        - notification-balanced
-        - notification-max
-      description: |
-        Behavior profile preset.
-
-        `bot-native` keeps full anti-ban behavior active.
-        `notification-balanced` gives phone notifications a short head start before typing.
-        `notification-max` prioritizes phone notifications and disables typing simulation.
-      example: notification-balanced
     BehaviorSettings:
       type: object
       properties:
         behaviorProfile:
-          $ref: "#/components/schemas/BehaviorProfile"
+          type: string
+          enum:
+            - bot-native
+            - notification-balanced
+            - notification-max
+          description: |
+            Top-level behavior mode.
+
+            `bot-native` uses active-device automation with typing, reads, delays,
+            and presence cycling.
+
+            `notification-balanced` prioritizes handset alerts without promising
+            delivery: inbound messages are logged/webhooked immediately, then
+            reads/typing/replies wait for `notificationGraceMs`.
+
+            `notification-max` maximizes handset alerts: typing is disabled and
+            automated read receipts are skipped.
+          default: bot-native
+          example: notification-balanced
         typingSimulation:
           type: boolean
-          description: Show "typing..." indicator before sending. Defaults to false for `notification-max`.
+          description: |
+            Show "typing..." before sending. In `notification-balanced`, typing
+            happens only after the grace window. In `notification-max`, this is
+            forced off.
           default: true
           example: true
         delayEnabled:
@@ -1294,17 +2457,24 @@ components:
           description: Add human-like delays before responding
           default: true
           example: true
-        phoneNotificationsEnabled:
-          type: boolean
-          description: Keep the connection quiet briefly so the user's phone is more likely to receive a push notification before read/typing activity.
-          default: false
-          example: true
         notificationGraceMs:
           type: integer
           minimum: 0
-          description: Milliseconds to wait in notification-first profiles before read/typing/send behavior starts.
-          default: 0
-          example: 2500
+          maximum: 120000
+          description: |
+            Milliseconds to wait after an inbound message before read receipt,
+            typing, or reply in notification profiles. The webhook/log event is
+            still sent immediately.
+          default: 12000
+          example: 12000
+        phoneNotificationsEnabled:
+          type: boolean
+          description: |
+            Legacy compatibility flag. New clients should set `behaviorProfile`.
+            When true, maps to `notification-balanced` unless typing is false,
+            in which case it maps to `notification-max`.
+          default: false
+          example: false
     AntiBanSettings:
       type: object
       properties:
@@ -1372,246 +2542,6 @@ components:
             uniqueChatsThisDay:
               type: integer
               example: 8
-    SendLink:
-      oneOf:
-        - type: string
-          format: uri
-          example: https://example.com/booking
-        - type: object
-          required:
-            - url
-          properties:
-            url:
-              type: string
-              format: uri
-              example: https://example.com/booking
-            label:
-              type: string
-              description: Optional label shown on the CTA button
-              example: Booking page
-    CtaUrl:
-      description: |
-        Native call-to-action URL button shown below the message body.
-        Pass a URL string or an object with `url` and optional `label` (max 25 characters).
-        The recipient taps once to open the link in their browser.
-      oneOf:
-        - type: string
-          format: uri
-          example: https://example.com/book
-        - type: object
-          required:
-            - url
-          properties:
-            url:
-              type: string
-              format: uri
-              example: https://example.com/book
-            label:
-              type: string
-              maxLength: 25
-              description: Label shown on the native CTA button
-              example: Book now
-    QuickReplyButtons:
-      type: array
-      maxItems: 3
-      description: |
-        Up to three quick reply buttons shown as tappable chips under the message.
-        Each button needs a stable `id` (sent back to your webhook when selected) and short `text` (max 20 characters).
-      items:
-        type: object
-        required:
-          - id
-          - text
-        properties:
-          id:
-            type: string
-            maxLength: 256
-            example: pricing
-          text:
-            type: string
-            maxLength: 20
-            example: Pricing
-    InteractiveSendRequest:
-      type: object
-      required:
-        - to
-      properties:
-        to:
-          type: string
-          description: Phone number with country code
-          example: "60123456789"
-        message:
-          type: string
-          description: Message text. Required unless link, ctaUrl, or buttons are supplied.
-          example: Choose an option.
-        link:
-          $ref: "#/components/schemas/SendLink"
-        ctaUrl:
-          $ref: "#/components/schemas/CtaUrl"
-        buttons:
-          $ref: "#/components/schemas/QuickReplyButtons"
-        linkPreview:
-          type: boolean
-          default: true
-        footer:
-          type: string
-          example: Wasup API
-    ReactionRequest:
-      type: object
-      required:
-        - to
-      properties:
-        to:
-          type: string
-          description: Chat phone number with country code
-          example: "60123456789"
-        messageId:
-          type: string
-          description: WhatsApp message ID to react to. Required unless `key` is provided.
-          example: 3EB0123456789ABCDEF
-        emoji:
-          type: string
-          description: Reaction emoji. Use an empty string to remove the reaction.
-          example: 👍
-        reaction:
-          type: string
-          description: Alias for `emoji`
-          example: 👍
-        fromMe:
-          type: boolean
-          description: Whether the target message was sent by this instance
-          default: false
-        participant:
-          type: string
-          description: Group participant id when reacting in a group chat
-        remoteJid:
-          type: string
-          description: Override chat identifier for the message reference
-        key:
-          type: object
-          description: Full WhatsApp message reference object (same shape as webhook `key` fields)
-          properties:
-            id:
-              type: string
-            fromMe:
-              type: boolean
-            remoteJid:
-              type: string
-            participant:
-              type: string
-    ReactionResult:
-      type: object
-      properties:
-        sent:
-          type: boolean
-          example: true
-        emoji:
-          type: string
-          example: 👍
-        key:
-          type: object
-          properties:
-            id:
-              type: string
-            fromMe:
-              type: boolean
-            remoteJid:
-              type: string
-            participant:
-              type: string
-    StoredMedia:
-      type: object
-      properties:
-        id:
-          type: string
-          example: a1b2c3d4e5f6g7h8
-        mediaType:
-          type: string
-          enum:
-            - image
-            - document
-            - audio
-            - video
-            - location
-        mimeType:
-          type: string
-          example: image/jpeg
-        fileName:
-          type: string
-        publicUrl:
-          type: string
-          nullable: true
-        downloadUrl:
-          type: string
-          nullable: true
-        size:
-          type: integer
-        location:
-          type: object
-          nullable: true
-          properties:
-            latitude:
-              type: number
-            longitude:
-              type: number
-            name:
-              type: string
-            address:
-              type: string
-    InboundWebhookPayload:
-      type: object
-      description: JSON body POSTed to your instance webhookUrl when a message is received
-      properties:
-        message_id:
-          type: string
-          description: Wasup-generated correlation id for this webhook delivery
-        whatsapp_message_id:
-          type: string
-          description: Native WhatsApp message id (use with /react)
-        created_at:
-          type: string
-          format: date-time
-        from_phone:
-          type: string
-        to_phone:
-          type: string
-          description: Your connected instance number
-        message:
-          type: string
-          description: Text caption or placeholder like [Image]
-        media_type:
-          type: string
-          enum:
-            - text
-            - image
-            - video
-            - audio
-            - document
-            - sticker
-            - location
-            - contact
-        status:
-          type: string
-          example: received
-        webhook_id:
-          type: string
-          description: Instance id (legacy field name)
-        instance_id:
-          type: string
-        event:
-          type: string
-          example: message
-        quoted_message:
-          type: string
-          nullable: true
-        media_id:
-          type: string
-          nullable: true
-          description: Stored media id when media_type is not plain text
-        media:
-          allOf:
-            - $ref: "#/components/schemas/StoredMedia"
-          nullable: true
     SendResult:
       type: object
       properties:
@@ -1634,26 +2564,6 @@ components:
         waitTime:
           type: integer
           description: Time to wait before retry (if rate limited)
-        messageText:
-          type: string
-          description: Final text sent to WhatsApp
-        interactive:
-          type: object
-          properties:
-            requestedTypes:
-              type: array
-              items:
-                type: string
-              example:
-                - link
-                - buttons
-            mode:
-              type: string
-              example: native_interactive
-            limitations:
-              type: array
-              items:
-                type: string
     LogEntry:
       type: object
       properties:

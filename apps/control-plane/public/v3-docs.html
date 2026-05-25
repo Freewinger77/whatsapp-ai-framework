@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wasup Control Plane API (v3)</title>
+  <meta name="description" content="API reference for dev.wasup.co dashboard and workspace management">
+  <style>
+    body { margin: 0; background: #09090b; color: #e4e4e7; font-family: ui-sans-serif, system-ui, sans-serif; }
+    .top { max-width: 1100px; margin: 0 auto; padding: 1rem 1.25rem; }
+    .top p { color: #a1a1aa; font-size: 0.875rem; line-height: 1.5; }
+    .top a { color: #22c55e; }
+    #scalar-wrap { min-height: 70vh; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <p>
+      Dashboard API for <strong>dev.wasup.co</strong> — organizations, billing, provisioning, and activity feeds.
+      WhatsApp send/receive docs live on your org worker at <code>{org}.wasup.co/docs</code>.
+      Authenticate with Clerk (browser) or <code>Authorization: Bearer sk-prod_...</code> from Connection.
+    </p>
+    <p><a href="/dashboard">Dashboard</a> · <a href="/openapi-v3.yaml" target="_blank" rel="noreferrer">OpenAPI YAML</a></p>
+  </div>
+  <div id="scalar-wrap"><div id="scalar-api"></div></div>
+  <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+  <script>
+    Scalar.createApiReference('#scalar-api', {
+      url: '/openapi-v3.yaml',
+      theme: 'kepler',
+      darkMode: true,
+      hiddenClients: true,
+      defaultHttpClient: { targetKey: 'shell', clientKey: 'curl' },
+    });
+  </script>
+</body>
+</html>

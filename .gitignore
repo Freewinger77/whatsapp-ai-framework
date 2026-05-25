@@ -2,6 +2,7 @@
 node_modules/
 package-lock.json
 !apps/control-plane/package-lock.json
+!apps/dashboard/package-lock.json
 
 # Environment Variables
 .env
@@ -38,17 +39,18 @@ dist/
 build/
 .next/
 out/
+.deploy/
+apps/control-plane/.deploy/
 .wrangler/
 *.tsbuildinfo
 
 # Private Docs (Optional - keeping these local only)
 docs/CLAUDE_SESSION_NOTES.md
 docs/BUSINESS_MONETIZATION_RESEARCH.md
+docs/ONBOARDING_MULTIREGION_SPEC.md
 
-# Azure secrets and proxy credentials (never commit)
-infra/azure/keys.env
-infra/azure/proxies/
-infra/azure/*.log
-infra/azure/.build/
-apps/control-plane/.deploy/
-apps/control-plane/.env.local
+# Proxy credentials (residential webshare lists, per-region) - LOCAL ONLY
+deploy/azure/proxies/
+deploy/azure/keys.env
+deploy/azure/*.log
+deploy/azure/.build/

@@ -86,7 +86,7 @@ export async function getDashboardSummary() {
       instances,
       connectedInstances,
       proxyAllocations,
-      recentEvents: (recentEvents.data ?? fallbackEvents) as WorkerEventFeedRow[],
+      recentEvents: (recentEvents.data ?? []) as WorkerEventFeedRow[],
       orgs: normalizeOrgs(orgs.data ?? [], instancesData.data ?? []),
       instanceRows: normalizeInstances(instancesData.data ?? [], orgs.data ?? []),
       legacyRegions: await getLegacyRegions(),
@@ -94,13 +94,13 @@ export async function getDashboardSummary() {
     };
   } catch {
     return {
-      organizations: fallbackOrgs.length,
-      instances: fallbackInstances.length,
-      connectedInstances: fallbackInstances.filter((item) => item.status === 'connected').length,
-      proxyAllocations: fallbackInstances.length,
-      recentEvents: fallbackEvents,
-      orgs: fallbackOrgs,
-      instanceRows: fallbackInstances,
+      organizations: 0,
+      instances: 0,
+      connectedInstances: 0,
+      proxyAllocations: 0,
+      recentEvents: [],
+      orgs: [],
+      instanceRows: [],
       legacyRegions: await getLegacyRegions(),
       setupReady: false
     };
@@ -121,7 +121,7 @@ async function countRows(table: 'organizations' | 'instances' | 'proxy_allocatio
 }
 
 function normalizeOrgs(rows: any[], instances: any[]): OrgRow[] {
-  if (!rows.length) return fallbackOrgs;
+  if (!rows.length) return [];
 
   return rows.map((org) => {
     const orgInstances = instances.filter((item) => item.org_id === org.id);
@@ -140,7 +140,7 @@ function normalizeOrgs(rows: any[], instances: any[]): OrgRow[] {
 }
 
 function normalizeInstances(rows: any[], orgs: any[]): InstanceRow[] {
-  if (!rows.length) return fallbackInstances;
+  if (!rows.length) return [];
   const orgById = new Map(orgs.map((org) => [org.id, org.slug]));
 
   return rows.map((item) => ({
@@ -189,94 +189,3 @@ async function getLegacyRegions(): Promise<LegacyRegion[]> {
   return checks;
 }
 
-const fallbackOrgs: OrgRow[] = [
-  {
-    id: 'demo-org',
-    slug: 'talentflow',
-    name: 'Talentflow',
-    plan: 'agency',
-    status: 'active',
-    region_preference: 'northeurope',
-    api_base_url: 'https://api.wasup.ai/v3/orgs/talentflow',
-    connected: 1,
-    instances: 2
-  },
-  {
-    id: 'demo-org-2',
-    slug: 'clinic-demo',
-    name: 'Clinic Demo',
-    plan: 'growth',
-    status: 'trial',
-    region_preference: 'uk-south',
-    api_base_url: 'https://api.wasup.ai/v3/orgs/clinic-demo',
-    connected: 0,
-    instances: 1
-  }
-];
-
-const fallbackInstances: InstanceRow[] = [
-  {
-    id: 'inst-talentflow-main',
-    org_id: 'demo-org',
-    org_slug: 'talentflow',
-    name: 'Talentflow Main',
-    phone: '+44 7835 156367',
-    status: 'connected',
-    region_code: 'northeurope',
-    behavior_profile: 'notification-balanced',
-    proxy_label: 'North Europe · sticky residential',
-    webhook_url: 'https://talentflow.example/webhook',
-    worker_endpoint: 'legacy-vm'
-  },
-  {
-    id: 'inst-talentflow-sales',
-    org_id: 'demo-org',
-    org_slug: 'talentflow',
-    name: 'Talentflow Sales',
-    phone: null,
-    status: 'awaiting_pair',
-    region_code: 'uk-south',
-    behavior_profile: 'bot-native',
-    proxy_label: 'UK South · pending allocation',
-    webhook_url: null,
-    worker_endpoint: 'pending-worker'
-  },
-  {
-    id: 'inst-clinic-demo',
-    org_id: 'demo-org-2',
-    org_slug: 'clinic-demo',
-    name: 'Clinic Reception',
-    phone: null,
-    status: 'provisioning',
-    region_code: 'uk-south',
-    behavior_profile: 'notification-max',
-    proxy_label: 'UK South · auto',
-    webhook_url: 'https://clinic.example/webhook',
-    worker_endpoint: 'pending-worker'
-  }
-];
-
-const fallbackEvents: WorkerEventFeedRow[] = [
-  {
-    id: 'evt-1',
-    org_id: 'demo-org',
-    org_slug: 'talentflow',
-    instance_id: 'inst-talentflow-main',
-    instance_name: 'Talentflow Main',
-    event_type: 'connection.open',
-    severity: 'info',
-    summary: 'Worker connected and ready for inbound messages.',
-    created_at: new Date(Date.now() - 1000 * 60 * 12).toISOString()
-  },
-  {
-    id: 'evt-2',
-    org_id: 'demo-org',
-    org_slug: 'talentflow',
-    instance_id: 'inst-talentflow-sales',
-    instance_name: 'Talentflow Sales',
-    event_type: 'connection.qr',
-    severity: 'warning',
-    summary: 'QR pairing pending for new worker.',
-    created_at: new Date(Date.now() - 1000 * 60 * 41).toISOString()
-  }
-];

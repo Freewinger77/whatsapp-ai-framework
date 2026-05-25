@@ -19,6 +19,9 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import axios from 'axios';
+import QRCode from 'qrcode';
+import { initAzureStorage, uploadMedia, isStorageEnabled } from './src/utils/azure-storage.js';
 
 // ES Module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -26,15 +29,11 @@ const __dirname = dirname(__filename);
 
 // Instance Manager
 import { InstanceManager } from './src/utils/instance-manager.js';
-import { initMediaStorage, listMedia, resolveMediaBuffer } from './src/utils/media-storage.js';
-import { hasMediaPayload } from './src/utils/media-builder.js';
-import axios from 'axios';
 import {
     getDeploymentDefaultProxy,
     redactProxy,
     createProxyAgent,
     parseProxyConfig,
-    parseFlexibleProxyInput,
 } from './src/utils/proxy.js';
 
 // ========================================
@@ -44,23 +43,14 @@ import {
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.API_KEY || ''; // Optional API key for external access
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const WORKER_SHARED_SECRET = process.env.WASUP_WORKER_SHARED_SECRET || API_KEY;
+const CONTROL_PLANE_URL = (
+    process.env.WASUP_CONTROL_PLANE_URL ||
+    process.env.CONTROL_PLANE_URL ||
+    'https://control-plane.wasup.co'
+).replace(/\/+$/, '');
 const DEFAULT_WEBHOOK_URL = process.env.DEFAULT_WEBHOOK_URL || process.env.N8N_WEBHOOK_URL || '';
-const ALLOW_PUBLIC_DASHBOARD = ['true', '1', 'yes'].includes(
-    (process.env.ALLOW_PUBLIC_DASHBOARD || '').toLowerCase()
-);
-const WASUP_DASHBOARD_URL = String(process.env.WASUP_DASHBOARD_URL || '').trim().replace(/\/+$/, '');
-const DOCS_REVEAL_PASSWORD = process.env.DOCS_REVEAL_PASSWORD || 'Wasup@123';
-const VALID_BEHAVIOR_PROFILES = new Set(['bot-native', 'notification-balanced', 'notification-max']);
-const MAX_MESSAGE_LENGTH = 4096;
-const MAX_BUTTONS = 3;
-const MAX_BUTTON_TEXT_LENGTH = 20;
-const MAX_BUTTON_ID_LENGTH = 256;
-const WASUP_CONTROL_PLANE_URL = String(process.env.WASUP_CONTROL_PLANE_URL || '').trim().replace(/\/+$/, '');
-const WASUP_WORKER_SHARED_SECRET = process.env.WASUP_WORKER_SHARED_SECRET || '';
-const WASUP_WORKER_MODE = (process.env.WASUP_WORKER_MODE || 'multi').toLowerCase();
-const REGION_CODE = process.env.REGION_CODE || null;
-const WASUP_ORG_ID = process.env.WASUP_ORG_ID || null;
-const WASUP_DATA_DIR = process.env.WASUP_DATA_DIR || null;
+const CUSTOMER_KEY_AUTH_CACHE_TTL_MS = 60_000;
 
 // ========================================
 // STATE MANAGEMENT
@@ -68,6 +58,7 @@ const WASUP_DATA_DIR = process.env.WASUP_DATA_DIR || null;
 
 let instanceManager = null;
 const wsClients = new Map(); // Map of WebSocket -> { subscribedInstances: Set }
+const customerKeyAuthCache = new Map();
 
 // ========================================
 // EXPRESS WEB SERVER
@@ -84,6 +75,12 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Named page routes
+app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/test', (req, res) => res.sendFile(path.join(__dirname, 'public', 'test.html')));
+app.get('/docs', (req, res) => res.sendFile(path.join(__dirname, 'public', 'docs.html')));
+app.get('/playground', (req, res) => res.redirect(301, '/test'));
+// Cache the OpenAPI yaml file in memory so we don't re-read on every request.
 let _openapiCache = null;
 function loadOpenapiYaml() {
     if (_openapiCache !== null) return _openapiCache;
@@ -96,92 +93,39 @@ function loadOpenapiYaml() {
     return _openapiCache;
 }
 
-function buildDynamicOpenapiYaml(req) {
+/**
+ * Serve the OpenAPI spec with the `servers:` section dynamically rewritten to
+ * the actual host the request came in on. So when this region is hit at
+ *   https://wasup-uk-west.azurewebsites.net/api/openapi.yaml
+ * the docs page shows that exact URL, not localhost:3000.
+ *
+ * Honors X-Forwarded-Proto / X-Forwarded-Host (Azure App Service sets these).
+ */
+app.get('/api/openapi.yaml', (req, res) => {
     const yaml = loadOpenapiYaml();
-    if (!yaml) return null;
+    if (!yaml) return res.status(500).send('# openapi.yaml unavailable');
 
     const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString().split(',')[0].trim();
-    const host = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`).toString().split(',')[0].trim();
+    const host  = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`).toString().split(',')[0].trim();
     const baseUrl = `${proto}://${host}`;
-    const region = REGION_CODE || null;
+    const region  = process.env.REGION_CODE || null;
 
+    // Build dynamic servers block. Drop the hard-coded localhost block entirely.
     const dynamicServers = [
-        'servers:',
+        `servers:`,
         `  - url: ${baseUrl}`,
         `    description: ${region ? `Region "${region}"` : 'This deployment'}`,
-        '',
+        ``,
     ].join('\n');
 
-    return yaml.replace(
+    // Replace the existing `servers:` block (everything from `^servers:` up to
+    // the next top-level `^[a-z]` directive) with our dynamic one.
+    const rewritten = yaml.replace(
         /^servers:[\s\S]*?(?=^[a-zA-Z][a-zA-Z0-9_-]*:)/m,
         dynamicServers
     );
-}
 
-function getPublicBaseUrl(req) {
-    const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString().split(',')[0].trim();
-    const host = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`).toString().split(',')[0].trim();
-    return `${proto}://${host}`;
-}
-
-app.get('/openapi.yaml', (req, res) => {
-    const rewritten = buildDynamicOpenapiYaml(req);
-    if (!rewritten) {
-        return res.status(500).type('text/plain').send('# openapi.yaml unavailable');
-    }
-    res.type('application/yaml').send(rewritten);
-});
-
-app.get('/api/openapi.yaml', (req, res) => {
-    const rewritten = buildDynamicOpenapiYaml(req);
-    if (!rewritten) {
-        return res.status(500).type('text/plain').send('# openapi.yaml unavailable');
-    }
-    res.type('application/yaml').send(rewritten);
-});
-
-app.get('/docs', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'docs.html'));
-});
-
-app.get('/api/docs/config', (req, res) => {
-    res.json({
-        success: true,
-        unlockEnabled: Boolean(DOCS_REVEAL_PASSWORD),
-        apiKeyConfigured: Boolean(API_KEY),
-        region: REGION_CODE,
-    });
-});
-
-app.post('/api/docs/unlock', (req, res) => {
-    try {
-        if (!DOCS_REVEAL_PASSWORD) {
-            return res.status(503).json({
-                success: false,
-                error: 'Docs key reveal is not configured on this deployment',
-            });
-        }
-        const submitted = String(req.body?.password || '').trim();
-        if (submitted !== DOCS_REVEAL_PASSWORD) {
-            return res.status(401).json({ success: false, error: 'Invalid password' });
-        }
-        res.json({
-            success: true,
-            baseUrl: getPublicBaseUrl(req),
-            apiKey: API_KEY || '',
-            regionCode: REGION_CODE,
-        });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-app.get('/test', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'test.html'));
-});
-
-app.get('/playground', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'test.html'));
+    res.type('text/yaml').send(rewritten);
 });
 
 // CORS for API access
@@ -203,509 +147,110 @@ app.use((req, res, next) => {
  * Authenticate API requests
  * Supports: API Key (X-API-Key header) or Bearer token (Authorization header)
  */
-function getRequestOrigin(req) {
-    const forwardedProto = req.headers['x-forwarded-proto'];
-    const forwardedHost = req.headers['x-forwarded-host'];
-    const protocol = (Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto || req.protocol || 'http')
-        .split(',')[0]
-        .trim();
-    const host = (Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost || req.headers.host || '')
-        .split(',')[0]
-        .trim();
-    return host ? `${protocol}://${host}` : '';
-}
-
-function isSameOriginDashboardRequest(req) {
-    if (!ALLOW_PUBLIC_DASHBOARD) {
-        return false;
+async function authenticateAPI(req, res, next) {
+    // If no API key is configured, skip auth (for local development)
+    if (!API_KEY) {
+        return next();
     }
 
-    if (req.headers['sec-fetch-site'] === 'same-origin') {
-        return true;
-    }
-
-    const requestOrigin = getRequestOrigin(req);
-    if (!requestOrigin) {
-        return false;
-    }
-
-    if (req.headers.origin && req.headers.origin === requestOrigin) {
-        return true;
-    }
-
-    if (req.headers.referer) {
-        try {
-            return new URL(req.headers.referer).origin === requestOrigin;
-        } catch (error) {
-            return false;
-        }
-    }
-
-    return false;
-}
-
-function extractAuthToken(req) {
-    const apiKey = req.headers['x-api-key'];
-    if (apiKey) return apiKey;
+    const credential = getCredentialFromRequest(req);
     const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-        return authHeader.substring(7);
-    }
-    return null;
-}
 
-function resolveRouteInstanceId(req) {
-    if (req.params?.id) return req.params.id;
-    const bodyId = req.body?.instanceId || req.body?.instance_id;
-    if (bodyId) return String(bodyId);
-    return null;
-}
-
-function authenticateAPI(req, res, next) {
-    if (
-        req.path === '/health'
-        || req.path.startsWith('/internal')
-        || req.path.startsWith('/docs')
-        || req.path === '/openapi.yaml'
-        || req.path === '/openapi.json'
-    ) {
+    if (credential === API_KEY || (WORKER_SHARED_SECRET && credential === WORKER_SHARED_SECRET)) {
         return next();
     }
 
-    const openApi = !API_KEY;
-    if (openApi) {
-        req.auth = { type: 'open' };
+    // Check admin password as fallback
+    if (ADMIN_PASSWORD && authHeader === `Bearer ${ADMIN_PASSWORD}`) {
         return next();
     }
 
-    if (isSameOriginDashboardRequest(req)) {
-        req.auth = { type: 'dashboard' };
+    const customerAuth = await validateCustomerApiKeyForHost(
+        credential,
+        getHostnameFromRequest(req),
+        requiredScopeForRequest(req)
+    );
+    if (customerAuth.valid) {
+        req.wasupCustomerAuth = customerAuth;
         return next();
     }
 
-    const token = extractAuthToken(req);
-
-    if (API_KEY && token === API_KEY) {
-        req.auth = { type: 'deployment' };
-        return next();
-    }
-
-    if (ADMIN_PASSWORD && token === ADMIN_PASSWORD) {
-        req.auth = { type: 'admin' };
-        return next();
-    }
-
-    if (token && instanceManager) {
-        const routeInstanceId = resolveRouteInstanceId(req);
-        const match = instanceManager.verifyApiKeyAccess(token, routeInstanceId);
-        if (match) {
-            req.auth = { type: 'instance', instanceId: match.instanceId };
-            return next();
-        }
-
-        // Allow instance key on routes without :id if it maps to exactly one instance
-        if (!routeInstanceId) {
-            const anyMatch = instanceManager.verifyApiKeyAccess(token);
-            if (anyMatch) {
-                req.auth = { type: 'instance', instanceId: anyMatch.instanceId };
-                return next();
-            }
-        }
-    }
-
-    res.status(401).json({
-        error: 'Unauthorized',
-        message: 'Valid deployment API key or per-instance wsp_v3_* key required.',
+    res.status(401).json({ 
+        error: 'Unauthorized', 
+        message: customerAuth.message || 'Valid API key required. Use X-API-Key header or Authorization: Bearer <key>' 
     });
 }
 
-function authorizeInstanceScope(req, res, next) {
-    if (!req.auth || ['deployment', 'admin', 'dashboard', 'open', 'internal'].includes(req.auth.type)) {
-        return next();
-    }
-    if (req.auth.type === 'instance') {
-        const routeId = req.params.id;
-        if (routeId && routeId !== req.auth.instanceId) {
-            return res.status(403).json({
-                error: 'Forbidden',
-                message: 'This API key is scoped to a different instance.',
-            });
-        }
-    }
-    next();
+function getCredentialFromRequest(req) {
+    const apiKey = String(req.headers['x-api-key'] || '').trim();
+    if (apiKey) return apiKey;
+
+    const authHeader = String(req.headers.authorization || '');
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    return match ? match[1].trim() : '';
 }
 
-function authenticateInternal(req, res, next) {
-    if (!WASUP_WORKER_SHARED_SECRET) {
-        return res.status(503).json({ error: 'Internal API not configured' });
+function getHostnameFromRequest(req) {
+    return String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+}
+
+function requiredScopeForRequest(req) {
+    const path = req.path || '';
+    if (/\/(?:send|react)(?:\/|$)/.test(path)) return 'messages:send';
+    if (req.method === 'GET') return 'instances:read';
+    return 'instances:write';
+}
+
+async function validateCustomerApiKeyForHost(apiKey, hostname, requiredScope = 'instances:read') {
+    const key = String(apiKey || '').trim();
+    const host = String(hostname || '').trim().toLowerCase();
+    if (!key || !/^sk-(?:prod|dev)-/i.test(key)) {
+        return { valid: false };
     }
-    const secret = req.headers['x-wasup-worker-secret'] || extractAuthToken(req);
-    if (secret !== WASUP_WORKER_SHARED_SECRET) {
-        return res.status(401).json({ error: 'Unauthorized internal call' });
+
+    if (!WORKER_SHARED_SECRET) {
+        return { valid: false, message: 'Worker authentication is not configured.' };
     }
-    req.auth = { type: 'internal' };
-    next();
-}
 
-function isPlainObject(value) {
-    return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function normalizeText(value) {
-    return typeof value === 'string' ? value.trim() : '';
-}
-
-function normalizeHttpUrl(value, fieldName, errors) {
-    const url = normalizeText(value);
-    if (!url) {
-        errors.push(`${fieldName}.url is required`);
-        return '';
+    const cacheKey = crypto
+        .createHash('sha256')
+        .update(`${host}:${requiredScope}:${key}`)
+        .digest('hex');
+    const cached = customerKeyAuthCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.result;
     }
 
     try {
-        const parsed = new URL(url);
-        if (!['http:', 'https:'].includes(parsed.protocol)) {
-            errors.push(`${fieldName}.url must start with http:// or https://`);
-            return '';
-        }
-        return parsed.toString();
+        const response = await axios.post(
+            `${CONTROL_PLANE_URL}/api/internal/worker-auth`,
+            { apiKey: key, hostname: host, requiredScope },
+            {
+                timeout: 5000,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-wasup-worker-secret': WORKER_SHARED_SECRET,
+                },
+            }
+        );
+        const data = response.data || {};
+        const result = data.valid
+            ? { valid: true, orgId: data.orgId, orgSlug: data.orgSlug, keyKind: data.keyKind, scopes: data.scopes || [] }
+            : { valid: false, message: data.message };
+
+        customerKeyAuthCache.set(cacheKey, {
+            result,
+            expiresAt: Date.now() + CUSTOMER_KEY_AUTH_CACHE_TTL_MS,
+        });
+        return result;
     } catch (error) {
-        errors.push(`${fieldName}.url must be a valid URL`);
-        return '';
+        console.error('[Auth] Control-plane key validation failed:', error.response?.status || error.message);
+        return { valid: false, message: 'Could not validate the API key right now.' };
     }
 }
-
-function normalizeLinkField(body, errors) {
-    const rawLink = body.link ?? body.linkUrl;
-    if (rawLink === undefined || rawLink === null || rawLink === '') {
-        return null;
-    }
-
-    if (typeof rawLink === 'string') {
-        const url = normalizeHttpUrl(rawLink, 'link', errors);
-        return url ? { url } : null;
-    }
-
-    if (!isPlainObject(rawLink)) {
-        errors.push('link must be a URL string or an object with url');
-        return null;
-    }
-
-    const url = normalizeHttpUrl(rawLink.url, 'link', errors);
-    return url ? {
-        url,
-        label: normalizeText(rawLink.label || rawLink.text || rawLink.title)
-    } : null;
-}
-
-function normalizeCtaUrlField(body, errors) {
-    const rawCta = body.ctaUrl ?? body.urlButton ?? body.linkButton;
-    if (rawCta === undefined || rawCta === null || rawCta === '') {
-        return null;
-    }
-
-    if (typeof rawCta === 'string') {
-        const url = normalizeHttpUrl(rawCta, 'ctaUrl', errors);
-        return url ? { url, label: 'Open link' } : null;
-    }
-
-    if (!isPlainObject(rawCta)) {
-        errors.push('ctaUrl must be a URL string or an object with url and label/text');
-        return null;
-    }
-
-    const url = normalizeHttpUrl(rawCta.url, 'ctaUrl', errors);
-    const label = normalizeText(rawCta.label || rawCta.text || rawCta.title || 'Open link');
-    if (label.length > 25) {
-        errors.push('ctaUrl label/text must be 25 characters or fewer');
-    }
-
-    return url ? { url, label: label || 'Open link' } : null;
-}
-
-function normalizeButtonsField(body, errors) {
-    if (body.buttons === undefined || body.buttons === null) {
-        return [];
-    }
-
-    if (!Array.isArray(body.buttons)) {
-        errors.push('buttons must be an array');
-        return [];
-    }
-
-    if (body.buttons.length > MAX_BUTTONS) {
-        errors.push(`buttons supports at most ${MAX_BUTTONS} items`);
-    }
-
-    const seenIds = new Set();
-    return body.buttons.slice(0, MAX_BUTTONS).map((button, index) => {
-        if (!isPlainObject(button)) {
-            errors.push(`buttons[${index}] must be an object`);
-            return null;
-        }
-
-        const text = normalizeText(button.text || button.title || button.label);
-        const id = normalizeText(button.id || button.buttonId || text.toLowerCase().replace(/[^a-z0-9]+/g, '_'));
-
-        if (!text) {
-            errors.push(`buttons[${index}].text is required`);
-        } else if (text.length > MAX_BUTTON_TEXT_LENGTH) {
-            errors.push(`buttons[${index}].text must be ${MAX_BUTTON_TEXT_LENGTH} characters or fewer`);
-        }
-
-        if (!id) {
-            errors.push(`buttons[${index}].id is required`);
-        } else if (id.length > MAX_BUTTON_ID_LENGTH) {
-            errors.push(`buttons[${index}].id must be ${MAX_BUTTON_ID_LENGTH} characters or fewer`);
-        } else if (seenIds.has(id)) {
-            errors.push(`buttons[${index}].id must be unique`);
-        }
-
-        seenIds.add(id);
-        return text && id ? { id, text } : null;
-    }).filter(Boolean);
-}
-
-function parseMessagePayload(body) {
-    const errors = [];
-    const rawText = body.message ?? body.text;
-    let text = normalizeText(rawText);
-    const link = normalizeLinkField(body, errors);
-    const ctaUrl = normalizeCtaUrlField(body, errors);
-    const buttons = normalizeButtonsField(body, errors);
-    const footer = normalizeText(body.footer);
-
-    if (rawText !== undefined && typeof rawText !== 'string') {
-        errors.push('message/text must be a string');
-    }
-    if (text.length > MAX_MESSAGE_LENGTH) {
-        errors.push(`message/text must be ${MAX_MESSAGE_LENGTH} characters or fewer`);
-    }
-    if (body.linkPreview !== undefined && typeof body.linkPreview !== 'boolean') {
-        errors.push('linkPreview must be a boolean when provided');
-    }
-
-    const interactiveCount = buttons.length + (ctaUrl?.url ? 1 : 0);
-    if (interactiveCount > MAX_BUTTONS) {
-        errors.push(`Combined quick reply buttons and CTA URL supports at most ${MAX_BUTTONS} interactive buttons total`);
-    }
-
-    if (!text) {
-        if (link?.label) {
-            text = link.label;
-        } else if (ctaUrl?.label) {
-            text = ctaUrl.label;
-        } else if (link?.url || ctaUrl?.url) {
-            text = 'Open this link';
-        } else if (buttons.length > 0) {
-            text = 'Please choose an option';
-        }
-    }
-
-    if (!text && !link?.url && !ctaUrl?.url && buttons.length === 0) {
-        errors.push('Missing message content: provide message/text, link, ctaUrl, or buttons');
-    }
-
-    if (errors.length > 0) {
-        return { errors };
-    }
-
-    return {
-        messagePayload: {
-            text,
-            link,
-            ctaUrl,
-            buttons,
-            footer,
-            linkPreview: body.linkPreview !== false
-        }
-    };
-}
-
-function parseReactionPayload(body) {
-    const errors = [];
-    const to = normalizeText(body.to || body.to_phone);
-    const emoji = body.emoji ?? body.reaction ?? '';
-
-    if (typeof emoji !== 'string') {
-        errors.push('emoji must be a string');
-    }
-
-    let key = body.key;
-    if (!key) {
-        const messageId = normalizeText(body.messageId || body.message_id || body.id);
-        if (!messageId) {
-            errors.push('messageId or key is required');
-        }
-        if (!to) {
-            errors.push('to is required when key is not provided');
-        }
-
-        key = {
-            id: messageId,
-            fromMe: Boolean(body.fromMe ?? body.from_me ?? false)
-        };
-
-        const participant = normalizeText(body.participant);
-        if (participant) {
-            key.participant = participant;
-        }
-        const remoteJid = normalizeText(body.remoteJid || body.remote_jid);
-        if (remoteJid) {
-            key.remoteJid = remoteJid;
-        }
-    } else if (!isPlainObject(key) || !normalizeText(key.id)) {
-        errors.push('key must be an object with id');
-    }
-
-    if (errors.length > 0) {
-        return { errors };
-    }
-
-    return { to, emoji, key };
-}
-
-function parseSendOptions(body) {
-    const { messagePayload, errors } = parseMessagePayload(body);
-    if (errors) {
-        return { errors };
-    }
-
-    if (body.behaviorProfile !== undefined && !VALID_BEHAVIOR_PROFILES.has(body.behaviorProfile)) {
-        return {
-            errors: [`behaviorProfile must be one of: ${Array.from(VALID_BEHAVIOR_PROFILES).join(', ')}`]
-        };
-    }
-
-    const options = { messagePayload };
-    const optionFields = [
-        'behaviorProfile',
-        'typingSimulation',
-        'delayEnabled',
-        'phoneNotificationsEnabled',
-        'notificationGraceMs',
-        'contactName',
-        'skipContactSave'
-    ];
-
-    for (const field of optionFields) {
-        if (body[field] !== undefined) {
-            options[field] = body[field];
-        }
-    }
-
-    return { options, messagePayload };
-}
-
-function parseMediaPayload(body) {
-    const errors = [];
-    const to = normalizeText(body.to || body.to_phone);
-    if (!to) errors.push('Missing required field: to');
-
-    const mediaFields = ['image', 'video', 'document', 'audio', 'location'];
-    const present = mediaFields.filter((field) => body[field]);
-    if (present.length === 0) {
-        errors.push('Provide one of: image, video, document, audio, location');
-    } else if (present.length > 1) {
-        errors.push('Send one media type per request');
-    }
-
-    if (errors.length > 0) {
-        return { errors };
-    }
-
-    const options = {};
-    const optionFields = [
-        'behaviorProfile',
-        'typingSimulation',
-        'delayEnabled',
-        'phoneNotificationsEnabled',
-        'notificationGraceMs',
-        'contactName',
-        'skipContactSave',
-    ];
-
-    for (const field of optionFields) {
-        if (body[field] !== undefined) {
-            options[field] = body[field];
-        }
-    }
-
-    const mediaPayload = {};
-    for (const field of present) {
-        mediaPayload[field] = body[field];
-    }
-
-    return { to, mediaPayload, options };
-}
-
-async function handleSendRequest(req, res, instanceId) {
-    if (hasMediaPayload(req.body)) {
-        const parsed = parseMediaPayload(req.body);
-        if (parsed.errors) {
-            return res.status(400).json({ error: 'Invalid media payload', details: parsed.errors });
-        }
-
-        const result = await instanceManager.sendMedia(instanceId, parsed.to, parsed.mediaPayload, parsed.options);
-        return res.json({ success: true, result });
-    }
-
-    const { options, messagePayload, errors } = parseSendOptions(req.body);
-    if (errors) {
-        return res.status(400).json({ error: 'Invalid send payload', details: errors });
-    }
-
-    const result = await instanceManager.sendMessage(instanceId, req.body.to, messagePayload.text, options);
-    return res.json({ success: true, result });
-}
-
-app.get('/api/dashboard-config', (req, res) => {
-    res.json({
-        success: true,
-        allowPublicDashboard: ALLOW_PUBLIC_DASHBOARD,
-        dashboardRequiresApiKey: !!API_KEY && !ALLOW_PUBLIC_DASHBOARD,
-        dashboardUrl: WASUP_DASHBOARD_URL || null,
-        showDashboardReturnOverlay: Boolean(WASUP_DASHBOARD_URL),
-        workerHost: getPublicBaseUrl(req),
-    });
-});
-
-app.get('/api/health', (req, res) => {
-    const instances = instanceManager?.getAllInstances?.() || [];
-    const connectedCount = instances.filter(i => i.status === 'connected').length;
-    res.json({
-        status: 'ok',
-        uptime: process.uptime(),
-        workerMode: WASUP_WORKER_MODE,
-        region: REGION_CODE,
-        dataDir: WASUP_DATA_DIR,
-        instances: {
-            total: instances.length,
-            connected: connectedCount,
-        },
-    });
-});
-
-app.use('/api/internal', authenticateInternal);
-app.post('/api/internal/heartbeat', (req, res) => {
-    res.json({
-        success: true,
-        orgId: WASUP_ORG_ID,
-        region: REGION_CODE,
-        workerMode: WASUP_WORKER_MODE,
-        instances: instanceManager.getAllInstances().map(i => ({
-            id: i.id,
-            status: i.status,
-            phone: i.connectedPhone,
-            proxySource: i.proxy?.source,
-            apiKey: i.apiKey,
-        })),
-    });
-});
 
 // Apply authentication to all API routes
 app.use('/api', authenticateAPI);
-app.use('/api/instances/:id', authorizeInstanceScope);
 
 // ========================================
 // INSTANCE MANAGEMENT API
@@ -717,16 +262,6 @@ app.use('/api/instances/:id', authorizeInstanceScope);
  */
 app.get('/api/instances', (req, res) => {
     try {
-        if (req.auth?.type === 'instance') {
-            const inst = instanceManager.getInstance(req.auth.instanceId);
-            const instances = inst ? [inst.getStatus()] : [];
-            return res.json({
-                success: true,
-                count: instances.length,
-                instances,
-            });
-        }
-
         const instances = instanceManager.getAllInstances();
         res.json({ 
             success: true, 
@@ -745,26 +280,17 @@ app.get('/api/instances', (req, res) => {
  */
 app.post('/api/instances', async (req, res) => {
     try {
-        const {
-            id,
-            name,
-            webhookUrl,
-            antiBanSettings,
-            apiKey,
-            generateApiKey,
-        } = req.body;
-
-        if (req.auth?.type === 'instance') {
-            return res.status(403).json({ error: 'Instance-scoped API keys cannot create instances' });
-        }
+        const { id, name, webhookUrl, webhookSigningSecret, antiBanSettings, behaviorSettings, handoffSettings, proxy } = req.body;
         
         const instance = await instanceManager.createInstance({
             id,
             name,
             webhookUrl,
+            webhookSigningSecret: webhookSigningSecret || '',
             antiBanSettings,
-            apiKey,
-            generateApiKey: generateApiKey === true || generateApiKey === 'true',
+            behaviorSettings,
+            handoffSettings,
+            proxy
         });
         
         broadcastToAll({
@@ -776,36 +302,6 @@ app.post('/api/instances', async (req, res) => {
             success: true, 
             instance 
         });
-    } catch (error) {
-        res.status(400).json({ error: error.message });
-    }
-});
-
-/**
- * POST /api/instances/:id/api-key/rotate
- */
-app.post('/api/instances/:id/api-key/rotate', async (req, res) => {
-    try {
-        if (req.auth?.type === 'instance' && req.auth.instanceId !== req.params.id) {
-            return res.status(403).json({ error: 'Forbidden for this instance key' });
-        }
-        const result = await instanceManager.rotateInstanceApiKey(req.params.id);
-        res.json({ success: true, ...result, showOnce: true });
-    } catch (error) {
-        res.status(400).json({ error: error.message });
-    }
-});
-
-/**
- * DELETE /api/instances/:id/api-key
- */
-app.delete('/api/instances/:id/api-key', async (req, res) => {
-    try {
-        if (req.auth?.type === 'instance') {
-            return res.status(403).json({ error: 'Use deployment key to clear instance API keys' });
-        }
-        const result = await instanceManager.clearInstanceApiKey(req.params.id);
-        res.json({ success: true, ...result });
     } catch (error) {
         res.status(400).json({ error: error.message });
     }
@@ -833,16 +329,19 @@ app.get('/api/instances/:id', (req, res) => {
 /**
  * PUT /api/instances/:id
  * Update instance settings
- * Body: { name?, webhookUrl?, antiBanSettings? }
+ * Body: { name?, webhookUrl?, webhookSigningSecret?, behaviorSettings?, antiBanSettings?, handoffSettings? }
  */
 app.put('/api/instances/:id', async (req, res) => {
     try {
-        const { name, webhookUrl, antiBanSettings } = req.body;
+        const { name, webhookUrl, webhookSigningSecret, behaviorSettings, antiBanSettings, handoffSettings } = req.body;
         
         const instance = await instanceManager.updateInstance(req.params.id, {
             name,
             webhookUrl,
-            antiBanSettings
+            webhookSigningSecret,
+            behaviorSettings,
+            antiBanSettings,
+            handoffSettings,
         });
         
         broadcastToAll({
@@ -865,16 +364,17 @@ app.put('/api/instances/:id', async (req, res) => {
  */
 app.delete('/api/instances/:id', async (req, res) => {
     try {
-        await instanceManager.deleteInstance(req.params.id);
-        
+        const result = await instanceManager.deleteInstance(req.params.id);
+
         broadcastToAll({
             type: 'instance_deleted',
             data: { id: req.params.id }
         });
-        
-        res.json({ 
-            success: true, 
-            message: `Instance ${req.params.id} deleted` 
+
+        res.json({
+            success: true,
+            message: `Instance ${req.params.id} deleted`,
+            poolSlotReleased: !!result.poolSlotReleased,
         });
     } catch (error) {
         res.status(400).json({ error: error.message });
@@ -887,16 +387,25 @@ app.delete('/api/instances/:id', async (req, res) => {
 
 /**
  * POST /api/instances/:id/connect
- * Start WhatsApp connection for instance
+ * Start WhatsApp connection for instance (QR code mode)
+ * Body: { pairingPhone?: "phone_number" } - if provided, uses pairing code instead of QR
  */
 app.post('/api/instances/:id/connect', async (req, res) => {
     console.log(`[API] Connect request for instance: ${req.params.id}`);
     try {
-        const instance = await instanceManager.connectInstance(req.params.id);
+        const options = {};
+        if (req.body.pairingPhone) {
+            options.pairingPhone = req.body.pairingPhone;
+        }
+        
+        const instance = await instanceManager.connectInstance(req.params.id, options);
         console.log(`[API] Connect successful for: ${req.params.id}`);
         res.json({ 
             success: true, 
-            message: 'Connection started',
+            message: options.pairingPhone 
+                ? `Pairing code generated: ${instance.pairingCode}` 
+                : 'Connection started (QR mode)',
+            pairingCode: instance.pairingCode || null,
             instance 
         });
     } catch (error) {
@@ -906,48 +415,53 @@ app.post('/api/instances/:id/connect', async (req, res) => {
 });
 
 /**
- * POST /api/instances/:id/disconnect
- * Disconnect instance
+ * POST /api/instances/:id/pair
+ * Connect using pairing code (alternative to QR scan)
+ * Body: { phoneNumber: "447393002183" } - phone number WITH country code, NO + prefix
  */
-app.post('/api/instances/:id/disconnect', async (req, res) => {
+app.post('/api/instances/:id/pair', async (req, res) => {
     try {
-        const revoke = req.body?.revoke === true;
-        const instance = await instanceManager.disconnectInstance(req.params.id, { revoke });
+        const { phoneNumber } = req.body;
+        
+        if (!phoneNumber) {
+            return res.status(400).json({ 
+                error: 'Missing required field: phoneNumber',
+                hint: 'Provide phone number with country code, e.g. "447393002183"'
+            });
+        }
+        
+        const instance = await instanceManager.connectInstance(req.params.id, { 
+            pairingPhone: phoneNumber 
+        });
+        
         res.json({ 
             success: true, 
-            message: revoke ? 'Logged out and session revoked' : 'Disconnected',
+            pairingCode: instance.pairingCode,
+            message: instance.pairingCode 
+                ? `Enter code ${instance.pairingCode} in WhatsApp > Linked Devices > Link a Device`
+                : 'Already registered, reconnecting...',
             instance 
         });
     } catch (error) {
+        console.error(`[API] Pair error for ${req.params.id}:`, error.message);
         res.status(400).json({ error: error.message });
     }
 });
 
 /**
- * POST /api/instances/:id/pair
- * Connect using pairing code (alternative to QR)
- * Body: { phoneNumber: "447393002183" }
+ * POST /api/instances/:id/disconnect
+ * Close the live socket. Credentials on disk are kept unless body.revoke is true.
  */
-app.post('/api/instances/:id/pair', async (req, res) => {
-    console.log(`[API] Pairing code request for instance: ${req.params.id}`);
+app.post('/api/instances/:id/disconnect', async (req, res) => {
     try {
-        const { phoneNumber } = req.body;
-        
-        if (!phoneNumber) {
-            return res.status(400).json({ error: 'Missing required field: phoneNumber (with country code, e.g. "447393002183")' });
-        }
-        
-        const result = await instanceManager.connectInstanceWithPairingCode(req.params.id, phoneNumber);
-        
-        console.log(`[API] Pairing code generated for: ${req.params.id}`);
+        const revokeSession = !!(req.body && req.body.revoke);
+        const instance = await instanceManager.disconnectInstance(req.params.id, { revokeSession });
         res.json({ 
             success: true, 
-            pairingCode: result.code,
-            message: `Enter this code on WhatsApp: ${result.code}. Go to WhatsApp > Linked Devices > Link a Device > Link with phone number`,
-            instance: result.instance
+            message: revokeSession ? 'Disconnected (session revoked)' : 'Disconnected (auth preserved on disk)',
+            instance 
         });
     } catch (error) {
-        console.error(`[API] Pairing code error for ${req.params.id}:`, error.message);
         res.status(400).json({ error: error.message });
     }
 });
@@ -971,10 +485,15 @@ app.post('/api/instances/:id/clear-auth', async (req, res) => {
 
 /**
  * GET /api/instances/:id/qr
- * Get QR code for instance (if connecting)
+ * Get QR code and/or pairing code for instance
+ * Query: ?format=image returns a raw PNG image
  */
-app.get('/api/instances/:id/qr', (req, res) => {
+app.get('/api/instances/:id/qr', async (req, res) => {
     try {
+        res.set('Cache-Control', 'no-store, no-cache, max-age=0, must-revalidate');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
+
         const instance = instanceManager.getInstance(req.params.id);
         if (!instance) {
             return res.status(404).json({ error: 'Instance not found' });
@@ -983,27 +502,75 @@ app.get('/api/instances/:id/qr', (req, res) => {
         const status = instance.getStatus();
         
         if (status.status === 'connected') {
+            if (req.query.format === 'image') {
+                return res.status(204).end();
+            }
             return res.json({ 
                 success: true, 
                 status: 'connected',
                 phone: status.connectedPhone,
+                qrCode: null,
+                qrCodeUpdatedAt: status.qrCodeUpdatedAt || null,
+                qrVersion: status.qrVersion || 0,
+                qrAgeMs: status.qrAgeMs ?? null,
+                qrTtlMs: status.qrTtlMs ?? null,
+                qrExpiresInMs: status.qrExpiresInMs ?? null,
+                qrRefreshRestartCount: status.qrRefreshRestartCount || 0,
+                staleProtocolResetCount: status.staleProtocolResetCount || 0,
+                qrScanReceivedAt: status.qrScanReceivedAt || null,
+                linkingGraceUntil: status.linkingGraceUntil || null,
+                linkingGraceActive: !!status.linkingGraceActive,
+                lastCredsUpdateAt: status.lastCredsUpdateAt || null,
+                pairingCode: null,
                 message: 'Already connected'
             });
         }
         
-        if (!status.qrCode) {
+        if (req.query.format === 'image' && instance.qrContent) {
+            const pngBuffer = await QRCode.toBuffer(instance.qrContent, { type: 'png', width: 300, margin: 2 });
+            res.set('Content-Type', 'image/png');
+            return res.send(pngBuffer);
+        }
+        
+        if (!status.qrCode && !status.pairingCode) {
             return res.json({ 
                 success: true, 
                 status: status.status,
                 qrCode: null,
-                message: 'QR code not yet generated. Call /connect first.'
+                qrCodeUpdatedAt: status.qrCodeUpdatedAt || null,
+                qrVersion: status.qrVersion || 0,
+                qrAgeMs: status.qrAgeMs ?? null,
+                qrTtlMs: status.qrTtlMs ?? null,
+                qrExpiresInMs: status.qrExpiresInMs ?? null,
+                qrRefreshRestartCount: status.qrRefreshRestartCount || 0,
+                staleProtocolResetCount: status.staleProtocolResetCount || 0,
+                qrScanReceivedAt: status.qrScanReceivedAt || null,
+                linkingGraceUntil: status.linkingGraceUntil || null,
+                linkingGraceActive: !!status.linkingGraceActive,
+                lastCredsUpdateAt: status.lastCredsUpdateAt || null,
+                pairingCode: null,
+                connectionIssue: status.connectionIssue || null,
+                message: status.connectionIssue?.message || 'Not yet generated. Call /connect or /pair first.'
             });
         }
         
         res.json({ 
             success: true, 
             status: status.status,
-            qrCode: status.qrCode
+            qrCode: status.qrCode || null,
+            qrCodeUpdatedAt: status.qrCodeUpdatedAt || null,
+            qrVersion: status.qrVersion || 0,
+            qrAgeMs: status.qrAgeMs ?? null,
+            qrTtlMs: status.qrTtlMs ?? null,
+            qrExpiresInMs: status.qrExpiresInMs ?? null,
+            qrRefreshRestartCount: status.qrRefreshRestartCount || 0,
+            staleProtocolResetCount: status.staleProtocolResetCount || 0,
+            qrScanReceivedAt: status.qrScanReceivedAt || null,
+            linkingGraceUntil: status.linkingGraceUntil || null,
+            linkingGraceActive: !!status.linkingGraceActive,
+            lastCredsUpdateAt: status.lastCredsUpdateAt || null,
+            connectionIssue: status.connectionIssue || null,
+            pairingCode: status.pairingCode || null
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1028,111 +595,54 @@ app.get('/api/instances/:id/qr', (req, res) => {
  */
 app.post('/api/instances/:id/send', async (req, res) => {
     try {
-        const { to } = req.body;
+        const {
+            to,
+            mediaUrl, mimeType, fileName, ptt,
+            footer, buttons, buttonText, title, sections,
+            latitude, longitude, locationName, locationAddress,
+            contactCard,
+            typingSimulation, delayEnabled, contactName, skipContactSave
+        } = req.body;
+        const message = req.body.message ?? req.body.text;
+        const messageType = resolveSendMessageType(req.body.messageType, req.body);
 
         if (!to) {
             return res.status(400).json({ error: 'Missing required field: to' });
         }
 
-        await handleSendRequest(req, res, req.params.id);
-    } catch (error) {
-        res.status(400).json({ error: error.message });
-    }
-});
+        // Build options for per-message behavior override
+        const options = {};
+        if (typingSimulation !== undefined) options.typingSimulation = typingSimulation;
+        if (delayEnabled !== undefined) options.delayEnabled = delayEnabled;
+        if (contactName !== undefined) options.contactName = contactName;
+        if (skipContactSave !== undefined) options.skipContactSave = skipContactSave;
 
-/**
- * POST /api/instances/:id/send/interactive
- * Alias for interactive-capable sends. Uses the same payload as /send,
- * but is easier to discover in OpenAPI and smoke checks.
- */
-app.post('/api/instances/:id/send/interactive', async (req, res) => {
-    try {
-        const { to } = req.body;
+        // Determine if this is a rich message or plain text
+        const richType = messageType && messageType !== 'text';
+        let textOrParams;
 
-        if (!to) {
-            return res.status(400).json({ error: 'Missing required field: to' });
-        }
-
-        await handleSendRequest(req, res, req.params.id);
-    } catch (error) {
-        res.status(400).json({ error: error.message });
-    }
-});
-
-/**
- * POST /api/instances/:id/react
- * React to a WhatsApp message
- * Body: { to, messageId, emoji, fromMe?, participant?, key? }
- */
-app.post('/api/instances/:id/react', async (req, res) => {
-    try {
-        const parsed = parseReactionPayload(req.body);
-        if (parsed.errors) {
-            return res.status(400).json({
-                error: 'Invalid reaction payload',
-                details: parsed.errors
-            });
-        }
-
-        const result = await instanceManager.sendReaction(req.params.id, parsed.to, {
-            emoji: parsed.emoji,
-            key: parsed.key
-        });
-
-        res.json({ success: true, result });
-    } catch (error) {
-        res.status(400).json({ error: error.message });
-    }
-});
-
-/**
- * POST /api/react
- * React via auto-selected or from_phone matched instance
- */
-app.post('/api/react', async (req, res) => {
-    try {
-        const parsed = parseReactionPayload(req.body);
-        if (parsed.errors) {
-            return res.status(400).json({
-                error: 'Invalid reaction payload',
-                details: parsed.errors
-            });
-        }
-
-        const fromPhone = req.body.from_phone || req.body.from;
-        const instances = instanceManager.getAllInstances();
-        let matchedInstance = null;
-
-        if (fromPhone) {
-            const normalizedFrom = normalizePhone(fromPhone);
-            matchedInstance = instances.find((instance) => {
-                if (!instance.connectedPhone || instance.status !== 'connected') return false;
-                const normalizedConnected = normalizePhone(instance.connectedPhone);
-                return normalizedConnected.endsWith(normalizedFrom)
-                    || normalizedFrom.endsWith(normalizedConnected)
-                    || normalizedConnected === normalizedFrom;
-            });
-
-            if (!matchedInstance) {
-                return res.status(400).json({
-                    error: `No connected instance found for phone number: ${fromPhone}`
-                });
-            }
+        if (richType) {
+            const normalizedInteractive = normalizeInteractivePayload(messageType, req.body, message);
+            textOrParams = {
+                messageType, text: message || '',
+                mediaUrl, mimeType, fileName, ptt,
+                footer,
+                buttons: normalizedInteractive.buttons || buttons,
+                buttonText, title,
+                sections: normalizedInteractive.sections || sections,
+                latitude, longitude, locationName, locationAddress,
+                contactCard
+            };
         } else {
-            matchedInstance = instances.find((instance) => instance.status === 'connected');
-            if (!matchedInstance) {
-                return res.status(400).json({ error: 'No connected instances available' });
-            }
+            if (!message) return res.status(400).json({ error: 'Missing required field: message' });
+            textOrParams = message;
         }
 
-        const result = await instanceManager.sendReaction(matchedInstance.id, parsed.to, {
-            emoji: parsed.emoji,
-            key: parsed.key
-        });
+        const result = await instanceManager.sendMessage(req.params.id, to, textOrParams, options);
 
         res.json({
             success: true,
-            instanceId: matchedInstance.id,
+            messageType: messageType || 'text',
             result
         });
     } catch (error) {
@@ -1141,276 +651,59 @@ app.post('/api/react', async (req, res) => {
 });
 
 /**
- * GET /api/instances/:id/media
- * List stored media for an instance (inbound + outbound uploads)
+ * POST /api/instances/:id/react
+ * Send an emoji reaction to a message
+ * Body: { to, messageId, emoji, fromMe? }
  */
-app.get('/api/instances/:id/media', async (req, res) => {
+app.post('/api/instances/:id/react', async (req, res) => {
     try {
-        const instance = instanceManager.getInstance(req.params.id);
-        if (!instance) {
-            return res.status(404).json({ error: 'Instance not found' });
+        const { to, messageId, emoji, fromMe } = req.body;
+        if (!to || !messageId) {
+            return res.status(400).json({ error: 'Missing required fields: to, messageId' });
         }
-
-        const items = await listMedia(req.params.id, {
-            mediaType: req.query.type || req.query.mediaType || undefined,
-            limit: Number(req.query.limit || 50),
-        });
-
-        res.json({ success: true, count: items.length, media: items });
+        const result = await instanceManager.sendReaction(req.params.id, to, messageId, emoji || '', !!fromMe);
+        res.json({ success: true, result });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(400).json({ error: error.message });
     }
 });
 
 /**
- * GET /api/instances/:id/media/:mediaId
- * Download stored media file for an instance
+ * POST /api/react
+ * Send an emoji reaction (auto-select instance by from_phone)
+ * Body: { from_phone?, to_phone, messageId, emoji }
  */
-app.get('/api/instances/:id/media/:mediaId', async (req, res) => {
+app.post('/api/react', async (req, res) => {
     try {
-        const resolved = await resolveMediaBuffer(req.params.id, req.params.mediaId);
-        if (!resolved) {
-            return res.status(404).json({ error: 'Media not found' });
+        const fromPhone = req.body.from_phone || req.body.from;
+        const toPhone = req.body.to_phone || req.body.to;
+        const { messageId, emoji } = req.body;
+
+        if (!toPhone || !messageId) {
+            return res.status(400).json({ error: 'Missing required fields: to_phone, messageId' });
         }
 
-        res.setHeader('Content-Type', resolved.entry.mimeType || 'application/octet-stream');
-        res.setHeader(
-            'Content-Disposition',
-            `inline; filename="${resolved.entry.fileName || `${req.params.mediaId}.bin`}"`
-        );
-        res.send(resolved.buffer);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// ========================================
-// PROXY CONFIGURATION API
-// ========================================
-
-app.get('/api/proxy', (req, res) => {
-    const cfg = getDeploymentDefaultProxy();
-    const pool = instanceManager.getProxyPoolStatus();
-    res.json({
-        success: true,
-        region: process.env.REGION_CODE || null,
-        deploymentDefault: redactProxy(cfg),
-        deploymentDefaultConfigured: !!cfg,
-        pool,
-    });
-});
-
-app.get('/api/proxy/pool', (req, res) => {
-    const pool = instanceManager.getProxyPoolStatus();
-    res.json({
-        success: true,
-        enabled: pool.enabled,
-        pool,
-        message: pool.enabled
-            ? undefined
-            : 'No PROXY_POOL configured. Pool auto-assignment is off.',
-    });
-});
-
-app.post('/api/proxy/pool/reconcile', async (req, res) => {
-    try {
-        const result = await instanceManager.reconcileProxyPool();
-        broadcastToAll({ type: 'proxy_pool_reconciled', data: result });
-        res.json({
-            success: true,
-            message: `Pool reconciled: ${result.reassigned.length} reassigned, ${result.orphaned.length} orphaned.`,
-            ...result,
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.post('/api/proxy/pool/entries', async (req, res) => {
-    try {
-        const body = req.body || {};
-        let inputs;
-        if (Array.isArray(body.entries)) {
-            inputs = body.entries;
-        } else if (body.url || body.shorthand || body.host) {
-            inputs = [body.shorthand || body.url || body];
-        } else {
-            return res.status(400).json({
-                error: 'Missing proxy. Provide url, shorthand (host:port:user:pass), {host,port,...}, or entries: [...]',
+        let matchedInstance = null;
+        if (fromPhone) {
+            const instances = instanceManager.getAllInstances();
+            const normalizedFrom = normalizePhone(fromPhone);
+            matchedInstance = instances.find(i => {
+                if (!i.connectedPhone || i.status !== 'connected') return false;
+                const nc = normalizePhone(i.connectedPhone);
+                return nc.endsWith(normalizedFrom) || normalizedFrom.endsWith(nc) || nc === normalizedFrom;
             });
-        }
-
-        const results = [];
-        for (const inp of inputs) {
-            try {
-                const r = await instanceManager.addProxyToPool(inp);
-                results.push({ ok: true, added: r.added, slot: r.slot });
-            } catch (err) {
-                results.push({ ok: false, error: err.message });
-            }
-        }
-
-        let reconciled = null;
-        if (body.reconcile !== false) {
-            reconciled = await instanceManager.reconcileProxyPool();
-        }
-
-        const pool = instanceManager.getProxyPoolStatus();
-        broadcastToAll({ type: 'proxy_pool_updated', data: pool });
-        res.status(201).json({ success: results.every(r => r.ok), results, reconciled, pool });
-    } catch (error) {
-        res.status(400).json({ error: error.message });
-    }
-});
-
-app.delete('/api/proxy/pool/entries/:slotId', async (req, res) => {
-    try {
-        const slotId = decodeURIComponent(req.params.slotId);
-        const confirm = req.query.confirm === 'true' || req.query.confirm === '1';
-        const current = instanceManager.getProxyPoolStatus();
-        const entry = (current.entries || []).find(e => e.id === slotId);
-        if (!entry) {
-            return res.status(404).json({ error: `Pool slot ${slotId} not found` });
-        }
-        if (entry.assignedTo && !confirm) {
-            return res.status(409).json({
-                error: 'Slot is currently in use',
-                slotId,
-                assignedTo: entry.assignedTo,
-                hint: 'Re-call with ?confirm=true to remove anyway.',
-            });
-        }
-
-        const result = await instanceManager.removeProxyFromPool(slotId);
-        broadcastToAll({ type: 'proxy_pool_updated', data: result.pool });
-        res.json({ success: true, ...result });
-    } catch (error) {
-        res.status(400).json({ error: error.message });
-    }
-});
-
-app.post('/api/proxy/test', async (req, res) => {
-    try {
-        let cfg;
-        if (req.body?.url || req.body?.shorthand || req.body?.host) {
-            cfg = parseFlexibleProxyInput(req.body.shorthand || req.body.url || req.body);
         } else {
-            cfg = getDeploymentDefaultProxy();
-        }
-        if (!cfg) {
-            return res.status(400).json({ error: 'No proxy configured and none supplied in request body.' });
+            matchedInstance = instanceManager.getAllInstances().find(i => i.status === 'connected');
         }
 
-        const target = req.body?.target || 'https://web.whatsapp.com/';
-        const agent = createProxyAgent(cfg);
-        const start = Date.now();
-        const response = await axios.get(target, {
-            httpsAgent: agent,
-            httpAgent: agent,
-            timeout: 15000,
-            validateStatus: () => true,
-            maxRedirects: 0,
-        });
-
-        res.json({
-            success: true,
-            proxy: redactProxy(cfg),
-            target,
-            responseStatus: response.status,
-            elapsedMs: Date.now() - start,
-        });
-    } catch (error) {
-        res.status(502).json({ success: false, error: error.message, code: error.code || null });
-    }
-});
-
-app.get('/api/instances/:id/proxy', (req, res) => {
-    try {
-        const instance = instanceManager.getInstance(req.params.id);
-        if (!instance) return res.status(404).json({ error: 'Instance not found' });
-        res.json({ success: true, proxy: instance.getProxyStatus() });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.put('/api/instances/:id/proxy', async (req, res) => {
-    try {
-        const body = req.body || {};
-        let proxyArg;
-        if (body.enabled === false) {
-            proxyArg = { enabled: false };
-        } else if (body.url || body.shorthand || body.host) {
-            const cfg = parseFlexibleProxyInput(body.shorthand || body.url || body);
-            if (!cfg) {
-                return res.status(400).json({ error: 'Invalid proxy config' });
-            }
-            proxyArg = {
-                enabled: true,
-                type: cfg.type,
-                host: cfg.host,
-                port: cfg.port,
-                username: cfg.username,
-                password: cfg.password,
-            };
-        } else {
-            proxyArg = null;
+        if (!matchedInstance) {
+            return res.status(400).json({ error: 'No connected instance found' });
         }
 
-        const result = await instanceManager.setInstanceProxy(req.params.id, proxyArg);
-        broadcastToAll({
-            type: 'instance_updated',
-            data: instanceManager.getInstance(req.params.id).getStatus(),
-        });
-        res.json({ success: true, proxy: result, message: 'Proxy updated. Instance will reconnect if it was online.' });
+        const result = await instanceManager.sendReaction(matchedInstance.id, toPhone, messageId, emoji || '', !!req.body.fromMe);
+        res.json({ success: true, instanceId: matchedInstance.id, result });
     } catch (error) {
         res.status(400).json({ error: error.message });
-    }
-});
-
-app.post('/api/instances/:id/proxy/verify', async (req, res) => {
-    try {
-        const result = await instanceManager.verifyInstanceProxy(req.params.id, req.body?.target);
-        res.json({ success: true, ...result });
-    } catch (error) {
-        res.status(404).json({ error: error.message });
-    }
-});
-
-app.delete('/api/instances/:id/proxy', async (req, res) => {
-    try {
-        const result = await instanceManager.setInstanceProxy(req.params.id, null);
-        broadcastToAll({
-            type: 'instance_updated',
-            data: instanceManager.getInstance(req.params.id).getStatus(),
-        });
-        res.json({ success: true, proxy: result, message: 'Per-instance proxy override cleared.' });
-    } catch (error) {
-        res.status(400).json({ error: error.message });
-    }
-});
-
-app.get('/api/instances/:id/connection', (req, res) => {
-    try {
-        const instance = instanceManager.getInstance(req.params.id);
-        if (!instance) return res.status(404).json({ error: 'Instance not found' });
-
-        const status = instance.getStatus();
-        const uptime = status.connectedAt
-            ? Math.floor((Date.now() - new Date(status.connectedAt).getTime()) / 1000)
-            : null;
-
-        res.json({
-            success: true,
-            status: status.status,
-            phone: status.connectedPhone || null,
-            connectedAt: status.connectedAt || null,
-            uptime,
-            pairingCode: status.pairingCode || null,
-            proxy: status.proxy || null,
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
     }
 });
 
@@ -1422,86 +715,125 @@ function normalizePhone(phone) {
     return phone.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
 }
 
+function resolveSendMessageType(messageType, body = {}) {
+    const explicitType = String(messageType || '').trim().toLowerCase();
+    if (explicitType) return explicitType;
+    if (Array.isArray(body.buttons) && body.buttons.length > 0) return 'buttons';
+    if (Array.isArray(body.sections) && body.sections.length > 0) return 'list';
+    return 'text';
+}
+
+function normalizeInteractivePayload(messageType, body = {}, message) {
+    if (messageType === 'buttons') {
+        if (!message) {
+            throw new Error('Missing required field: message or text');
+        }
+        if (!Array.isArray(body.buttons) || body.buttons.length === 0) {
+            throw new Error('Missing required field: buttons');
+        }
+        if (body.buttons.length > 3) {
+            throw new Error('WhatsApp quick-reply buttons support a maximum of 3 buttons');
+        }
+        return {
+            buttons: body.buttons.map((button, index) => {
+                const text = String(button?.text || button?.title || '').trim();
+                if (!text) {
+                    throw new Error(`Button ${index + 1} is missing text`);
+                }
+                return {
+                    id: String(button?.id || `btn_${index + 1}`).trim(),
+                    text: text.slice(0, 20)
+                };
+            })
+        };
+    }
+
+    if (messageType === 'list') {
+        if (!Array.isArray(body.sections) || body.sections.length === 0) {
+            throw new Error('Missing required field: sections');
+        }
+        return {
+            sections: body.sections.map((section, sectionIndex) => ({
+                title: String(section?.title || `Section ${sectionIndex + 1}`).trim(),
+                rows: Array.isArray(section?.rows)
+                    ? section.rows.map((row, rowIndex) => ({
+                        title: String(row?.title || `Option ${rowIndex + 1}`).trim(),
+                        id: String(row?.id || `row_${sectionIndex + 1}_${rowIndex + 1}`).trim(),
+                        description: String(row?.description || '').trim()
+                    }))
+                    : []
+            }))
+        };
+    }
+
+    return {};
+}
+
 /**
  * POST /api/send
  * Global send endpoint - finds instance by 'from_phone' number
- * Body: { 
- *   from_phone: "sender_phone_number",  // Which of your connected numbers to send from
- *   to_phone: "recipient_phone_number", 
- *   message: "text", 
- *   typingSimulation?: boolean, 
- *   delayEnabled?: boolean,
- *   contactName?: string,      // Optional: Name to save contact as (default: "Unknown User XXXX")
- *   skipContactSave?: boolean  // Optional: Skip auto-saving contact (default: false)
- * }
+ * Supports rich messages: image, video, document, audio, buttons, list, location, contact
  */
 app.post('/api/send', async (req, res) => {
     try {
-        // Support both new format (from_phone, to_phone) and legacy format (from, to)
         const fromPhone = req.body.from_phone || req.body.from;
         const toPhone = req.body.to_phone || req.body.to;
+        const {
+            mediaUrl, mimeType, fileName, ptt,
+            footer, buttons, buttonText, title, sections,
+            latitude, longitude, locationName, locationAddress,
+            contactCard,
+            typingSimulation, delayEnabled, contactName, skipContactSave
+        } = req.body;
+        const message = req.body.message ?? req.body.text;
+        const messageType = resolveSendMessageType(req.body.messageType, req.body);
         
         if (!toPhone) {
             return res.status(400).json({ error: 'Missing required field: to_phone' });
         }
+        
+        // Build options for per-message behavior override
+        const options = {};
+        if (typingSimulation !== undefined) options.typingSimulation = typingSimulation;
+        if (delayEnabled !== undefined) options.delayEnabled = delayEnabled;
+        if (contactName !== undefined) options.contactName = contactName;
+        if (skipContactSave !== undefined) options.skipContactSave = skipContactSave;
 
-        const isMediaSend = hasMediaPayload(req.body);
-        let messagePayload = null;
-        let mediaPayload = null;
-        let options = {};
-
-        if (isMediaSend) {
-            const parsed = parseMediaPayload({ ...req.body, to: toPhone });
-            if (parsed.errors) {
-                return res.status(400).json({ error: 'Invalid media payload', details: parsed.errors });
-            }
-            mediaPayload = parsed.mediaPayload;
-            options = parsed.options;
+        // Determine rich vs plain
+        const richType = messageType && messageType !== 'text';
+        let textOrParams;
+        if (richType) {
+            const normalizedInteractive = normalizeInteractivePayload(messageType, req.body, message);
+            textOrParams = {
+                messageType, text: message || '',
+                mediaUrl, mimeType, fileName, ptt,
+                footer,
+                buttons: normalizedInteractive.buttons || buttons,
+                buttonText, title,
+                sections: normalizedInteractive.sections || sections,
+                latitude, longitude, locationName, locationAddress,
+                contactCard
+            };
         } else {
-            const parsed = parseSendOptions(req.body);
-            if (parsed.errors) {
-                return res.status(400).json({
-                    error: 'Invalid send payload',
-                    details: parsed.errors
-                });
-            }
-            messagePayload = parsed.messagePayload;
-            options = parsed.options;
+            if (!message) return res.status(400).json({ error: 'Missing required field: message' });
+            textOrParams = message;
         }
         
         let targetInstanceId = null;
         let matchedInstance = null;
         
-        // If 'from_phone' provided, find the instance with that connected number
         if (fromPhone) {
             const instances = instanceManager.getAllInstances();
-            
-            // Debug: Log all instances
             console.log(`[API /send] Looking for from_phone: ${fromPhone}`);
-            console.log(`[API /send] Available instances:`, instances.map(i => ({
-                id: i.id,
-                status: i.status,
-                connectedPhone: i.connectedPhone
-            })));
             
-            // Normalize the 'from' number (remove +, spaces, dashes)
             const normalizedFrom = normalizePhone(fromPhone);
-            console.log(`[API /send] Normalized from: ${normalizedFrom}`);
             
-            // Find instance where connectedPhone matches
             matchedInstance = instances.find(i => {
-                if (!i.connectedPhone || i.status !== 'connected') {
-                    console.log(`[API /send] Skipping ${i.id}: phone=${i.connectedPhone}, status=${i.status}`);
-                    return false;
-                }
+                if (!i.connectedPhone || i.status !== 'connected') return false;
                 const normalizedConnected = normalizePhone(i.connectedPhone);
-                console.log(`[API /send] Comparing: ${normalizedConnected} vs ${normalizedFrom}`);
-                // Match if either is a suffix of the other (handles country code variations)
-                const matches = normalizedConnected.endsWith(normalizedFrom) || 
+                return normalizedConnected.endsWith(normalizedFrom) || 
                        normalizedFrom.endsWith(normalizedConnected) ||
                        normalizedConnected === normalizedFrom;
-                console.log(`[API /send] Match result: ${matches}`);
-                return matches;
             });
             
             if (!matchedInstance) {
@@ -1521,7 +853,6 @@ app.post('/api/send', async (req, res) => {
             
             targetInstanceId = matchedInstance.id;
         } else {
-            // No from_phone provided - use first connected instance
             const instances = instanceManager.getAllInstances();
             matchedInstance = instances.find(i => i.status === 'connected');
             
@@ -1532,9 +863,7 @@ app.post('/api/send', async (req, res) => {
             targetInstanceId = matchedInstance.id;
         }
         
-        const result = isMediaSend
-            ? await instanceManager.sendMedia(targetInstanceId, toPhone, mediaPayload, options)
-            : await instanceManager.sendMessage(targetInstanceId, toPhone, messagePayload.text, options);
+        const result = await instanceManager.sendMessage(targetInstanceId, toPhone, textOrParams, options);
         
         // Determine status based on actual result
         let status = 'sent';
@@ -1543,15 +872,13 @@ app.post('/api/send', async (req, res) => {
         }
         
         res.json([{
-            message_id: crypto.randomUUID(),
+            message_id: result.key?.id || crypto.randomUUID(),
             created_at: new Date().toISOString(),
             from_phone: normalizePhone(matchedInstance.connectedPhone),
             to_phone: normalizePhone(toPhone),
-            message: result.messageText || messagePayload?.text || result.mediaType || 'media',
-            media_type: result.mediaType || (isMediaSend ? 'media' : 'text'),
-            status: status,
-            interactive: result.interactive,
-            media: result.media || null,
+            message: message || `[${messageType || 'text'}]`,
+            message_type: messageType || 'text',
+            status: status
         }]);
     } catch (error) {
         // Check if error indicates a ban or connection issue
@@ -1577,7 +904,7 @@ app.post('/api/send', async (req, res) => {
  * Get list of all connected phone numbers (for webhook integration)
  */
 app.get('/api/numbers', (req, res) => {
-    const instances = instanceManager.getAllInstances();
+    const instances = instanceManager ? instanceManager.getAllInstances() : [];
     const numbers = instances
         .filter(i => i.status === 'connected' && i.connectedPhone)
         .map(i => ({
@@ -1646,32 +973,21 @@ app.get('/api/instances/:id/behavior', (req, res) => {
  * PUT /api/instances/:id/behavior
  * Update behavior settings for instance
  * Body: { behaviorProfile?, typingSimulation?, delayEnabled?, phoneNotificationsEnabled?, notificationGraceMs? }
+ * Any subset may be sent; omitted keys are left unchanged.
  */
 app.put('/api/instances/:id/behavior', async (req, res) => {
     try {
-        const {
-            behaviorProfile,
-            typingSimulation,
-            delayEnabled,
-            phoneNotificationsEnabled,
-            notificationGraceMs
-        } = req.body;
+        const body = req.body && typeof req.body === 'object' ? req.body : {};
+        const behaviorSettings = {};
+        if (body.behaviorProfile !== undefined) behaviorSettings.behaviorProfile = body.behaviorProfile;
+        if (body.profile !== undefined) behaviorSettings.profile = body.profile;
+        if (body.typingSimulation !== undefined) behaviorSettings.typingSimulation = body.typingSimulation;
+        if (body.delayEnabled !== undefined) behaviorSettings.delayEnabled = body.delayEnabled;
+        if (body.phoneNotificationsEnabled !== undefined) behaviorSettings.phoneNotificationsEnabled = body.phoneNotificationsEnabled;
+        if (body.notificationGraceMs !== undefined) behaviorSettings.notificationGraceMs = body.notificationGraceMs;
 
-        if (behaviorProfile !== undefined && !VALID_BEHAVIOR_PROFILES.has(behaviorProfile)) {
-            return res.status(400).json({
-                error: 'Invalid behaviorProfile',
-                allowedProfiles: Array.from(VALID_BEHAVIOR_PROFILES)
-            });
-        }
-        
-        const instance = await instanceManager.updateInstance(req.params.id, { 
-            behaviorSettings: {
-                behaviorProfile,
-                typingSimulation,
-                delayEnabled,
-                phoneNotificationsEnabled,
-                notificationGraceMs
-            } 
+        const instance = await instanceManager.updateInstance(req.params.id, {
+            behaviorSettings,
         });
         
         broadcastToAll({
@@ -1758,6 +1074,457 @@ app.put('/api/instances/:id/anti-ban', async (req, res) => {
 });
 
 // ========================================
+// ANTI-BAN v2 API (Wasup transport anti-ban pipeline)
+// ========================================
+
+/**
+ * GET /api/instances/:id/antiban-v2
+ * Full v2 status: config + health + warmup + rate-limiter + retry tracker +
+ * session stability + LID resolver stats.
+ */
+app.get('/api/instances/:id/antiban-v2', (req, res) => {
+    try {
+        const data = instanceManager.getAntibanV2(req.params.id);
+        res.json({ success: true, antibanV2: data });
+    } catch (error) {
+        res.status(404).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/instances/:id/antiban-v2/config
+ * Just the per-instance config block.
+ */
+app.get('/api/instances/:id/antiban-v2/config', (req, res) => {
+    try {
+        const data = instanceManager.getAntibanV2(req.params.id);
+        res.json({ success: true, config: data?.config || null });
+    } catch (error) {
+        res.status(404).json({ error: error.message });
+    }
+});
+
+/**
+ * PUT /api/instances/:id/antiban-v2/config
+ * Update preset, overrides, or module flags.
+ *
+ * Body shapes (all optional):
+ *   { enabled?: boolean,
+ *     preset?: 'conservative' | 'moderate' | 'aggressive',
+ *     overrides?: { maxPerMinute, maxPerHour, maxPerDay, minDelayMs, maxDelayMs, ... },
+ *     modules?: { warmup: { enabled }, replyRatio: { enabled }, ... },
+ *     alertsWebhook?: 'https://...' | null }
+ *
+ * Hot-reloads rate limits when possible. Other fields take effect on next reconnect.
+ */
+app.put('/api/instances/:id/antiban-v2/config', async (req, res) => {
+    try {
+        const result = await instanceManager.updateAntibanV2(req.params.id, req.body || {});
+        broadcastToAll({ type: 'antibanV2_updated', instanceId: req.params.id, data: result });
+        res.json({ success: true, antibanV2: result, message: 'Config updated. Some fields take effect on reconnect.' });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/instances/:id/antiban-v2/health
+ * Compact health view: { risk, score, recommendation, isPaused, reasons }
+ */
+app.get('/api/instances/:id/antiban-v2/health', (req, res) => {
+    try {
+        const data = instanceManager.getAntibanV2(req.params.id);
+        if (!data || !data.running) {
+            return res.json({ success: true, health: null, message: 'Anti-ban v2 not running for this instance' });
+        }
+        res.json({ success: true, health: data.health });
+    } catch (error) {
+        res.status(404).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/instances/:id/antiban-v2/warmup
+ * Compact warmup view: { phase, day, totalDays, todayLimit, todaySent, progress, complete }
+ */
+app.get('/api/instances/:id/antiban-v2/warmup', (req, res) => {
+    try {
+        const data = instanceManager.getAntibanV2(req.params.id);
+        if (!data || !data.running) {
+            return res.json({ success: true, warmup: null, message: 'Anti-ban v2 not running for this instance' });
+        }
+        res.json({ success: true, warmup: data.warmup });
+    } catch (error) {
+        res.status(404).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/instances/:id/antiban-v2/lid-mappings
+ * Snapshot of the LID↔PN cache (size + sample).
+ */
+app.get('/api/instances/:id/antiban-v2/lid-mappings', (req, res) => {
+    try {
+        const data = instanceManager.getLidMappings(req.params.id);
+        res.json({ success: true, lidMappings: data });
+    } catch (error) {
+        res.status(404).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/instances/:id/antiban-v2/pause
+ * Manual emergency pause. All sends will be blocked until /resume.
+ */
+app.post('/api/instances/:id/antiban-v2/pause', (req, res) => {
+    try {
+        const result = instanceManager.pauseAntibanV2(req.params.id);
+        broadcastToAll({ type: 'antibanV2_paused', instanceId: req.params.id });
+        res.json({ success: true, antibanV2: result, message: 'Anti-ban v2 paused — sends blocked' });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/instances/:id/antiban-v2/resume
+ */
+app.post('/api/instances/:id/antiban-v2/resume', (req, res) => {
+    try {
+        const result = instanceManager.resumeAntibanV2(req.params.id);
+        broadcastToAll({ type: 'antibanV2_resumed', instanceId: req.params.id });
+        res.json({ success: true, antibanV2: result, message: 'Anti-ban v2 resumed' });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/instances/:id/antiban-v2/reset
+ * Nuclear reset — clears warmup, rate-limit history, health stats, retry-tracker
+ * state. Use after serving a real ban period. Fingerprint is preserved.
+ */
+app.post('/api/instances/:id/antiban-v2/reset', async (req, res) => {
+    try {
+        const result = await instanceManager.resetAntibanV2(req.params.id);
+        broadcastToAll({ type: 'antibanV2_reset', instanceId: req.params.id });
+        res.json({ success: true, antibanV2: result, message: 'Anti-ban v2 state wiped (fingerprint kept)' });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// ========================================
+// PROXY CONFIGURATION API
+// ========================================
+
+/**
+ * GET /api/proxy
+ * Get this deployment's default proxy (from env vars).
+ * Applied to any instance that doesn't have its own override.
+ */
+app.get('/api/proxy', (req, res) => {
+    const cfg = getDeploymentDefaultProxy();
+    const pool = instanceManager.getProxyPoolStatus();
+    res.json({
+        success: true,
+        region: process.env.REGION_CODE || null,
+        deploymentDefault: redactProxy(cfg),
+        deploymentDefaultConfigured: !!cfg,
+        deploymentDefaultSource: cfg ? (process.env.DEFAULT_PROXY_URL ? 'env:DEFAULT_PROXY_URL' : 'env:DEFAULT_PROXY_HOST') : null,
+        pool, // { enabled, total, used, free, entries:[...] }
+        hint: !cfg && !pool.enabled
+            ? 'Set DEFAULT_PROXY_URL or PROXY_POOL on this App Service to configure proxies.'
+            : undefined,
+    });
+});
+
+/**
+ * GET /api/proxy/pool
+ * Detailed pool state: every slot with its current assignment.
+ */
+app.get('/api/proxy/pool', (req, res) => {
+    const pool = instanceManager.getProxyPoolStatus();
+    if (!pool.enabled) {
+        return res.json({
+            success: true,
+            enabled: false,
+            message: 'No PROXY_POOL configured on this deployment. Pool auto-assignment is off.',
+            pool,
+        });
+    }
+    res.json({ success: true, enabled: true, pool });
+});
+
+/**
+ * POST /api/proxy/pool/reconcile
+ * Rebuild pool assignments. Useful after changing the PROXY_POOL env var or
+ * when you want to retroactively hand slots to existing direct-connection
+ * instances (e.g. created before the pool was set up).
+ */
+app.post('/api/proxy/pool/reconcile', async (req, res) => {
+    try {
+        const result = await instanceManager.reconcileProxyPool();
+        broadcastToAll({ type: 'proxy_pool_reconciled', data: result });
+        res.json({
+            success: true,
+            message: `Pool reconciled: ${result.reassigned.length} reassigned, ${result.orphaned.length} orphaned.`,
+            ...result,
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/proxy/pool/entries
+ * Add a new proxy to the pool at runtime. No restart needed, doesn't affect
+ * existing instances. Idempotent on host:port (duplicates return added=false).
+ *
+ * Body accepts any of:
+ *   { url: "http://user:pass@host:port" }        URL form
+ *   { shorthand: "host:port:user:pass" }         Webshare shorthand line
+ *   { host, port, username?, password?, type? } Structured (type defaults to http)
+ *   { entries: [ ... ] }                         Bulk add (array of any form above)
+ *
+ * By default, after add, we reconcile the pool so any direct-connection
+ * instance oldest-first can claim the new slot. Set `reconcile:false` in the
+ * body to skip that (the new slot stays free until a new instance is created).
+ */
+app.post('/api/proxy/pool/entries', async (req, res) => {
+    try {
+        const body = req.body || {};
+
+        // Normalize into an array of inputs
+        let inputs;
+        if (Array.isArray(body.entries)) {
+            inputs = body.entries;
+        } else if (body.url || body.shorthand || body.host) {
+            inputs = [body.shorthand || body.url || body];
+        } else {
+            return res.status(400).json({
+                error: 'Missing proxy. Provide one of: url, shorthand, {host,port,username,password}, or entries: [...]',
+            });
+        }
+
+        const results = [];
+        for (const inp of inputs) {
+            try {
+                const r = await instanceManager.addProxyToPool(inp);
+                results.push({ ok: true, added: r.added, slot: r.slot });
+            } catch (err) {
+                results.push({ ok: false, error: err.message, input: typeof inp === 'string' ? inp : JSON.stringify(inp) });
+            }
+        }
+
+        // Retroactively hand new slots to direct-connection instances unless disabled
+        let reconciled = null;
+        if (body.reconcile !== false) {
+            reconciled = await instanceManager.reconcileProxyPool();
+        }
+
+        const pool = instanceManager.getProxyPoolStatus();
+        broadcastToAll({ type: 'proxy_pool_updated', data: pool });
+
+        res.status(201).json({
+            success: results.every(r => r.ok),
+            results,
+            reconciled,
+            pool,
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * DELETE /api/proxy/pool/entries/:slotId
+ * Remove a pool slot by id (host:port format, e.g. "212.212.18.198:6849").
+ * If the slot is currently assigned to an instance, that instance is bounced
+ * and — if other free slots exist — re-assigned automatically.
+ *
+ * Pass ?confirm=true to acknowledge removing an assigned slot.
+ */
+app.delete('/api/proxy/pool/entries/:slotId', async (req, res) => {
+    try {
+        const slotId = decodeURIComponent(req.params.slotId);
+        const confirm = req.query.confirm === 'true' || req.query.confirm === '1';
+
+        // Peek first to see if it's assigned
+        const current = instanceManager.getProxyPoolStatus();
+        const entry = (current.entries || []).find(e => e.id === slotId);
+        if (!entry) {
+            return res.status(404).json({ error: `Pool slot ${slotId} not found` });
+        }
+        if (entry.assignedTo && !confirm) {
+            return res.status(409).json({
+                error: 'Slot is currently in use',
+                slotId,
+                assignedTo: entry.assignedTo,
+                hint: 'Re-call with ?confirm=true to remove anyway. The affected instance will reconnect (possibly direct) within seconds.',
+            });
+        }
+
+        const result = await instanceManager.removeProxyFromPool(slotId);
+        broadcastToAll({ type: 'proxy_pool_updated', data: result.pool });
+
+        res.json({
+            success: true,
+            removed: result.removed,
+            wasAssignedTo: result.wasAssignedTo || null,
+            pool: result.pool,
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/proxy/test
+ * Test the deployment-level default proxy (or supplied one) by making an HTTPS HEAD request
+ * through it. Returns 200 if the upstream responds, plus timing info.
+ * Body (optional): { url: "http://user:pass@proxy:8080", target?: "https://web.whatsapp.com/" }
+ */
+app.post('/api/proxy/test', async (req, res) => {
+    try {
+        let cfg;
+        if (req.body?.url || req.body?.host) {
+            cfg = parseProxyConfig(req.body.url || req.body);
+        } else {
+            cfg = getDeploymentDefaultProxy();
+        }
+        if (!cfg) {
+            return res.status(400).json({ error: 'No proxy configured and none supplied in request body.' });
+        }
+
+        const target = req.body?.target || 'https://web.whatsapp.com/';
+        const agent = createProxyAgent(cfg);
+        const start = Date.now();
+        const response = await axios.get(target, {
+            httpsAgent: agent,
+            httpAgent: agent,
+            timeout: 15000,
+            validateStatus: () => true,
+            maxRedirects: 0,
+        });
+        const elapsedMs = Date.now() - start;
+
+        res.json({
+            success: true,
+            proxy: redactProxy(cfg),
+            target,
+            responseStatus: response.status,
+            elapsedMs,
+            message: `Proxy reached ${target} (HTTP ${response.status}) in ${elapsedMs}ms`,
+        });
+    } catch (error) {
+        res.status(502).json({
+            success: false,
+            error: error.message,
+            code: error.code || null,
+            message: 'Proxy test failed — the upstream was unreachable through the supplied proxy.',
+        });
+    }
+});
+
+/**
+ * GET /api/instances/:id/proxy
+ * Get per-instance proxy state:
+ *   - override:  the instance-level override (null = inheriting deployment default)
+ *   - effective: what's actually in use right now (deployment default if no override)
+ *   - source:    'instance' | 'deployment' | 'disabled' | 'none'
+ */
+app.get('/api/instances/:id/proxy', (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        res.json({ success: true, proxy: instance.getProxyStatus() });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * PUT /api/instances/:id/proxy
+ * Set per-instance proxy. Automatically reconnects if the instance is currently connected.
+ *
+ * Body shapes:
+ *   { url: "http://user:pass@proxy.example.com:8080" }    -> use this proxy
+ *   { url: "socks5://proxy.example.com:1080" }            -> SOCKS5 also supported
+ *   { type, host, port, username?, password? }            -> structured form
+ *   { enabled: false }                                    -> explicitly disable (ignore deployment default)
+ *   null / {}                                             -> clear override, inherit deployment default
+ */
+app.put('/api/instances/:id/proxy', async (req, res) => {
+    try {
+        const body = req.body || {};
+        let proxyArg;
+        if (body.enabled === false) {
+            proxyArg = { enabled: false };
+        } else if (body.url || body.host) {
+            proxyArg = { enabled: true, ...body };
+        } else {
+            proxyArg = null; // clear override
+        }
+
+        const result = await instanceManager.setInstanceProxy(req.params.id, proxyArg);
+
+        broadcastToAll({
+            type: 'instance_updated',
+            data: instanceManager.getInstance(req.params.id).getStatus(),
+        });
+
+        res.json({ success: true, proxy: result, message: 'Proxy updated. Instance will reconnect if it was online.' });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/instances/:id/proxy/verify
+ * Probe the outbound egress IP through this instance's effective proxy agent.
+ * If the proxy is working, the echoed IP should be the proxy's upstream IP
+ * (e.g. a Webshare residential IP), NOT the Azure App Service's outbound IP.
+ *
+ * Body (optional):
+ *   { target: "https://api.ipify.org?format=json" }   // default
+ *   { target: "https://ifconfig.co/json" }
+ *
+ * Returns:
+ *   { success, egressIp, proxySource, proxy, active, elapsedMs, httpStatus }
+ */
+app.post('/api/instances/:id/proxy/verify', async (req, res) => {
+    try {
+        const target = req.body?.target;
+        const result = await instanceManager.verifyInstanceProxy(req.params.id, target);
+        res.json({ success: true, ...result });
+    } catch (error) {
+        res.status(404).json({ error: error.message });
+    }
+});
+
+/**
+ * DELETE /api/instances/:id/proxy
+ * Clear the per-instance override so the instance falls back to the deployment default.
+ */
+app.delete('/api/instances/:id/proxy', async (req, res) => {
+    try {
+        const result = await instanceManager.setInstanceProxy(req.params.id, null);
+
+        broadcastToAll({
+            type: 'instance_updated',
+            data: instanceManager.getInstance(req.params.id).getStatus(),
+        });
+
+        res.json({ success: true, proxy: result, message: 'Per-instance proxy override cleared.' });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// ========================================
 // WEBHOOK CONFIGURATION API
 // ========================================
 
@@ -1824,14 +1591,516 @@ app.put('/api/instances/:id/webhook', async (req, res) => {
 });
 
 // ========================================
+// WHITELABEL API
+// ========================================
+
+/**
+ * POST /api/onboard
+ * Single-call create + connect + configure for whitelabel customers
+ * Body: { phone, name?, webhookUrl?, profileName?, profileStatus? }
+ */
+app.post('/api/onboard', async (req, res) => {
+    try {
+        const { phone, name, webhookUrl, profileName, profileStatus, behaviorSettings } = req.body;
+        
+        if (!phone) {
+            return res.status(400).json({ error: 'Missing required field: phone' });
+        }
+        
+        // Check if an instance with this phone already exists and is connected
+        const allInstances = instanceManager.getAllInstances();
+        const existing = allInstances.find(i => i.connectedPhone === phone.replace(/^\+/, ''));
+        if (existing) {
+            // If the caller passed behaviorSettings, apply them on top of the
+            // existing instance so notification-critical onboards can be flipped
+            // on without recreating the instance.
+            if (behaviorSettings && typeof behaviorSettings === 'object') {
+                try {
+                    await instanceManager.updateInstance(existing.id, { behaviorSettings });
+                } catch (e) {
+                    console.warn(`[Onboard] Failed to apply behaviorSettings to existing ${existing.id}:`, e.message);
+                }
+            }
+            return res.json({
+                success: true,
+                instanceId: existing.id,
+                pairingCode: null,
+                status: existing.status,
+                message: 'Instance already exists for this phone number'
+            });
+        }
+        
+        // Create instance (with optional behaviorSettings for clinic / human-monitored verticals)
+        const instance = await instanceManager.createInstance({
+            name: name || `WhatsApp ${phone}`,
+            webhookUrl: webhookUrl || '',
+            ...(behaviorSettings && typeof behaviorSettings === 'object' ? { behaviorSettings } : {}),
+        });
+        
+        broadcastToAll({ type: 'instance_created', data: instance });
+        
+        // Update webhook if provided (already set during creation, but also on the raw instance)
+        const rawInstance = instanceManager.getInstance(instance.id);
+        
+        // Connect with pairing code
+        const cleanPhone = phone.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
+        await instanceManager.connectInstance(instance.id, { pairingPhone: cleanPhone });
+        const status = rawInstance.getStatus();
+        
+        // Set profile if provided (will apply once connected)
+        if (profileName || profileStatus) {
+            const applyProfile = async () => {
+                try {
+                    if (profileName) await rawInstance.updateProfileName(profileName);
+                    if (profileStatus) await rawInstance.updateProfileStatus(profileStatus);
+                } catch (e) {
+                    console.error(`[Onboard] Profile update failed for ${instance.id}:`, e.message);
+                }
+            };
+            
+            if (rawInstance.status === 'connected') {
+                await applyProfile();
+            } else {
+                const origHandler = rawInstance.onStatusChange;
+                rawInstance.onStatusChange = (id, newStatus) => {
+                    if (origHandler) origHandler(id, newStatus);
+                    if (newStatus.status === 'connected') {
+                        applyProfile();
+                        rawInstance.onStatusChange = origHandler;
+                    }
+                };
+            }
+        }
+        
+        res.status(201).json({
+            success: true,
+            instanceId: instance.id,
+            pairingCode: status.pairingCode || null,
+            status: status.status,
+            message: status.pairingCode 
+                ? `Enter code ${status.pairingCode} in WhatsApp > Linked Devices > Link a Device`
+                : 'Connection started'
+        });
+    } catch (error) {
+        console.error('[API] Onboard error:', error.message);
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/instances/:id/connection
+ * Clean polling endpoint for connection status
+ */
+app.get('/api/instances/:id/connection', (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        
+        const status = instance.getStatus();
+        const uptime = status.connectedAt 
+            ? Math.floor((Date.now() - new Date(status.connectedAt).getTime()) / 1000)
+            : null;
+        
+        res.json({
+            success: true,
+            status: status.status,
+            phone: status.connectedPhone || null,
+            connectedAt: status.connectedAt || null,
+            uptime,
+            pairingCode: status.pairingCode || null,
+            qrCode: status.qrCode || null
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/instances/:id/messages
+ * Get message history with filtering
+ * Query: ?direction=inbound|outbound  &limit=50  &since=ISO_timestamp
+ */
+app.get('/api/instances/:id/messages', (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        
+        const filters = {};
+        if (req.query.direction) filters.direction = req.query.direction;
+        if (req.query.limit) filters.limit = parseInt(req.query.limit, 10);
+        if (req.query.since) filters.since = req.query.since;
+        
+        const messages = instance.getMessages(filters);
+        
+        res.json({
+            success: true,
+            count: messages.length,
+            messages
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/instances/:id/webhook/test
+ * Send a test payload to the configured webhook URL
+ */
+app.post('/api/instances/:id/webhook/test', async (req, res) => {
+    let webhookUrl;
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        
+        webhookUrl = instance.webhookUrl;
+        
+        if (!webhookUrl) {
+            return res.status(400).json({ 
+                error: 'No webhook URL configured for this instance',
+                hint: 'Set webhookUrl via PUT /api/instances/:id or during onboarding'
+            });
+        }
+        
+        const testPayload = {
+            event: 'test',
+            instanceId: instance.id,
+            timestamp: new Date().toISOString(),
+            message: 'This is a test webhook delivery from your WhatsApp instance',
+            data: {
+                from: '0000000000',
+                text: 'Hello! This is a test message.',
+                direction: 'inbound'
+            }
+        };
+        
+        const response = await axios.post(webhookUrl, testPayload, {
+            timeout: 10000,
+            headers: { 'Content-Type': 'application/json' },
+            validateStatus: () => true
+        });
+        
+        const success = response.status >= 200 && response.status < 300;
+        
+        res.json({
+            success,
+            webhookUrl,
+            responseStatus: response.status,
+            responseBody: typeof response.data === 'string' 
+                ? response.data.substring(0, 500) 
+                : response.data,
+            message: success 
+                ? 'Webhook test delivered successfully' 
+                : `Webhook returned status ${response.status}`
+        });
+    } catch (error) {
+        res.json({
+            success: false,
+            webhookUrl: webhookUrl || null,
+            error: error.message,
+            message: 'Failed to deliver test webhook'
+        });
+    }
+});
+
+// ========================================
+// PROFILE API
+// ========================================
+
+/**
+ * GET /api/instances/:id/profile
+ * Get current profile info (name, phone, about)
+ */
+app.get('/api/instances/:id/profile', (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        
+        const status = instance.getStatus();
+        res.json({
+            success: true,
+            profile: {
+                phone: status.connectedPhone,
+                connected: status.status === 'connected'
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * PUT /api/instances/:id/profile/name
+ * Update WhatsApp display name (push name visible to everyone)
+ * Body: { name: "Your Business Name" }
+ */
+app.put('/api/instances/:id/profile/name', async (req, res) => {
+    try {
+        const { name } = req.body;
+        if (!name) {
+            return res.status(400).json({ error: 'Missing required field: name' });
+        }
+        
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        
+        await instance.updateProfileName(name);
+        res.json({ success: true, message: `Display name updated to "${name}"` });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * PUT /api/instances/:id/profile/picture
+ * Update WhatsApp profile picture
+ * Body: { imageUrl: "https://example.com/photo.jpg" }
+ */
+app.put('/api/instances/:id/profile/picture', async (req, res) => {
+    try {
+        const { imageUrl } = req.body;
+        if (!imageUrl) {
+            return res.status(400).json({ error: 'Missing required field: imageUrl' });
+        }
+        
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        
+        await instance.updateProfilePicture(imageUrl);
+        res.json({ success: true, message: 'Profile picture updated' });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * DELETE /api/instances/:id/profile/picture
+ * Remove WhatsApp profile picture
+ */
+app.delete('/api/instances/:id/profile/picture', async (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        
+        await instance.removeProfilePicture();
+        res.json({ success: true, message: 'Profile picture removed' });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * PUT /api/instances/:id/profile/status
+ * Update WhatsApp "About" text
+ * Body: { status: "We reply within minutes!" }
+ */
+app.put('/api/instances/:id/profile/status', async (req, res) => {
+    try {
+        const { status } = req.body;
+        if (status === undefined) {
+            return res.status(400).json({ error: 'Missing required field: status' });
+        }
+        
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        
+        await instance.updateProfileStatus(status);
+        res.json({ success: true, message: `About text updated to "${status}"` });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// ========================================
+// HUMAN HANDOFF API
+// ========================================
+
+/**
+ * GET /api/instances/:id/handoff
+ * Get all chats currently in human handoff mode
+ */
+app.get('/api/instances/:id/handoff', (req, res) => {
+    const instance = instanceManager.getInstance(req.params.id);
+    if (!instance) return res.status(404).json({ error: 'Instance not found' });
+    
+    res.json({
+        success: true,
+        instanceId: instance.id,
+        settings: instance.handoffSettings,
+        humanModeChats: instance.getHandoffChats()
+    });
+});
+
+/**
+ * POST /api/instances/:id/handoff
+ * Tag or untag a chat for human handoff
+ * Body: { phone: "60123456789", active: true|false }
+ */
+app.post('/api/instances/:id/handoff', (req, res) => {
+    const instance = instanceManager.getInstance(req.params.id);
+    if (!instance) return res.status(404).json({ error: 'Instance not found' });
+    
+    const { phone, jid, active } = req.body;
+    const target = jid || phone;
+    if (!target) return res.status(400).json({ error: 'Missing required field: phone or jid' });
+    if (active === undefined) return res.status(400).json({ error: 'Missing required field: active (true/false)' });
+    
+    instance.setHandoff(target, !!active);
+    
+    res.json({
+        success: true,
+        phone: target,
+        humanMode: !!active,
+        humanModeChats: instance.getHandoffChats()
+    });
+});
+
+/**
+ * DELETE /api/instances/:id/handoff
+ * Clear all human handoff tags (resume bot for all chats)
+ */
+app.delete('/api/instances/:id/handoff', (req, res) => {
+    const instance = instanceManager.getInstance(req.params.id);
+    if (!instance) return res.status(404).json({ error: 'Instance not found' });
+    
+    const count = instance.humanModeChats.size;
+    instance.humanModeChats.clear();
+    instance._log(`All human handoffs cleared (${count} chats)`, 'success');
+    instance._emitStatusChange();
+    
+    res.json({ success: true, cleared: count });
+});
+
+/**
+ * GET /api/instances/:id/handoff/settings
+ * Get current handoff settings (resume keywords, resume message)
+ */
+app.get('/api/instances/:id/handoff/settings', (req, res) => {
+    const instance = instanceManager.getInstance(req.params.id);
+    if (!instance) return res.status(404).json({ error: 'Instance not found' });
+    res.json({ success: true, settings: instance.handoffSettings });
+});
+
+/**
+ * PUT /api/instances/:id/handoff/settings
+ * Update handoff settings
+ * Body: { resumeKeywords?: string[], resumeMessage?: string }
+ */
+app.put('/api/instances/:id/handoff/settings', async (req, res) => {
+    const instance = instanceManager.getInstance(req.params.id);
+    if (!instance) return res.status(404).json({ error: 'Instance not found' });
+
+    const { resumeKeywords, resumeMessage } = req.body;
+    if (resumeKeywords !== undefined) {
+        if (!Array.isArray(resumeKeywords) || resumeKeywords.length === 0) {
+            return res.status(400).json({ error: 'resumeKeywords must be a non-empty array of strings' });
+        }
+        instance.handoffSettings.resumeKeywords = resumeKeywords.map(k => String(k));
+    }
+    if (resumeMessage !== undefined) {
+        instance.handoffSettings.resumeMessage = String(resumeMessage);
+    }
+
+    await instanceManager._saveInstances();
+    instance._log(`Handoff settings updated: keywords=[${instance.handoffSettings.resumeKeywords.join(', ')}]`, 'info');
+    res.json({ success: true, settings: instance.handoffSettings });
+});
+
+// ========================================
+// MEDIA / STORAGE API
+// ========================================
+
+/**
+ * GET /api/storage/status
+ * Check Azure Blob Storage connectivity
+ */
+app.get('/api/storage/status', (req, res) => {
+    res.json({ success: true, enabled: isStorageEnabled(), container: process.env.AZURE_STORAGE_CONTAINER || 'whatsapp-media' });
+});
+
+/**
+ * POST /api/upload
+ * Upload a file to Azure Blob Storage via base64 payload.
+ * Body: { data: "base64...", mimeType: "image/jpeg", fileName?: "photo.jpg", instanceId?: "wa_xxx" }
+ */
+app.post('/api/upload', async (req, res) => {
+    if (!isStorageEnabled()) {
+        return res.status(503).json({ error: 'Azure Blob Storage not configured. Set AZURE_STORAGE_CONNECTION_STRING in .env' });
+    }
+    const { data, mimeType, fileName, instanceId } = req.body;
+    if (!data) return res.status(400).json({ error: 'data (base64 string) is required' });
+    if (!mimeType) return res.status(400).json({ error: 'mimeType is required (e.g. image/jpeg)' });
+
+    try {
+        const buffer = Buffer.from(data, 'base64');
+        const ext = fileName
+            ? fileName.split('.').pop()
+            : mimeType.split('/')[1]?.split(';')[0] || 'bin';
+        const result = await uploadMedia(buffer, {
+            extension: ext,
+            mimeType,
+            instanceId: instanceId || 'manual',
+            folder: 'uploads'
+        });
+        if (!result) return res.status(500).json({ error: 'Upload failed' });
+        res.json({ success: true, url: result.url, blobName: result.blobName });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ========================================
 // GENERAL API ENDPOINTS
 // ========================================
+
+/**
+ * GET /api/health
+ * Health check
+ */
+app.get('/api/health', (req, res) => {
+    if (!instanceManager) {
+        return res.json({
+            status: 'starting',
+            uptime: process.uptime(),
+            instances: { total: 0, connected: 0 },
+        });
+    }
+    const instances = instanceManager.getAllInstances();
+    const connectedCount = instances.filter(i => i.status === 'connected').length;
+    
+    res.json({ 
+        status: 'ok', 
+        uptime: process.uptime(),
+        instances: {
+            total: instances.length,
+            connected: connectedCount
+        }
+    });
+});
 
 /**
  * GET /api/status
  * Get overall system status (backward compatible)
  */
 app.get('/api/status', (req, res) => {
+    if (!instanceManager) {
+        return res.json({ success: true, instanceCount: 0, instances: [], note: 'starting' });
+    }
     const instances = instanceManager.getAllInstances();
     res.json({
         success: true,
@@ -1843,6 +2112,23 @@ app.get('/api/status', (req, res) => {
             phone: i.connectedPhone
         }))
     });
+});
+
+/**
+ * POST /api/system/reload-behavior-from-disk
+ * Re-read instances.json and apply behaviorSettings to in-memory instances (no process restart).
+ */
+app.post('/api/system/reload-behavior-from-disk', async (req, res) => {
+    try {
+        if (!instanceManager) {
+            return res.status(503).json({ success: false, error: 'Instance manager not ready' });
+        }
+        const out = await instanceManager.reloadBehaviorSettingsFromDisk();
+        res.json(out);
+    } catch (error) {
+        console.error('[API] reload-behavior-from-disk:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 /**
@@ -2062,23 +2348,27 @@ wss.on('connection', (ws, req) => {
     // Initialize client state
     wsClients.set(ws, {
         subscribedInstances: new Set(),
-        authenticated: !API_KEY || ALLOW_PUBLIC_DASHBOARD // Auto-auth if dashboard auth is disabled
+        authenticated: !API_KEY, // When API_KEY is set, wait for { type:'auth' } before full init + broadcasts
+        hostname: getHostnameFromRequest(req),
     });
     
-    // Send initial data
+    // Initial payload: hide instance metadata on the socket until authenticated
     const instances = instanceManager.getAllInstances();
     ws.send(JSON.stringify({
         type: 'init',
         data: {
-            instances,
-            requiresAuth: !!API_KEY && !ALLOW_PUBLIC_DASHBOARD
-        }
+            instances: API_KEY ? [] : instances,
+            requiresAuth: !!API_KEY,
+        },
     }));
     
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
-            handleWebSocketMessage(ws, data);
+            void handleWebSocketMessage(ws, data).catch((error) => {
+                console.error('[WS] Message handling failed:', error);
+                ws.send(JSON.stringify({ type: 'auth_failed' }));
+            });
         } catch (error) {
             console.error('[WS] Invalid message:', error);
         }
@@ -2090,15 +2380,34 @@ wss.on('connection', (ws, req) => {
     });
 });
 
-function handleWebSocketMessage(ws, data) {
+async function handleWebSocketMessage(ws, data) {
     const clientState = wsClients.get(ws);
     
     switch (data.type) {
         case 'auth':
-            // Authenticate WebSocket client
-            if (data.apiKey === API_KEY || data.apiKey === ADMIN_PASSWORD) {
+            // Authenticate WebSocket client (API key or admin password)
+            const customerAuth = await validateCustomerApiKeyForHost(
+                data.apiKey,
+                clientState.hostname,
+                'instances:read'
+            );
+            if (
+                data.apiKey === API_KEY ||
+                data.apiKey === WORKER_SHARED_SECRET ||
+                data.apiKey === ADMIN_PASSWORD ||
+                customerAuth.valid
+            ) {
                 clientState.authenticated = true;
                 ws.send(JSON.stringify({ type: 'auth_success' }));
+                if (API_KEY && instanceManager) {
+                    ws.send(JSON.stringify({
+                        type: 'init',
+                        data: {
+                            instances: instanceManager.getAllInstances(),
+                            requiresAuth: true,
+                        },
+                    }));
+                }
             } else {
                 ws.send(JSON.stringify({ type: 'auth_failed' }));
             }
@@ -2135,6 +2444,7 @@ function broadcastToAll(data) {
     let sentCount = 0;
     wsClients.forEach((clientState, ws) => {
         if (ws.readyState === WebSocket.OPEN) {
+            if (API_KEY && !clientState.authenticated) return;
             ws.send(message);
             sentCount++;
         }
@@ -2151,6 +2461,7 @@ function broadcastToInstance(instanceId, data) {
     let sentCount = 0;
     wsClients.forEach((clientState, ws) => {
         if (ws.readyState === WebSocket.OPEN) {
+            if (API_KEY && !clientState.authenticated) return;
             // Send to all clients when they're subscribed to all (empty set) or to this specific instance
             if (clientState.subscribedInstances.size === 0 || clientState.subscribedInstances.has(instanceId)) {
                 ws.send(message);
@@ -2173,7 +2484,7 @@ server.listen(PORT, async () => {
 
 🌐 Web UI:      http://localhost:${PORT}
 🔌 API Base:    http://localhost:${PORT}/api
-🔐 Auth:        ${API_KEY ? (ALLOW_PUBLIC_DASHBOARD ? 'API Key Required (dashboard bypass enabled)' : 'API Key Required') : 'Open (set API_KEY in .env for production)'}
+🔐 Auth:        ${API_KEY ? 'API Key Required' : 'Open (set API_KEY in .env for production)'}
 
 API Endpoints:
   POST   /api/instances              Create new instance
@@ -2188,15 +2499,7 @@ API Endpoints:
   GET    /api/instances/:id/qr          Get QR code
   
   POST   /api/instances/:id/send        Send message via specific instance
-  POST   /api/instances/:id/send/interactive  Send native interactive message
-  POST   /api/instances/:id/react       React to a message
   POST   /api/send                      Send message (by 'from' phone or instanceId)
-  POST   /api/react                     React to a message (auto-select instance)
-  GET    /api/proxy                     Deployment proxy + pool summary
-  GET    /api/instances/:id/proxy       Instance proxy status (poll)
-  PUT    /api/instances/:id/proxy       Attach proxy (URL or Webshare shorthand)
-  DELETE /api/instances/:id/proxy       Detach proxy override
-  POST   /api/instances/:id/proxy/verify  Verify egress IP through proxy
   GET    /api/numbers                   List all connected phone numbers
   
   GET    /api/instances/:id/logs        Get activity logs
@@ -2209,16 +2512,12 @@ API Endpoints:
 Initializing...
     `);
     
+    // Initialize Azure Blob Storage (for media uploads)
+    await initAzureStorage();
+
     // Initialize instance manager
     instanceManager = new InstanceManager();
-    await initMediaStorage();
     await instanceManager.init();
-    
-    if (WASUP_CONTROL_PLANE_URL && WASUP_ORG_ID && WASUP_WORKER_SHARED_SECRET) {
-        console.log(`[Server] Control plane activity sync enabled → ${WASUP_CONTROL_PLANE_URL}`);
-    } else if (WASUP_CONTROL_PLANE_URL) {
-        console.log('[Server] Control plane activity sync disabled (set WASUP_ORG_ID + WASUP_WORKER_SHARED_SECRET)');
-    }
     
     // Set up event handlers
     instanceManager.onStatusChange = (instanceId, status) => {
@@ -2245,19 +2544,75 @@ Initializing...
     };
     
     console.log(`[Server] Ready! ${instanceManager.getAllInstances().length} instances loaded.`);
+
+    if (typeof process.send === 'function') {
+        try {
+            process.send('ready');
+        } catch (_) {
+            /* ignore */
+        }
+    }
 });
 
-// Graceful shutdown (Docker / K8s SIGTERM)
+let isShuttingDown = false;
+
 async function gracefulShutdown(signal) {
-    console.log(`\n\n🛑 ${signal} received — shutting down...`);
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    console.log(`\n[Server] ${signal} — graceful shutdown (closing HTTP, then WhatsApp sockets)...`);
+
+    await new Promise((resolve) => {
+        const t = setTimeout(resolve, 45000);
+        server.close(() => {
+            clearTimeout(t);
+            resolve();
+        });
+    });
+
     if (instanceManager) {
-        await instanceManager.shutdown();
+        try {
+            await instanceManager.shutdown();
+        } catch (e) {
+            console.error('[Server] instanceManager.shutdown error:', e.message);
+        }
     }
     process.exit(0);
 }
 
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => {
+    gracefulShutdown('SIGINT').catch((e) => {
+        console.error(e);
+        process.exit(1);
+    });
+});
+
+process.on('SIGTERM', () => {
+    gracefulShutdown('SIGTERM').catch((e) => {
+        console.error(e);
+        process.exit(1);
+    });
+});
+
+let sighupReloadBusy = false;
+process.on('SIGHUP', () => {
+    if (process.env.WASUP_SIGHUP_BEHAVIOR_RELOAD !== '1') {
+        console.log('[Server] SIGHUP received (ignored). Set WASUP_SIGHUP_BEHAVIOR_RELOAD=1 to reload behaviorSettings from instances.json without restart.');
+        return;
+    }
+    if (sighupReloadBusy || !instanceManager) return;
+    sighupReloadBusy = true;
+    instanceManager
+        .reloadBehaviorSettingsFromDisk()
+        .then((out) => {
+            console.log('[Server] SIGHUP behavior reload:', JSON.stringify(out));
+        })
+        .catch((e) => {
+            console.error('[Server] SIGHUP behavior reload failed:', e.message);
+        })
+        .finally(() => {
+            sighupReloadBusy = false;
+        });
+});
 
 process.on('uncaughtException', (error) => {
     console.error('Uncaught Exception:', error);

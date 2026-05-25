@@ -1,0 +1,42 @@
+name: Build
+
+on:
+  push:
+    branches: [main, feature/wasup-v3-control-plane]
+  pull_request:
+    branches: [main]
+
+jobs:
+  control-plane:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/control-plane
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/control-plane/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: pk_test_placeholder
+          VITE_CONTROL_PLANE_API_BASE_URL: https://control-plane.wasup.co
+          VITE_WASUP_APP_URL: https://dev.wasup.co

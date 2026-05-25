@@ -1,0 +1,40 @@
+name: Deploy
+
+# Manual deploy — secrets and Azure login must be configured in repo settings.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: What to deploy
+        required: true
+        type: choice
+        options:
+          - control-plane
+          - dashboard
+          - both
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Deploy control plane
+        if: inputs.target == 'control-plane' || inputs.target == 'both'
+        run: bash deploy/scripts/deploy-control-plane-appservice.sh
+
+      - name: Deploy dashboard
+        if: inputs.target == 'dashboard' || inputs.target == 'both'
+        env:
+          DASHBOARD_STORAGE_ACCOUNT: ${{ secrets.DASHBOARD_STORAGE_ACCOUNT }}
+          FRONTDOOR_PROFILE: ${{ secrets.FRONTDOOR_PROFILE }}
+          FRONTDOOR_ENDPOINT: ${{ secrets.FRONTDOOR_ENDPOINT }}
+        run: bash deploy/scripts/deploy-dashboard-frontend.sh

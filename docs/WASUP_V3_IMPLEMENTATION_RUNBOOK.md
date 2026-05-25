@@ -9,7 +9,7 @@ Status in this branch:
 - `apps/control-plane/`: Next.js + Clerk + Supabase starter.
 - `supabase/migrations/20260513120500_wasup_v3_control_plane.sql`: first control-plane schema.
 - `docs/WASUP_V3_WORKER_CONTRACT.md`: worker/control-plane contract.
-- `infra/k8s/wasup-worker/`: placeholder worker Helm chart.
+- `deploy/k8s/wasup-worker/`: placeholder worker Helm chart.
 
 Still needed:
 

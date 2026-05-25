@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { ensureStripeCustomerForOrg } from '../../../../../lib/billing';
-import { isAuthError, requireWasupPrincipal } from '../../../../../lib/auth';
+import { getAuthenticatedClerkEmail, isAuthError, requireWasupPrincipal } from '../../../../../lib/auth';
+import { getStripeTrialDays } from '../../../../../lib/billing-pricing';
 import { getStripe, getWasupAppUrl } from '../../../../../lib/stripe';
 
 const CheckoutSchema = z.object({
@@ -9,7 +10,8 @@ const CheckoutSchema = z.object({
   instanceQuantity: z.number().int().min(1).max(500).default(1),
   messageCreditQuantity: z.number().int().min(0).max(1000).default(0),
   successUrl: z.string().url().optional(),
-  cancelUrl: z.string().url().optional()
+  cancelUrl: z.string().url().optional(),
+  contactEmail: z.string().email().optional()
 });
 
 export async function POST(req: Request) {
@@ -23,6 +25,9 @@ export async function POST(req: Request) {
 
   const body = parsed.data;
   const orgId = body.orgId || principal.orgId;
+  if (orgId !== principal.orgId && principal.role !== 'owner' && principal.role !== 'admin') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
   const appUrl = getWasupAppUrl(req);
   const instancePrice = process.env.STRIPE_INSTANCE_PRICE_ID;
   const creditPrice = process.env.STRIPE_MESSAGE_CREDIT_PRICE_ID;
@@ -31,7 +36,27 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'STRIPE_INSTANCE_PRICE_ID is not configured' }, { status: 500 });
   }
 
-  const customer = await ensureStripeCustomerForOrg(orgId);
+  let contactEmail: string | null = null;
+  if (principal.source === 'clerk') {
+    contactEmail = await getAuthenticatedClerkEmail(principal.actorId);
+  }
+  if (!contactEmail && body.contactEmail) {
+    contactEmail = body.contactEmail.trim();
+  }
+  if (principal.source === 'clerk' && !contactEmail) {
+    return NextResponse.json(
+      { error: 'Could not resolve your account email for checkout. Add an email to your Wasup account and try again.' },
+      { status: 400 }
+    );
+  }
+
+  const customer = await ensureStripeCustomerForOrg(orgId, contactEmail);
+  const stripe = getStripe();
+  const stripeCustomer = await stripe.customers.retrieve(customer);
+  if (contactEmail && !stripeCustomer.deleted && stripeCustomer.email !== contactEmail) {
+    await stripe.customers.update(customer, { email: contactEmail });
+  }
+
   const lineItems = [
     {
       price: instancePrice,
@@ -49,19 +74,29 @@ export async function POST(req: Request) {
   const session = await getStripe().checkout.sessions.create({
     mode: 'subscription',
     customer,
+    // Skip card fields when nothing is due today (100% promo, trial, etc.).
+    payment_method_collection: 'if_required',
+    customer_update: {
+      address: 'auto',
+      name: 'auto'
+    },
     line_items: lineItems,
     success_url: body.successUrl || `${appUrl}/dashboard?billing=success`,
     cancel_url: body.cancelUrl || `${appUrl}/dashboard?billing=cancelled`,
     allow_promotion_codes: true,
+    client_reference_id: orgId,
     subscription_data: {
+      trial_period_days: getStripeTrialDays(),
       metadata: {
         wasupOrgId: orgId,
-        wasupCreatedBy: principal.actorId
+        wasupCreatedBy: principal.actorId,
+        wasupPlanKey: 'pro'
       }
     },
     metadata: {
       wasupOrgId: orgId,
-      wasupKind: 'subscription_checkout'
+      wasupKind: 'subscription_checkout',
+      wasupPlanKey: 'pro'
     }
   });
 

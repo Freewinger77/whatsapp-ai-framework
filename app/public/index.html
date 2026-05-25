@@ -3,16 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>dev.wasup control plane</title>
-    <meta name="description" content="Operate WhatsApp instances, webhooks, anti-ban controls, profile settings, and human handoff from the dev.wasup control plane.">
-    <meta property="og:title" content="dev.wasup control plane">
-    <meta property="og:description" content="A focused operations dashboard for multi-instance WhatsApp automation.">
-    <meta property="og:type" content="website">
-    <meta name="theme-color" content="#0d1512">
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%230d1512'/%3E%3Cpath d='M18 18h28v18c0 8-6.3 14-14 14s-14-6-14-14V18Z' fill='%235cc8a7'/%3E%3Cpath d='M25 27h14M25 35h9' stroke='%230d1512' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
+    <title>Wasup API - Multi-Instance WhatsApp</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -36,22 +30,22 @@
             --red-900: #7f1d1d;
             --red-950: #450a0a;
             --amber-400: #fbbf24;
-            --sky-400: #5cc8a7;
-            --fuchsia-400: #5cc8a7;
+            --sky-400: #38bdf8;
+            --fuchsia-400: #e879f9;
             --teal-600: #0d9488;
         }
 
         body {
-            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             background: var(--zinc-950);
             color: white;
-            min-height: 100dvh;
+            min-height: 100vh;
             font-size: 14px;
         }
 
         .app {
             display: flex;
-            min-height: 100dvh;
+            min-height: 100vh;
         }
 
         /* Sidebar */
@@ -713,23 +707,6 @@
             margin-top: 6px;
         }
 
-        .api-key-settings {
-            margin-top: 14px;
-            padding-top: 14px;
-            border-top: 1px solid rgba(255, 255, 255, 0.06);
-        }
-
-        .api-key-settings input {
-            width: 100%;
-            padding: 10px 12px;
-            background: rgba(39, 39, 42, 0.5);
-            border: 1px solid var(--zinc-700);
-            border-radius: 6px;
-            color: white;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 12px;
-        }
-
         /* Anti-Ban Card */
         .preset-grid {
             display: grid;
@@ -793,47 +770,501 @@
             color: white;
         }
 
+        .behavior-card {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .behavior-copy {
+            font-size: 12px;
+            color: rgba(188,202,194,0.72);
+            line-height: 1.5;
+            margin: -4px 0 0;
+        }
+
+        .behavior-profile-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .behavior-profile-card {
+            appearance: none;
+            border: 1px solid var(--zinc-800);
+            background: rgba(24, 24, 27, 0.58);
+            color: var(--zinc-300);
+            border-radius: 10px;
+            padding: 13px;
+            text-align: left;
+            cursor: pointer;
+            transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+        }
+
+        .behavior-profile-card:hover {
+            border-color: rgba(52, 211, 153, 0.45);
+            background: rgba(39, 39, 42, 0.65);
+        }
+
+        .behavior-profile-card.active {
+            border-color: rgba(52, 211, 153, 0.72);
+            background: rgba(16, 185, 129, 0.12);
+            box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.18) inset;
+        }
+
+        .behavior-profile-card strong {
+            display: block;
+            color: white;
+            font-size: 13px;
+            margin-bottom: 6px;
+        }
+
+        .behavior-profile-card span {
+            display: block;
+            color: var(--zinc-400);
+            font-size: 11px;
+            line-height: 1.45;
+        }
+
+        .behavior-advanced {
+            border: 1px solid rgba(63, 63, 70, 0.65);
+            border-radius: 10px;
+            padding: 14px;
+            background: rgba(9, 9, 11, 0.18);
+        }
+
+        .behavior-advanced summary {
+            cursor: pointer;
+            color: var(--zinc-300);
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .behavior-advanced[open] summary {
+            margin-bottom: 12px;
+        }
+
+        .behavior-grace-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 160px;
+            gap: 14px;
+            align-items: end;
+            margin-bottom: 12px;
+        }
+
+        .behavior-grace-row label {
+            display: block;
+            font-size: 12px;
+            color: var(--zinc-300);
+            margin-bottom: 5px;
+        }
+
+        .behavior-grace-row p {
+            color: var(--zinc-500);
+            font-size: 11px;
+            line-height: 1.45;
+            margin: 0;
+        }
+
+        .behavior-grace-row input {
+            width: 100%;
+        }
+
+        /* ==========================================
+           Wasup Anti-Ban card
+           ========================================== */
+        .antiban-v2-card {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .v2-card-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .v2-subtitle {
+            font-size: 11px;
+            color: var(--zinc-500);
+            line-height: 1.5;
+            max-width: 70ch;
+        }
+        .v2-subtitle code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            background: rgba(63, 63, 70, 0.5);
+            color: var(--zinc-300);
+            padding: 1px 5px;
+            border-radius: 3px;
+        }
+
+        .v2-status-block {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .v2-risk-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 4px 10px;
+            border: 1px solid currentColor;
+            border-radius: 6px;
+            letter-spacing: 1.5px;
+            background: rgba(0,0,0,0.3);
+        }
+        .v2-risk-badge.risk-low      { color: #4ade80; }
+        .v2-risk-badge.risk-medium   { color: #fbbf24; }
+        .v2-risk-badge.risk-high     { color: #fb923c; }
+        .v2-risk-badge.risk-critical {
+            color: #f87171;
+            background: rgba(248,113,113,0.15);
+            animation: v2-pulse 1.4s ease-in-out infinite;
+        }
+        .v2-risk-badge.risk-unknown  { color: var(--zinc-500); }
+
+        @keyframes v2-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(248,113,113,0.4); }
+            50% { box-shadow: 0 0 10px 2px rgba(248,113,113,0.6); }
+        }
+
+        .v2-running-pill {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 6px;
+            letter-spacing: 1.5px;
+        }
+        .v2-running-pill.running {
+            background: rgba(34, 197, 94, 0.15);
+            color: #4ade80;
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+        .v2-running-pill.stopped {
+            background: rgba(82, 82, 91, 0.3);
+            color: var(--zinc-400);
+            border: 1px solid var(--zinc-700);
+        }
+        .v2-running-pill.disabled {
+            background: rgba(82, 82, 91, 0.2);
+            color: var(--zinc-500);
+            border: 1px dashed var(--zinc-700);
+        }
+        .v2-running-pill.paused {
+            background: rgba(251, 191, 36, 0.15);
+            color: #fbbf24;
+            border: 1px solid rgba(251, 191, 36, 0.4);
+        }
+
+        .v2-metrics {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 8px;
+        }
+
+        .v2-metric-cell {
+            background: rgba(39, 39, 42, 0.4);
+            border: 1px solid var(--zinc-800);
+            border-radius: 6px;
+            padding: 10px;
+        }
+
+        .v2-metric-label {
+            font-size: 9px;
+            color: var(--zinc-500);
+            letter-spacing: 1.5px;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+        }
+
+        .v2-metric-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            color: white;
+            font-weight: 500;
+        }
+
+        .v2-reco {
+            background: rgba(63, 63, 70, 0.3);
+            border-left: 3px solid var(--zinc-600);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: var(--zinc-300);
+            font-style: italic;
+        }
+        .v2-reco.risk-medium   { border-left-color: #fbbf24; }
+        .v2-reco.risk-high     { border-left-color: #fb923c; }
+        .v2-reco.risk-critical { border-left-color: #f87171; background: rgba(248,113,113,0.08); }
+
+        .v2-section-head {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--zinc-400);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-top: 4px;
+            border-bottom: 1px solid var(--zinc-800);
+            padding-bottom: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+        }
+
+        .v2-section-hint {
+            font-size: 9px;
+            font-weight: 400;
+            color: var(--zinc-600);
+            letter-spacing: 0.5px;
+            text-transform: none;
+        }
+
+        .v2-warmup-row {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .v2-warmup-text {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--zinc-400);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .v2-warmup-bar {
+            background: rgba(39, 39, 42, 0.5);
+            border-radius: 4px;
+            height: 6px;
+            overflow: hidden;
+        }
+        .v2-warmup-fill {
+            background: linear-gradient(90deg, #4ade80, #22d3ee);
+            height: 100%;
+            transition: width 0.4s ease;
+        }
+        .v2-warmup-fill.complete {
+            background: linear-gradient(90deg, #22d3ee, #4ade80);
+        }
+
+        .v2-modules-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+
+        .v2-module-toggle {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: rgba(39, 39, 42, 0.4);
+            border: 1px solid var(--zinc-800);
+            border-radius: 6px;
+            font-size: 11px;
+            cursor: pointer;
+            transition: 0.15s;
+        }
+        .v2-module-toggle:hover { border-color: var(--zinc-700); }
+        .v2-module-toggle .v2-module-name {
+            color: white;
+            font-weight: 500;
+        }
+        .v2-module-toggle .v2-module-desc {
+            color: var(--zinc-500);
+            font-size: 10px;
+            margin-top: 2px;
+        }
+        .v2-module-toggle.disabled .v2-module-name {
+            color: var(--zinc-500);
+        }
+
+        .v2-preset-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+        .v2-preset-btn {
+            padding: 12px;
+            background: rgba(39, 39, 42, 0.4);
+            border: 1px solid var(--zinc-800);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+            text-align: center;
+            font-family: inherit;
+            color: white;
+        }
+        .v2-preset-btn:hover { border-color: var(--zinc-700); }
+        .v2-preset-btn.active {
+            background: rgba(34, 197, 94, 0.1);
+            border-color: rgba(34, 197, 94, 0.5);
+        }
+        .v2-preset-btn .preset-name { font-size: 13px; font-weight: 500; }
+        .v2-preset-btn .preset-value { font-size: 10px; color: var(--zinc-500); margin-top: 2px; font-family: 'JetBrains Mono', monospace; }
+
+        .v2-overrides-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+
+        .v2-input-label {
+            display: block;
+            font-size: 10px;
+            color: var(--zinc-500);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .v2-input {
+            width: 100%;
+            padding: 8px 10px;
+            background: rgba(24, 24, 27, 0.7);
+            border: 1px solid var(--zinc-800);
+            color: white;
+            border-radius: 6px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            outline: none;
+            transition: 0.15s;
+        }
+        .v2-input:focus { border-color: var(--zinc-600); }
+
+        .v2-disco-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .v2-disco-empty {
+            font-size: 11px;
+            color: var(--zinc-600);
+            font-style: italic;
+            padding: 8px;
+        }
+        .v2-disco-row {
+            display: grid;
+            grid-template-columns: 80px 90px 1fr 90px;
+            gap: 8px;
+            padding: 6px 8px;
+            background: rgba(24, 24, 27, 0.5);
+            border-left: 2px solid var(--zinc-700);
+            border-radius: 4px;
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .v2-disco-row.cat-fatal       { border-left-color: #f87171; }
+        .v2-disco-row.cat-rate-limited{ border-left-color: #fbbf24; }
+        .v2-disco-row.cat-recoverable { border-left-color: #4ade80; }
+        .v2-disco-row .disco-time { color: var(--zinc-500); }
+        .v2-disco-row .disco-code { color: white; font-weight: 600; }
+        .v2-disco-row .disco-msg  { color: var(--zinc-300); }
+        .v2-disco-row .disco-cat  {
+            font-size: 9px;
+            text-align: right;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            align-self: center;
+        }
+        .v2-disco-row.cat-fatal .disco-cat       { color: #f87171; }
+        .v2-disco-row.cat-rate-limited .disco-cat{ color: #fbbf24; }
+        .v2-disco-row.cat-recoverable .disco-cat { color: #4ade80; }
+
+        .v2-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .v2-btn-pause {
+            background: rgba(251, 191, 36, 0.1);
+            border-color: rgba(251, 191, 36, 0.3);
+            color: #fbbf24;
+        }
+        .v2-btn-pause:hover { background: rgba(251, 191, 36, 0.2); }
+        .v2-btn-resume {
+            background: rgba(34, 197, 94, 0.1);
+            border-color: rgba(34, 197, 94, 0.3);
+            color: #4ade80;
+        }
+        .v2-btn-resume:hover { background: rgba(34, 197, 94, 0.2); }
+        .v2-btn-reset {
+            background: rgba(248, 113, 113, 0.1);
+            border-color: rgba(248, 113, 113, 0.3);
+            color: #f87171;
+        }
+        .v2-btn-reset:hover { background: rgba(248, 113, 113, 0.2); }
+
+        @media (max-width: 1024px) {
+            .v2-metrics { grid-template-columns: repeat(3, 1fr); }
+            .v2-modules-grid { grid-template-columns: repeat(2, 1fr); }
+            .v2-overrides-grid { grid-template-columns: repeat(2, 1fr); }
+            .v2-preset-grid { grid-template-columns: 1fr; }
+            .behavior-profile-grid { grid-template-columns: 1fr; }
+            .behavior-grace-row { grid-template-columns: 1fr; }
+        }
+
         /* Behavior Card */
-        .toggle-list {
+        .behavior-card .toggle-list {
             display: flex;
             flex-direction: column;
             gap: 12px;
             margin-bottom: 16px;
         }
 
-        .toggle-row {
+        .behavior-card .toggle-row {
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            align-items: flex-start;
+            gap: 14px;
             padding: 12px;
             background: rgba(39, 39, 42, 0.3);
             border-radius: 8px;
         }
 
-        .toggle-info h4 {
+        .behavior-card .toggle-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .behavior-card .toggle-info h4 {
             font-size: 14px;
             font-weight: 500;
             margin-bottom: 2px;
         }
 
-        .toggle-info p {
+        .behavior-card .toggle-info p {
             font-size: 12px;
             color: var(--zinc-500);
+            line-height: 1.35;
+            margin: 0;
         }
 
-        .toggle-switch {
+        .behavior-card .toggle-switch {
             position: relative;
+            flex-shrink: 0;
             width: 44px;
             height: 24px;
+            margin-top: 2px;
         }
 
-        .toggle-switch input {
+        .behavior-card .toggle-switch input {
             opacity: 0;
             width: 0;
             height: 0;
         }
 
-        .toggle-slider {
+        .behavior-card .toggle-slider {
             position: absolute;
             cursor: pointer;
             top: 0;
@@ -845,7 +1276,7 @@
             border-radius: 24px;
         }
 
-        .toggle-slider:before {
+        .behavior-card .toggle-slider:before {
             position: absolute;
             content: "";
             height: 18px;
@@ -857,59 +1288,12 @@
             border-radius: 50%;
         }
 
-        .toggle-switch input:checked + .toggle-slider {
+        .behavior-card .toggle-switch input:checked + .toggle-slider {
             background-color: var(--emerald-500);
         }
 
-        .toggle-switch input:checked + .toggle-slider:before {
+        .behavior-card .toggle-switch input:checked + .toggle-slider:before {
             transform: translateX(20px);
-        }
-
-        .behavior-profile-list {
-            display: grid;
-            gap: 10px;
-            margin-bottom: 16px;
-        }
-
-        .behavior-profile-option {
-            display: flex;
-            gap: 10px;
-            align-items: flex-start;
-            padding: 12px;
-            border: 1px solid rgba(63, 63, 70, 0.7);
-            border-radius: 12px;
-            background: rgba(39, 39, 42, 0.28);
-            cursor: pointer;
-            transition: border-color 0.15s, background 0.15s;
-        }
-
-        .behavior-profile-option:hover {
-            border-color: rgba(89, 220, 181, 0.45);
-            background: rgba(39, 39, 42, 0.45);
-        }
-
-        .behavior-profile-option input {
-            margin-top: 3px;
-            accent-color: var(--emerald-500);
-        }
-
-        .behavior-profile-option:has(input:checked) {
-            border-color: rgba(89, 220, 181, 0.75);
-            background: rgba(89, 220, 181, 0.08);
-        }
-
-        .behavior-profile-option strong {
-            display: block;
-            font-size: 13px;
-            color: white;
-            margin-bottom: 3px;
-        }
-
-        .behavior-profile-option span {
-            display: block;
-            font-size: 12px;
-            line-height: 1.4;
-            color: var(--zinc-500);
         }
 
         /* Human Handoff Card */
@@ -1311,7 +1695,7 @@
         }
 
         body {
-            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             background:
                 radial-gradient(circle at top right, rgba(89, 220, 181, 0.08), transparent 35%),
                 radial-gradient(circle at bottom left, rgba(0, 168, 132, 0.06), transparent 35%),
@@ -1327,7 +1711,7 @@
             width: 256px;
             position: fixed;
             inset: 0 auto 0 0;
-            height: 100dvh;
+            height: 100vh;
             background: var(--surface-container);
             border-right: 1px solid var(--outline-variant-soft);
             backdrop-filter: blur(20px);
@@ -1340,7 +1724,7 @@
         .main-wrapper {
             margin-left: 256px;
             width: calc(100% - 256px);
-            min-height: 100dvh;
+            min-height: 100vh;
             padding: 22px 28px 28px;
         }
 
@@ -1368,7 +1752,7 @@
         }
 
         .logo-text h1 {
-            font-family: 'Outfit', sans-serif;
+            font-family: 'Manrope', sans-serif;
             font-size: 23px;
             letter-spacing: -0.04em;
             line-height: 1;
@@ -1472,7 +1856,7 @@
         }
 
         .instance-name {
-            font-family: 'Outfit', sans-serif;
+            font-family: 'Manrope', sans-serif;
             font-weight: 700;
             letter-spacing: -0.02em;
         }
@@ -1490,8 +1874,7 @@
         }
 
         .tool-item,
-        .tool-link,
-        .global-reconnect-button {
+        .tool-link {
             display: flex;
             align-items: center;
             gap: 10px;
@@ -1503,61 +1886,9 @@
         }
 
         .tool-item:hover,
-        .tool-link:hover,
-        .global-reconnect-button:hover:not(:disabled) {
+        .tool-link:hover {
             background: var(--surface-container-high);
             color: var(--text-main);
-        }
-
-        .global-reconnect-button {
-            width: 100%;
-            border: 1px solid rgba(89, 220, 181, 0.16);
-            background: rgba(89, 220, 181, 0.06);
-            font: inherit;
-            cursor: pointer;
-            text-align: left;
-        }
-
-        .global-reconnect-button:disabled {
-            opacity: 0.58;
-            cursor: not-allowed;
-        }
-
-        .global-reconnect-status {
-            display: none;
-            margin-top: 4px;
-            padding: 10px 12px;
-            border: 1px solid rgba(136, 178, 160, 0.14);
-            border-radius: 12px;
-            background: rgba(12, 18, 15, 0.42);
-            color: rgba(225, 226, 231, 0.62);
-            font-size: 11px;
-            line-height: 1.45;
-        }
-
-        .global-reconnect-status.visible {
-            display: block;
-        }
-
-        .global-reconnect-row {
-            display: flex;
-            justify-content: space-between;
-            gap: 10px;
-            padding-top: 6px;
-            margin-top: 6px;
-            border-top: 1px solid rgba(255, 255, 255, 0.06);
-        }
-
-        .global-reconnect-row:first-child {
-            padding-top: 0;
-            margin-top: 0;
-            border-top: 0;
-        }
-
-        .global-reconnect-row .result {
-            color: var(--primary-glow);
-            text-align: right;
-            white-space: nowrap;
         }
 
         .tool-name {
@@ -1585,7 +1916,7 @@
         }
 
         .welcome-screen h2 {
-            font-family: 'Outfit', sans-serif;
+            font-family: 'Manrope', sans-serif;
             font-size: 32px;
             letter-spacing: -0.05em;
         }
@@ -1622,7 +1953,7 @@
 
         .header-info h2,
         .card-title {
-            font-family: 'Outfit', sans-serif;
+            font-family: 'Manrope', sans-serif;
             letter-spacing: -0.03em;
         }
 
@@ -1762,7 +2093,7 @@
         }
 
         .modal-header h3 {
-            font-family: 'Outfit', sans-serif;
+            font-family: 'Manrope', sans-serif;
             letter-spacing: -0.03em;
         }
 
@@ -2219,1415 +2550,6 @@
             }
         }
 
-        /* ========================================
-           dev.wasup balanced control-plane redesign
-        ======================================== */
-        :root {
-            --surface: #0d1512;
-            --surface-container: rgba(18, 28, 24, 0.88);
-            --surface-container-low: rgba(14, 22, 19, 0.82);
-            --surface-container-high: rgba(31, 45, 39, 0.82);
-            --surface-container-highest: rgba(39, 56, 49, 0.86);
-            --surface-container-lowest: #09100d;
-            --outline-variant-soft: rgba(136, 178, 160, 0.16);
-            --text-main: #edf7f2;
-            --text-muted: #a8bbb2;
-            --primary-glow: #5cc8a7;
-            --primary-deep: #227d68;
-            --zinc-950: #0d1512;
-            --zinc-900: #121c18;
-            --zinc-800: #22322c;
-            --zinc-700: #40564d;
-            --zinc-600: #70837b;
-            --zinc-500: #93a7a0;
-            --zinc-400: #b5c7c0;
-            --zinc-300: #d5e2dd;
-            --emerald-400: #5cc8a7;
-            --emerald-500: #42b391;
-            --emerald-600: #2b8f75;
-            --amber-400: #c9a96a;
-            --sky-400: #5cc8a7;
-            --fuchsia-400: #5cc8a7;
-        }
-
-        html {
-            scroll-behavior: smooth;
-        }
-
-        body {
-            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
-            min-height: 100dvh;
-            background:
-                radial-gradient(circle at 12% 8%, rgba(92, 200, 167, 0.14), transparent 29rem),
-                radial-gradient(circle at 92% 4%, rgba(201, 169, 106, 0.10), transparent 28rem),
-                linear-gradient(145deg, #0d1512 0%, #101a16 42%, #0a100e 100%);
-            color: var(--text-main);
-            font-variant-numeric: tabular-nums;
-            overflow-x: hidden;
-        }
-
-        body::before {
-            content: '';
-            position: fixed;
-            inset: 0;
-            pointer-events: none;
-            opacity: 0.22;
-            background-image:
-                linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
-            background-size: 42px 42px;
-            mask-image: radial-gradient(circle at center, #000 20%, transparent 78%);
-        }
-
-        body::after {
-            content: '';
-            position: fixed;
-            inset: 0;
-            pointer-events: none;
-            opacity: 0.055;
-            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 220 220' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)' opacity='0.75'/%3E%3C/svg%3E");
-            mix-blend-mode: screen;
-        }
-
-        .skip-link {
-            position: fixed;
-            top: 12px;
-            left: 12px;
-            z-index: 30;
-            transform: translateY(-160%);
-            padding: 10px 14px;
-            border-radius: 999px;
-            background: var(--primary-glow);
-            color: #0a1511;
-            font-weight: 800;
-            text-decoration: none;
-            transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-
-        .skip-link:focus {
-            transform: translateY(0);
-            outline: 3px solid rgba(237, 247, 242, 0.52);
-            outline-offset: 3px;
-        }
-
-        .app {
-            min-height: 100dvh;
-            position: relative;
-        }
-
-        .sidebar {
-            width: 292px;
-            padding: 14px;
-            background:
-                linear-gradient(180deg, rgba(23, 35, 30, 0.94), rgba(12, 19, 16, 0.92)),
-                rgba(15, 24, 20, 0.9);
-            border-right: 1px solid rgba(136, 178, 160, 0.16);
-            box-shadow: inset -1px 0 0 rgba(255,255,255,0.03), 24px 0 70px rgba(4, 12, 9, 0.26);
-        }
-
-        .main-wrapper {
-            margin-left: 292px;
-            width: calc(100% - 292px);
-            max-width: 1320px;
-            padding: 28px clamp(24px, 4vw, 56px) 34px;
-            margin-right: auto;
-        }
-
-        .logo {
-            padding: 14px 12px 22px;
-        }
-
-        .logo-icon {
-            border-radius: 18px;
-            background:
-                linear-gradient(135deg, rgba(237,247,242,0.24), transparent 34%),
-                linear-gradient(145deg, var(--primary-glow), var(--primary-deep));
-            box-shadow:
-                inset 0 1px 0 rgba(255,255,255,0.35),
-                0 18px 46px rgba(34, 125, 104, 0.26);
-        }
-
-        .logo-text h1,
-        .mobile-topbar-logo [style*="font-family"],
-        .header-info h2,
-        .card-title,
-        .modal-header h3,
-        .welcome-screen h2,
-        .instance-name {
-            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif !important;
-        }
-
-        .logo-text h1 {
-            font-size: 25px;
-            letter-spacing: -0.055em;
-        }
-
-        .logo-text h1 .viper {
-            color: var(--text-main);
-        }
-
-        .logo-text h1 .claw {
-            color: var(--primary-glow);
-        }
-
-        .logo-text span,
-        .instances-header h2,
-        .tools-header,
-        .form-group label,
-        label {
-            letter-spacing: 0.16em;
-        }
-
-        .sidebar-search input,
-        .mobile-search-bar input {
-            background: rgba(237, 247, 242, 0.055) !important;
-            border-color: rgba(136, 178, 160, 0.14) !important;
-            border-radius: 16px !important;
-        }
-
-        .instances-section,
-        .tools-section {
-            padding-left: 6px;
-            padding-right: 6px;
-        }
-
-        .instances-header,
-        .tools-header {
-            padding: 0 8px;
-        }
-
-        .btn-add,
-        .mobile-topbar-btn {
-            border: 1px solid rgba(136, 178, 160, 0.16);
-            background: rgba(237, 247, 242, 0.07);
-            transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), background 0.24s ease, border-color 0.24s ease;
-        }
-
-        .btn-add:hover,
-        .mobile-topbar-btn:hover,
-        .mobile-topbar-btn.active {
-            border-color: rgba(92, 200, 167, 0.34);
-            background: rgba(92, 200, 167, 0.12);
-            transform: translateY(-1px);
-        }
-
-        .btn-add:active,
-        .mobile-topbar-btn:active,
-        .btn:active,
-        .btn-handoff:active,
-        .tool-link:active,
-        .preset-btn:active,
-        .behavior-profile-option:active {
-            transform: scale(0.98);
-        }
-
-        .instance-list {
-            gap: 8px;
-        }
-
-        .instance-item {
-            position: relative;
-            padding: 13px 12px;
-            border-radius: 18px;
-            border: 1px solid transparent;
-            transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), background 0.28s ease, border-color 0.28s ease;
-        }
-
-        .instance-item::before {
-            content: '';
-            position: absolute;
-            inset: 1px;
-            border-radius: inherit;
-            pointer-events: none;
-            background: linear-gradient(135deg, rgba(255,255,255,0.08), transparent 38%);
-            opacity: 0;
-            transition: opacity 0.28s ease;
-        }
-
-        .instance-item:hover,
-        .instance-item.active {
-            background: rgba(237, 247, 242, 0.07);
-            border-color: rgba(136, 178, 160, 0.16);
-            transform: translateY(-1px);
-        }
-
-        .instance-item.active::before {
-            opacity: 1;
-        }
-
-        .instance-avatar {
-            width: 12px;
-            height: 32px;
-            border-radius: 999px;
-        }
-
-        .instance-avatar.connected {
-            animation: breathe 2.8s ease-in-out infinite;
-        }
-
-        .instance-name {
-            font-size: 14px;
-            letter-spacing: -0.025em;
-        }
-
-        .instance-status-text,
-        .instance-id,
-        .info-value,
-        .usage-value,
-        .log-container,
-        #pairing-code-value {
-            font-family: 'JetBrains Mono', monospace !important;
-        }
-
-        .tool-link,
-        .mobile-tools-link {
-            border: 1px solid transparent;
-            background: transparent;
-            border-radius: 16px;
-        }
-
-        .tool-link:hover,
-        .mobile-tools-link:hover {
-            border-color: rgba(136, 178, 160, 0.16);
-            background: rgba(237, 247, 242, 0.07);
-            transform: translateY(-1px);
-        }
-
-        .welcome-screen {
-            align-items: center;
-            text-align: center;
-            justify-content: center;
-            min-height: min(64dvh, 620px);
-            padding: clamp(34px, 6vw, 76px);
-            overflow: hidden;
-            position: relative;
-            background:
-                linear-gradient(180deg, rgba(237,247,242,0.12), transparent 40%),
-                radial-gradient(circle at 50% 18%, rgba(92, 200, 167, 0.18), transparent 22rem),
-                rgba(18, 28, 24, 0.72);
-            border: 1px solid rgba(136, 178, 160, 0.18);
-            border-radius: 30px;
-            box-shadow: 0 34px 90px rgba(2, 9, 7, 0.34);
-        }
-
-        .welcome-screen::after {
-            content: 'dev.wasup';
-            position: absolute;
-            left: 50%;
-            transform: translateX(-50%);
-            bottom: -22px;
-            font-size: clamp(56px, 12vw, 150px);
-            line-height: 0.8;
-            font-weight: 800;
-            letter-spacing: -0.08em;
-            color: rgba(237,247,242,0.045);
-            pointer-events: none;
-        }
-
-        .welcome-screen h2 {
-            max-width: 820px;
-            font-size: clamp(42px, 5.8vw, 78px);
-            line-height: 0.94;
-            letter-spacing: -0.065em;
-            text-wrap: balance;
-        }
-
-        .welcome-screen p {
-            margin-top: 22px;
-            max-width: 58ch;
-            font-size: clamp(16px, 1.5vw, 19px);
-            line-height: 1.65;
-            color: rgba(237, 247, 242, 0.68);
-            margin-left: auto;
-            margin-right: auto;
-        }
-
-        .instance-header {
-            position: relative;
-            top: auto;
-            z-index: 5;
-            padding: 20px 22px;
-            margin-bottom: 22px;
-            border-radius: 26px;
-            background:
-                linear-gradient(180deg, rgba(237,247,242,0.10), transparent 54%),
-                rgba(18, 28, 24, 0.78);
-            border: 1px solid rgba(136, 178, 160, 0.18);
-            backdrop-filter: blur(22px);
-            box-shadow: 0 22px 72px rgba(2, 9, 7, 0.24);
-        }
-
-        .header-avatar {
-            width: 12px;
-            height: 44px;
-            border-radius: 999px;
-        }
-
-        .header-info h2 {
-            font-size: clamp(23px, 2.2vw, 34px);
-            line-height: 1;
-            color: var(--text-main);
-            letter-spacing: -0.052em;
-            text-wrap: balance;
-        }
-
-        .header-info .instance-id {
-            margin-top: 8px;
-            color: rgba(237, 247, 242, 0.46);
-        }
-
-        .header-actions {
-            gap: 10px;
-        }
-
-        .main {
-            padding: 0;
-            overflow: visible;
-        }
-
-        .grid-12 {
-            grid-template-columns: repeat(12, minmax(0, 1fr));
-            gap: 22px;
-            align-items: start;
-        }
-
-        .col-4 { grid-column: span 4; }
-        .col-6 { grid-column: span 6; }
-        .col-12 { grid-column: span 12; }
-
-        .card {
-            position: relative;
-            overflow: hidden;
-            padding: clamp(18px, 2vw, 28px);
-            border-radius: 26px;
-            background:
-                linear-gradient(180deg, rgba(237,247,242,0.085), rgba(237,247,242,0.025)),
-                rgba(16, 25, 21, 0.84);
-            border: 1px solid rgba(136, 178, 160, 0.16);
-            box-shadow:
-                inset 0 1px 0 rgba(255,255,255,0.08),
-                0 28px 80px rgba(2, 9, 7, 0.24);
-            animation: riseIn 0.62s cubic-bezier(0.16, 1, 0.3, 1) both;
-            animation-delay: calc(var(--card-index, 0) * 65ms);
-        }
-
-        .grid-12 > .card:nth-child(1) { --card-index: 1; }
-        .grid-12 > .card:nth-child(2) { --card-index: 2; }
-        .grid-12 > .card:nth-child(3) { --card-index: 3; }
-        .grid-12 > .card:nth-child(4) { --card-index: 4; }
-        .grid-12 > .card:nth-child(5) { --card-index: 5; }
-        .grid-12 > .card:nth-child(6) { --card-index: 6; }
-        .grid-12 > .card:nth-child(7) { --card-index: 7; }
-
-        .card::before {
-            content: '';
-            position: absolute;
-            inset: 0;
-            pointer-events: none;
-            background: radial-gradient(circle at 50% 0%, rgba(92,200,167,0.10), transparent 18rem);
-            opacity: 0.72;
-        }
-
-        .card > * {
-            position: relative;
-        }
-
-        .card-title {
-            color: rgba(237, 247, 242, 0.94);
-            font-size: clamp(19px, 1.7vw, 25px);
-            line-height: 1;
-            letter-spacing: -0.045em;
-            text-transform: none;
-            margin-bottom: 22px;
-        }
-
-        .status-header,
-        .log-header {
-            gap: 14px;
-        }
-
-        .qr-area,
-        .usage-list,
-        #handoff-list,
-        .log-container,
-        .info-list {
-            border-radius: 22px;
-            background:
-                linear-gradient(145deg, rgba(255,255,255,0.05), transparent),
-                rgba(6, 13, 10, 0.62);
-            border: 1px solid rgba(136, 178, 160, 0.13);
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
-        }
-
-        .qr-area {
-            min-height: 244px;
-        }
-
-        .qr-placeholder {
-            color: rgba(237, 247, 242, 0.62);
-        }
-
-        .qr-placeholder svg {
-            width: 46px;
-            height: 46px;
-            margin-bottom: 14px;
-            color: var(--primary-glow);
-            opacity: 0.82;
-        }
-
-        .qr-code {
-            max-width: 184px;
-            padding: 10px;
-            background: #edf7f2;
-            border-radius: 20px;
-            box-shadow: 0 24px 60px rgba(2, 9, 7, 0.34);
-        }
-
-        .btn,
-        .btn-handoff,
-        .btn-handoff-clear,
-        .btn-clear-auth,
-        .preset-btn {
-            min-height: 42px;
-            border-radius: 999px;
-            transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), background 0.24s ease, border-color 0.24s ease, box-shadow 0.24s ease, opacity 0.24s ease;
-        }
-
-        .btn-primary {
-            border: 1px solid rgba(237,247,242,0.24);
-            background:
-                linear-gradient(135deg, rgba(255,255,255,0.32), transparent 32%),
-                linear-gradient(145deg, var(--primary-glow), #2f9b80);
-            color: #081410;
-            box-shadow: 0 18px 42px rgba(34, 125, 104, 0.24);
-        }
-
-        .btn-primary:hover {
-            box-shadow: 0 22px 54px rgba(34, 125, 104, 0.31);
-        }
-
-        .btn-outline,
-        .btn-ghost,
-        .btn-danger-outline,
-        .btn-danger,
-        .btn-clear-auth {
-            background: rgba(237, 247, 242, 0.055);
-            border: 1px solid rgba(136, 178, 160, 0.15);
-            color: rgba(237, 247, 242, 0.78);
-        }
-
-        .btn-outline:hover,
-        .btn-ghost:hover,
-        .btn-clear-auth:hover {
-            background: rgba(237, 247, 242, 0.09);
-            color: var(--text-main);
-            border-color: rgba(136, 178, 160, 0.24);
-        }
-
-        .btn-danger,
-        .btn-danger-outline {
-            color: #f2b8b5;
-            border-color: rgba(242, 184, 181, 0.18);
-        }
-
-        .btn-danger:hover,
-        .btn-danger-outline:hover {
-            background: rgba(154, 53, 49, 0.18);
-        }
-
-        .btn:focus-visible,
-        .btn-add:focus-visible,
-        .tool-link:focus-visible,
-        .mobile-tools-link:focus-visible,
-        input:focus-visible,
-        textarea:focus-visible,
-        select:focus-visible,
-        .preset-btn:focus-visible,
-        .behavior-profile-option:focus-within,
-        .toggle-switch input:focus-visible + .toggle-slider {
-            outline: 3px solid rgba(92, 200, 167, 0.34);
-            outline-offset: 3px;
-        }
-
-        input,
-        textarea,
-        select,
-        #handoff-keywords,
-        #handoff-resume-msg,
-        #handoff-phone,
-        #input-pair-phone {
-            min-height: 44px;
-            background: rgba(6, 13, 10, 0.72) !important;
-            border: 1px solid rgba(136, 178, 160, 0.16) !important;
-            border-radius: 16px !important;
-            color: var(--text-main) !important;
-        }
-
-        input::placeholder,
-        textarea::placeholder {
-            color: rgba(168, 187, 178, 0.46) !important;
-        }
-
-        input:focus,
-        textarea:focus,
-        select:focus,
-        #handoff-keywords:focus,
-        #handoff-resume-msg:focus,
-        #handoff-phone:focus,
-        #input-pair-phone:focus {
-            border-color: rgba(92, 200, 167, 0.46) !important;
-            box-shadow: 0 0 0 4px rgba(92, 200, 167, 0.11) !important;
-        }
-
-        .info-item,
-        .usage-row,
-        .toggle-row,
-        .behavior-profile-option,
-        .handoff-settings-block {
-            border-color: rgba(136, 178, 160, 0.13) !important;
-        }
-
-        .info-value.highlight,
-        .usage-value,
-        .log-message.success {
-            color: var(--primary-glow);
-        }
-
-        .status-badge,
-        .live-badge {
-            border-radius: 999px;
-            background: rgba(6, 13, 10, 0.56);
-            border: 1px solid rgba(136, 178, 160, 0.16);
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
-        }
-
-        .preset-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
-        }
-
-        .preset-btn {
-            padding: 14px;
-            text-align: left;
-            background: rgba(237, 247, 242, 0.045);
-            border: 1px solid rgba(136, 178, 160, 0.13);
-        }
-
-        .preset-btn:hover,
-        .preset-btn.active {
-            background: rgba(92, 200, 167, 0.11);
-            border-color: rgba(92, 200, 167, 0.28);
-        }
-
-        .preset-name,
-        .toggle-info h4,
-        .behavior-profile-option strong {
-            color: var(--text-main);
-        }
-
-        .preset-value,
-        .toggle-info p,
-        .behavior-profile-option span span,
-        .handoff-desc,
-        .form-hint {
-            color: rgba(168, 187, 178, 0.7);
-        }
-
-        .handoff-grid {
-            gap: 18px;
-        }
-
-        .log-container {
-            max-height: 280px;
-            font-size: 12px;
-        }
-
-        .log-entry {
-            padding: 8px 0;
-            border-bottom: 1px solid rgba(136, 178, 160, 0.08);
-        }
-
-        .log-entry:last-child {
-            border-bottom: 0;
-        }
-
-        .footer {
-            margin-top: 24px;
-            border-radius: 999px;
-            background: rgba(18, 28, 24, 0.66);
-            border: 1px solid rgba(136, 178, 160, 0.15);
-            backdrop-filter: blur(18px);
-        }
-
-        .modal-overlay {
-            background: rgba(5, 11, 9, 0.72);
-            backdrop-filter: blur(14px);
-        }
-
-        .modal {
-            border-radius: 30px;
-            background:
-                linear-gradient(145deg, rgba(237,247,242,0.09), transparent),
-                rgba(18, 28, 24, 0.94);
-            border: 1px solid rgba(136, 178, 160, 0.18);
-            box-shadow: 0 34px 100px rgba(2, 9, 7, 0.46);
-        }
-
-        .toast-region {
-            position: fixed;
-            right: 22px;
-            bottom: 22px;
-            z-index: 40;
-            display: grid;
-            gap: 10px;
-            width: min(360px, calc(100vw - 44px));
-            pointer-events: none;
-        }
-
-        .toast {
-            padding: 14px 16px;
-            border-radius: 18px;
-            background: rgba(18, 28, 24, 0.94);
-            border: 1px solid rgba(136, 178, 160, 0.18);
-            box-shadow: 0 22px 70px rgba(2, 9, 7, 0.35);
-            color: var(--text-main);
-            font-weight: 600;
-            line-height: 1.35;
-            animation: toastIn 0.34s cubic-bezier(0.16, 1, 0.3, 1) both;
-        }
-
-        .toast.error {
-            border-color: rgba(242, 184, 181, 0.24);
-            color: #ffd4d0;
-        }
-
-        .toast.success {
-            border-color: rgba(92, 200, 167, 0.28);
-            color: #cffce9;
-        }
-
-        .device-placeholder {
-            width: 48px;
-            height: 48px;
-            margin-bottom: 12px;
-        }
-
-        @keyframes riseIn {
-            from {
-                opacity: 0;
-                transform: translateY(18px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        @keyframes toastIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px) scale(0.98);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0) scale(1);
-            }
-        }
-
-        @keyframes breathe {
-            0%, 100% {
-                box-shadow: 0 0 0 0 rgba(92, 200, 167, 0.34);
-            }
-            50% {
-                box-shadow: 0 0 0 7px rgba(92, 200, 167, 0);
-            }
-        }
-
-        @media (max-width: 1180px) {
-            .grid-12 {
-                grid-template-columns: 1fr;
-            }
-
-            .col-6,
-            .col-4,
-            .col-12 {
-                grid-column: 1;
-            }
-        }
-
-        @media (max-width: 1100px) {
-            .sidebar {
-                width: 100%;
-                padding: 10px max(14px, env(safe-area-inset-right)) 12px max(14px, env(safe-area-inset-left));
-            }
-
-            .main-wrapper {
-                margin-left: 0;
-                width: 100%;
-                padding: 18px max(16px, env(safe-area-inset-right)) 24px max(16px, env(safe-area-inset-left));
-            }
-
-            .instance-header {
-                top: 12px;
-            }
-        }
-
-        @media (max-width: 768px) {
-            .welcome-screen {
-                border-radius: 26px;
-                min-height: 460px;
-                padding: 28px 22px;
-            }
-
-            .welcome-screen h2 {
-                font-size: clamp(38px, 14vw, 62px);
-            }
-
-            .instance-header {
-                position: relative;
-                top: auto;
-                border-radius: 24px;
-                align-items: flex-start;
-            }
-
-            .header-actions,
-            .qr-buttons,
-            .preset-grid {
-                grid-template-columns: 1fr !important;
-            }
-
-            .footer {
-                border-radius: 24px;
-                align-items: flex-start;
-            }
-
-            .instance-list-shell {
-                overflow-x: hidden;
-            }
-
-            .instance-item:hover,
-            .instance-item.active,
-            .tool-link:hover,
-            .mobile-tools-link:hover {
-                transform: none;
-            }
-        }
-
-        /* ========================================
-           Worker dashboard sidebar repair
-        ======================================== */
-        .app {
-            min-height: 100dvh;
-            align-items: stretch;
-        }
-
-        .sidebar {
-            width: 292px;
-            height: 100dvh;
-            max-height: 100dvh;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .desktop-logo,
-        .sidebar-search {
-            flex: 0 0 auto;
-        }
-
-        .instances-section {
-            display: flex;
-            flex: 1 1 auto;
-            min-height: 220px;
-            overflow: hidden;
-            flex-direction: column;
-        }
-
-        .instances-header {
-            flex: 0 0 auto;
-        }
-
-        .instance-list-shell {
-            flex: 1 1 auto;
-            min-height: 160px;
-            overflow-y: auto;
-            overflow-x: hidden;
-            padding-right: 4px;
-            border-radius: 18px;
-            scrollbar-gutter: stable;
-        }
-
-        .instance-list-shell::-webkit-scrollbar,
-        .tools-section::-webkit-scrollbar,
-        .global-reconnect-status::-webkit-scrollbar {
-            width: 5px;
-        }
-
-        .instance-list-shell::-webkit-scrollbar-track,
-        .tools-section::-webkit-scrollbar-track,
-        .global-reconnect-status::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        .instance-list-shell::-webkit-scrollbar-thumb,
-        .tools-section::-webkit-scrollbar-thumb,
-        .global-reconnect-status::-webkit-scrollbar-thumb {
-            background: rgba(168, 187, 178, 0.18);
-            border-radius: 999px;
-        }
-
-        .tools-section {
-            flex: 0 1 auto;
-            max-height: min(38dvh, 330px);
-            overflow-y: auto;
-            overflow-x: hidden;
-            padding-top: 10px;
-            scrollbar-gutter: stable;
-        }
-
-        .tools-list {
-            gap: 6px;
-        }
-
-        .tool-link,
-        .global-reconnect-button {
-            min-height: 36px;
-            padding: 8px 10px;
-            border-radius: 14px;
-            line-height: 1.15;
-        }
-
-        .tool-link svg,
-        .global-reconnect-button svg {
-            width: 15px;
-            height: 15px;
-        }
-
-        .global-reconnect-button {
-            color: rgba(237, 247, 242, 0.74);
-            background: rgba(92, 200, 167, 0.075);
-            border-color: rgba(92, 200, 167, 0.18);
-            box-shadow: none;
-        }
-
-        .global-reconnect-button:hover:not(:disabled),
-        .global-reconnect-button:focus-visible {
-            color: var(--text-main);
-            background: rgba(92, 200, 167, 0.12);
-            border-color: rgba(92, 200, 167, 0.32);
-        }
-
-        .global-reconnect-button:active:not(:disabled) {
-            transform: scale(0.98);
-        }
-
-        .global-reconnect-status {
-            max-height: 126px;
-            overflow-y: auto;
-            padding: 8px 10px;
-            border-radius: 14px;
-            font-size: 10.5px;
-            scrollbar-gutter: stable;
-        }
-
-        .global-reconnect-row {
-            align-items: center;
-            padding-top: 5px;
-            margin-top: 5px;
-        }
-
-        .global-reconnect-row span:first-child {
-            min-width: 0;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .global-reconnect-row .result {
-            flex: 0 0 auto;
-            max-width: 48%;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .instance-item {
-            min-height: 58px;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .instance-item:focus-visible {
-            outline: 3px solid rgba(92, 200, 167, 0.34);
-            outline-offset: 3px;
-        }
-
-        .instance-item.active {
-            background:
-                linear-gradient(135deg, rgba(237, 247, 242, 0.09), rgba(92, 200, 167, 0.06)),
-                rgba(237, 247, 242, 0.065);
-            border-color: rgba(92, 200, 167, 0.34);
-        }
-
-        .instance-info {
-            display: grid;
-            gap: 6px;
-            min-width: 0;
-        }
-
-        .instance-status-text {
-            display: inline-flex;
-            width: fit-content;
-            max-width: 100%;
-            align-items: center;
-            padding: 3px 7px;
-            border-radius: 999px;
-            background: rgba(168, 187, 178, 0.10);
-            border: 1px solid rgba(168, 187, 178, 0.12);
-            line-height: 1;
-        }
-
-        .instance-status-text.connected {
-            background: rgba(92, 200, 167, 0.13);
-            border-color: rgba(92, 200, 167, 0.22);
-        }
-
-        .empty-state {
-            margin: 8px 2px;
-            border: 1px dashed rgba(168, 187, 178, 0.16);
-            border-radius: 18px;
-            background: rgba(237, 247, 242, 0.035);
-            color: rgba(237, 247, 242, 0.58);
-            line-height: 1.45;
-        }
-
-        .main-wrapper {
-            min-height: 100dvh;
-        }
-
-        .main {
-            min-width: 0;
-        }
-
-        @media (max-height: 720px) and (min-width: 1101px) {
-            .desktop-logo {
-                padding-bottom: 14px;
-            }
-
-            .sidebar-search {
-                padding-bottom: 8px !important;
-            }
-
-            .instances-section {
-                min-height: 170px;
-            }
-
-            .instance-list-shell {
-                min-height: 120px;
-            }
-
-            .tools-section {
-                max-height: 250px;
-            }
-
-            .api-key-settings {
-                margin-top: 8px;
-                padding-top: 8px;
-            }
-        }
-
-        @media (max-width: 1100px) {
-            .app {
-                display: flex;
-                flex-direction: column;
-            }
-
-            .sidebar {
-                width: 100%;
-                height: auto;
-                max-height: none;
-                overflow: visible;
-            }
-
-            .instances-section {
-                min-height: 0;
-                overflow: visible;
-            }
-
-            .instance-list-shell {
-                flex: none;
-                max-height: min(42dvh, 320px);
-                min-height: 0;
-            }
-
-            .tools-section {
-                max-height: none;
-                overflow: visible;
-            }
-
-            .main-wrapper {
-                min-height: auto;
-            }
-        }
-
-        @media (max-width: 768px) {
-            .instance-list-shell {
-                max-height: min(48dvh, 340px);
-            }
-
-            .tools-section {
-                display: block !important;
-            }
-
-            .global-reconnect-status {
-                max-height: 112px;
-            }
-        }
-
-        /* ========================================
-           Worker dashboard polish pass
-        ======================================== */
-        html,
-        body {
-            width: 100%;
-            max-width: 100%;
-            overflow-x: hidden;
-            overscroll-behavior: none;
-        }
-
-        *,
-        *::before,
-        *::after {
-            box-sizing: border-box;
-        }
-
-        .app,
-        .sidebar,
-        .main-wrapper,
-        .main,
-        .instance-list-shell,
-        .tools-section,
-        .global-reconnect-status,
-        .log-container {
-            overscroll-behavior: contain;
-        }
-
-        .sidebar {
-            min-height: 0;
-            scrollbar-gutter: stable;
-        }
-
-        .instances-section,
-        .mobile-section-panel,
-        .tools-list,
-        .instance-detail {
-            min-height: 0;
-        }
-
-        .tools-section {
-            border-top: 1px solid rgba(136, 178, 160, 0.12);
-            padding-bottom: 12px;
-        }
-
-        .reconnect-control {
-            display: grid;
-            gap: 8px;
-            padding: 0 8px 10px;
-        }
-
-        .global-reconnect-button {
-            min-height: 48px;
-            width: 100%;
-            align-items: center;
-            justify-content: flex-start;
-            gap: 10px;
-            padding: 9px 11px;
-            border-radius: 16px;
-        }
-
-        .global-reconnect-button svg {
-            flex: 0 0 auto;
-        }
-
-        .reconnect-copy {
-            display: grid;
-            min-width: 0;
-            gap: 3px;
-        }
-
-        .global-reconnect-button .tool-name {
-            color: var(--text-main);
-            font-size: 12px;
-            font-weight: 800;
-            line-height: 1.1;
-            letter-spacing: -0.01em;
-        }
-
-        .tool-helper {
-            display: block;
-            color: rgba(168, 187, 178, 0.76);
-            font-size: 10.5px;
-            font-weight: 600;
-            line-height: 1.2;
-        }
-
-        .tools-list {
-            padding: 2px 8px 0;
-        }
-
-        .tool-link {
-            min-width: 0;
-        }
-
-        .tool-link .tool-name {
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .global-reconnect-status {
-            max-height: 116px;
-            margin-top: 0;
-            overflow-y: auto;
-            overflow-x: hidden;
-            word-break: break-word;
-        }
-
-        .instance-item {
-            display: grid;
-            grid-template-columns: 10px minmax(0, 1fr) 16px;
-            min-height: 64px;
-            padding: 12px 10px;
-            column-gap: 12px;
-            overflow: hidden;
-        }
-
-        .instance-avatar {
-            width: 10px;
-            height: 36px;
-            align-self: center;
-        }
-
-        .instance-name {
-            min-width: 0;
-            max-width: 100%;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            line-height: 1.15;
-        }
-
-        .instance-status-text {
-            max-width: 100%;
-            min-height: 22px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            font-size: 10px;
-            letter-spacing: 0.04em;
-        }
-
-        .instance-status-text.disconnected {
-            color: rgba(213, 226, 221, 0.62);
-        }
-
-        .instance-status-text.connecting {
-            background: rgba(201, 169, 106, 0.14);
-            border-color: rgba(201, 169, 106, 0.24);
-            color: #e0c990;
-        }
-
-        .instance-chevron {
-            align-self: center;
-            justify-self: end;
-            font-size: 17px;
-            line-height: 1;
-            opacity: 0.72;
-        }
-
-        .instance-item.active {
-            box-shadow: inset 0 0 0 1px rgba(92, 200, 167, 0.16);
-        }
-
-        .main-wrapper {
-            overflow-x: hidden;
-        }
-
-        .main,
-        .grid-12 {
-            min-width: 0;
-        }
-
-        .card {
-            min-width: 0;
-            overflow: visible;
-            padding: clamp(22px, 2.4vw, 30px);
-        }
-
-        .card-title {
-            line-height: 1.18;
-            margin-bottom: 20px;
-            overflow-wrap: anywhere;
-        }
-
-        .status-header,
-        .log-header {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 14px;
-            min-width: 0;
-        }
-
-        .status-header .card-title,
-        .log-header .card-title {
-            min-width: 0;
-        }
-
-        .status-badge {
-            max-width: 100%;
-            min-height: 30px;
-            flex: 0 1 auto;
-            white-space: nowrap;
-        }
-
-        .info-list,
-        .usage-list,
-        .qr-area,
-        #handoff-list,
-        .log-container {
-            padding: 12px;
-            overflow: hidden;
-        }
-
-        .info-item,
-        .usage-row {
-            display: grid;
-            grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-            gap: 12px;
-            align-items: center;
-            min-width: 0;
-        }
-
-        .info-label,
-        .usage-label,
-        .info-value,
-        .usage-value {
-            min-width: 0;
-            line-height: 1.35;
-        }
-
-        .info-value,
-        .usage-value,
-        #info-effective-webhook,
-        #input-webhook {
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .form-group {
-            display: grid;
-            gap: 7px;
-            margin-bottom: 14px;
-        }
-
-        .form-group label {
-            line-height: 1.25;
-        }
-
-        input,
-        textarea,
-        select {
-            max-width: 100%;
-            line-height: 1.35;
-        }
-
-        .btn,
-        .btn-handoff,
-        .btn-handoff-clear,
-        .btn-clear-auth,
-        .preset-btn {
-            min-height: 40px;
-            border-radius: 14px;
-            line-height: 1.2;
-            white-space: normal;
-        }
-
-        .btn-primary,
-        .btn-outline,
-        .btn-danger,
-        .btn-danger-outline,
-        .btn-ghost {
-            border-radius: 14px;
-        }
-
-        .qr-buttons {
-            gap: 10px;
-        }
-
-        .welcome-screen {
-            overflow: hidden;
-        }
-
-        @media (max-width: 1100px) {
-            .tools-section {
-                display: grid !important;
-                gap: 10px;
-            }
-
-            .mobile-section-toggle + .reconnect-control {
-                margin-top: 10px;
-            }
-
-            .mobile-section-panel.collapsed {
-                display: none;
-            }
-
-            .main-wrapper {
-                overflow: visible;
-            }
-        }
-
-        @media (max-width: 640px) {
-            .card {
-                padding: 18px;
-                border-radius: 22px;
-            }
-
-            .info-item,
-            .usage-row {
-                grid-template-columns: 1fr;
-                gap: 5px;
-                align-items: start;
-            }
-
-            .info-value,
-            .usage-value {
-                white-space: normal;
-                overflow-wrap: anywhere;
-            }
-
-            .status-header,
-            .log-header {
-                flex-direction: column;
-            }
-
-            .global-reconnect-status {
-                max-height: 104px;
-            }
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-            *,
-            *::before,
-            *::after {
-                animation-duration: 0.001ms !important;
-                animation-iteration-count: 1 !important;
-                scroll-behavior: auto !important;
-                transition-duration: 0.001ms !important;
-            }
-        }
-
         @media (max-width: 480px) {
             .logo-text h1 {
                 font-size: 21px;
@@ -3643,7 +2565,7 @@
             }
 
             .card {
-                padding: 18px;
+                padding: 14px;
             }
 
             .card-title {
@@ -3659,900 +2581,9 @@
                 line-height: 1.4;
             }
         }
-
-        /* ========================================
-           Direct worker clean layout and scroll fix
-        ======================================== */
-        :root {
-            --surface: #0f1412;
-            --surface-container: #151b18;
-            --surface-container-low: #121714;
-            --surface-container-high: #1d2521;
-            --surface-container-highest: #222c27;
-            --surface-container-lowest: #0b100e;
-            --outline-variant-soft: rgba(139, 160, 151, 0.18);
-            --text-main: #eef4f1;
-            --text-muted: #9caea6;
-            --primary-glow: #65c5a4;
-            --primary-deep: #2f8d73;
-            --zinc-950: #0f1412;
-            --zinc-900: #151b18;
-            --zinc-800: #202923;
-            --zinc-700: #34443c;
-            --zinc-600: #687a72;
-            --zinc-500: #8fa19a;
-            --zinc-400: #b6c4bf;
-            --zinc-300: #dce6e2;
-            --emerald-400: #65c5a4;
-            --emerald-500: #4bae8d;
-            --emerald-600: #358b72;
-            --amber-400: #c7aa70;
-            --sky-400: #65c5a4;
-            --fuchsia-400: #65c5a4;
-        }
-
-        html,
-        body {
-            width: 100%;
-            max-width: 100%;
-            min-height: 100dvh;
-            background: var(--surface);
-            color: var(--text-main);
-            overflow-x: hidden;
-        }
-
-        body {
-            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: var(--surface);
-        }
-
-        body::before,
-        body::after,
-        .card::before,
-        .welcome-screen::after,
-        .instance-item::before {
-            pointer-events: none;
-        }
-
-        body::before,
-        body::after,
-        .welcome-screen::after,
-        .card::before {
-            display: none;
-        }
-
-        *,
-        *::before,
-        *::after {
-            box-sizing: border-box;
-        }
-
-        .app {
-            display: flex;
-            height: 100dvh;
-            min-height: 0;
-            overflow: hidden;
-            background: var(--surface);
-        }
-
-        .sidebar {
-            position: fixed;
-            inset: 0 auto 0 0;
-            width: 288px;
-            height: 100dvh;
-            max-height: 100dvh;
-            min-height: 0;
-            padding: 14px;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            background: var(--surface-container);
-            border-right: 1px solid var(--outline-variant-soft);
-            box-shadow: none;
-            backdrop-filter: none;
-        }
-
-        .desktop-logo,
-        .sidebar-search,
-        .instances-header,
-        .tools-header {
-            flex: 0 0 auto;
-        }
-
-        .logo {
-            padding: 8px 8px 16px;
-            gap: 12px;
-        }
-
-        .logo-icon {
-            width: 34px;
-            height: 34px;
-            border-radius: 10px;
-            background: var(--primary-glow);
-            color: #08120e;
-            box-shadow: none;
-        }
-
-        .logo-status {
-            width: 8px;
-            height: 8px;
-            border-color: var(--surface-container);
-            box-shadow: none;
-        }
-
-        .logo-text h1 {
-            font-size: 20px;
-            letter-spacing: -0.035em;
-            line-height: 1;
-        }
-
-        .logo-text h1 .viper {
-            color: var(--text-main);
-        }
-
-        .logo-text h1 .claw {
-            color: var(--primary-glow);
-        }
-
-        .logo-text span,
-        .instances-header h2,
-        .tools-header,
-        .form-group label,
-        label {
-            color: rgba(238, 244, 241, 0.48);
-            font-size: 10px;
-            font-weight: 700;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-        }
-
-        .sidebar-search {
-            padding: 0 4px 12px !important;
-        }
-
-        .sidebar-search input,
-        .mobile-search-bar input {
-            border-radius: 10px !important;
-            background: var(--surface-container-lowest) !important;
-            border-color: rgba(139, 160, 151, 0.18) !important;
-            box-shadow: none !important;
-        }
-
-        .instances-section {
-            flex: 1 1 auto;
-            min-height: 0;
-            padding: 0 0 10px;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
-        .instances-header {
-            margin-bottom: 8px;
-            padding: 0 4px;
-        }
-
-        .btn-add {
-            width: 30px;
-            height: 30px;
-            min-height: 30px;
-            border-radius: 8px;
-            background: transparent;
-            border: 1px solid rgba(139, 160, 151, 0.22);
-            color: var(--primary-glow);
-            box-shadow: none;
-        }
-
-        .btn-add:hover,
-        .btn-add:focus-visible {
-            transform: none;
-            background: rgba(101, 197, 164, 0.10);
-            border-color: rgba(101, 197, 164, 0.36);
-        }
-
-        .instance-list-shell {
-            flex: 1 1 auto;
-            min-height: 0;
-            overflow-y: auto;
-            overflow-x: hidden;
-            padding-right: 4px;
-            border-radius: 12px;
-            overscroll-behavior: contain;
-            -webkit-overflow-scrolling: touch;
-            scrollbar-gutter: stable;
-        }
-
-        .instance-list {
-            gap: 6px;
-        }
-
-        .instance-item {
-            display: grid;
-            grid-template-columns: 9px minmax(0, 1fr) 14px;
-            align-items: center;
-            column-gap: 10px;
-            min-height: 54px;
-            padding: 9px 10px;
-            border-radius: 10px;
-            border: 1px solid transparent;
-            background: transparent;
-            box-shadow: none;
-            overflow: hidden;
-            transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
-        }
-
-        .instance-item:hover {
-            transform: none;
-            background: var(--surface-container-high);
-            border-color: rgba(139, 160, 151, 0.18);
-        }
-
-        .instance-item.active {
-            transform: none;
-            background: rgba(101, 197, 164, 0.10);
-            border-color: rgba(101, 197, 164, 0.34);
-            box-shadow: inset 2px 0 0 var(--primary-glow);
-        }
-
-        .instance-avatar {
-            width: 9px;
-            height: 30px;
-            border-radius: 999px;
-            align-self: center;
-            box-shadow: none;
-            animation: none;
-        }
-
-        .instance-avatar.connected {
-            background: var(--primary-glow);
-            box-shadow: none;
-        }
-
-        .instance-avatar.disconnected,
-        .header-avatar.disconnected,
-        .header-avatar.connecting {
-            background: rgba(156, 174, 166, 0.34);
-        }
-
-        .instance-info {
-            display: grid;
-            gap: 5px;
-            min-width: 0;
-        }
-
-        .instance-name {
-            font-size: 14px;
-            font-weight: 650;
-            line-height: 1.15;
-            letter-spacing: -0.015em;
-            color: var(--text-main);
-        }
-
-        .instance-status-text {
-            width: fit-content;
-            max-width: 100%;
-            min-height: 20px;
-            padding: 3px 7px;
-            border-radius: 999px;
-            background: rgba(156, 174, 166, 0.10);
-            border: 1px solid rgba(156, 174, 166, 0.14);
-            color: rgba(220, 230, 226, 0.70);
-            font-size: 10px;
-            line-height: 1;
-            letter-spacing: 0.03em;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .instance-status-text.connected {
-            background: rgba(101, 197, 164, 0.13);
-            border-color: rgba(101, 197, 164, 0.24);
-            color: var(--primary-glow);
-        }
-
-        .instance-status-text.connecting {
-            background: rgba(199, 170, 112, 0.14);
-            border-color: rgba(199, 170, 112, 0.24);
-            color: #dcc48e;
-        }
-
-        .instance-chevron {
-            color: rgba(238, 244, 241, 0.42) !important;
-            font-size: 16px;
-        }
-
-        .empty-state {
-            margin: 6px 0;
-            padding: 18px 12px;
-            border-radius: 10px;
-            border: 1px dashed rgba(139, 160, 151, 0.22);
-            background: transparent;
-            color: rgba(238, 244, 241, 0.58);
-        }
-
-        .tools-section {
-            flex: 0 1 auto;
-            max-height: min(34dvh, 292px);
-            min-height: 0;
-            padding: 10px 0 0;
-            overflow-y: auto;
-            overflow-x: hidden;
-            border-top: 1px solid rgba(139, 160, 151, 0.14);
-            overscroll-behavior: contain;
-            -webkit-overflow-scrolling: touch;
-            scrollbar-gutter: stable;
-        }
-
-        .tools-list,
-        .reconnect-control {
-            padding-left: 4px;
-            padding-right: 4px;
-        }
-
-        .reconnect-control {
-            display: grid;
-            gap: 7px;
-            padding-bottom: 8px;
-        }
-
-        .tool-link,
-        .global-reconnect-button {
-            min-height: 34px;
-            padding: 8px 9px;
-            border-radius: 9px;
-            background: transparent;
-            border: 1px solid transparent;
-            color: rgba(238, 244, 241, 0.70);
-            box-shadow: none;
-            transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
-        }
-
-        .tool-link:hover,
-        .global-reconnect-button:hover:not(:disabled),
-        .tool-link:focus-visible,
-        .global-reconnect-button:focus-visible {
-            transform: none;
-            background: var(--surface-container-high);
-            border-color: rgba(139, 160, 151, 0.18);
-            color: var(--text-main);
-        }
-
-        .global-reconnect-button {
-            min-height: 40px;
-            align-items: center;
-            justify-content: flex-start;
-            border-color: rgba(101, 197, 164, 0.20);
-            background: rgba(101, 197, 164, 0.08);
-        }
-
-        .global-reconnect-button .tool-name {
-            color: var(--text-main);
-            font-size: 12px;
-            font-weight: 700;
-        }
-
-        .tool-helper {
-            color: rgba(156, 174, 166, 0.78);
-            font-size: 10px;
-        }
-
-        .global-reconnect-status {
-            max-height: 104px;
-            overflow-y: auto;
-            overflow-x: hidden;
-            padding: 8px 9px;
-            border-radius: 9px;
-            background: var(--surface-container-lowest);
-            border-color: rgba(139, 160, 151, 0.16);
-            overscroll-behavior: contain;
-            -webkit-overflow-scrolling: touch;
-        }
-
-        .main-wrapper {
-            margin-left: 288px;
-            width: calc(100% - 288px);
-            max-width: none;
-            height: 100dvh;
-            min-height: 0;
-            padding: 18px clamp(18px, 3vw, 36px) 18px;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            background: var(--surface);
-        }
-
-        .welcome-screen {
-            flex: 1 1 auto;
-            min-height: 0;
-            overflow-y: auto;
-            margin: 0;
-            padding: clamp(28px, 5vw, 64px);
-            border-radius: 16px;
-            background: var(--surface-container-low);
-            border: 1px solid var(--outline-variant-soft);
-            box-shadow: none;
-            backdrop-filter: none;
-            overscroll-behavior: contain;
-            -webkit-overflow-scrolling: touch;
-        }
-
-        .welcome-screen h2 {
-            max-width: 680px;
-            font-size: clamp(30px, 4.5vw, 56px);
-            line-height: 1.02;
-            letter-spacing: -0.055em;
-        }
-
-        .welcome-screen p {
-            max-width: 58ch;
-            font-size: 15px;
-            line-height: 1.6;
-            color: var(--text-muted);
-        }
-
-        .instance-detail.visible {
-            flex: 1 1 auto;
-            min-height: 0;
-            height: auto;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
-        .instance-header {
-            flex: 0 0 auto;
-            margin: 0 0 14px;
-            padding: 14px 16px;
-            border-radius: 14px;
-            background: var(--surface-container-low);
-            border: 1px solid var(--outline-variant-soft);
-            border-left: 2px solid var(--primary-glow);
-            box-shadow: none;
-            backdrop-filter: none;
-        }
-
-        .header-left {
-            min-width: 0;
-        }
-
-        .header-avatar {
-            width: 9px;
-            height: 34px;
-            border-radius: 999px;
-            background: var(--primary-glow);
-            box-shadow: none;
-            animation: none;
-        }
-
-        .header-info {
-            min-width: 0;
-        }
-
-        .header-info h2 {
-            font-size: clamp(20px, 2.2vw, 28px);
-            line-height: 1.06;
-            letter-spacing: -0.045em;
-            color: var(--text-main);
-            overflow-wrap: anywhere;
-        }
-
-        .header-info .instance-id {
-            margin-top: 6px;
-            color: rgba(238, 244, 241, 0.52);
-        }
-
-        .header-actions {
-            flex: 0 0 auto;
-        }
-
-        .main {
-            flex: 1 1 auto;
-            min-height: 0;
-            min-width: 0;
-            padding: 0 4px 18px 0;
-            overflow-y: auto;
-            overflow-x: hidden;
-            overscroll-behavior: contain;
-            -webkit-overflow-scrolling: touch;
-            scrollbar-gutter: stable;
-        }
-
-        .grid-12 {
-            grid-template-columns: repeat(12, minmax(0, 1fr));
-            gap: 14px;
-            align-items: start;
-            min-width: 0;
-        }
-
-        .card {
-            min-width: 0;
-            overflow: visible;
-            padding: clamp(16px, 1.8vw, 22px);
-            border-radius: 14px;
-            background: var(--surface-container-low);
-            border: 1px solid var(--outline-variant-soft);
-            box-shadow: none;
-            animation: none;
-        }
-
-        .card-title {
-            margin-bottom: 14px;
-            color: var(--text-main);
-            font-size: 16px;
-            line-height: 1.2;
-            letter-spacing: -0.025em;
-            text-transform: none;
-            overflow-wrap: anywhere;
-        }
-
-        .qr-area,
-        .usage-list,
-        #handoff-list,
-        .log-container,
-        .info-list,
-        .toggle-row,
-        .behavior-profile-option,
-        .handoff-settings-block {
-            border-radius: 12px;
-            background: var(--surface-container-lowest);
-            border: 1px solid rgba(139, 160, 151, 0.14);
-            box-shadow: none;
-        }
-
-        .qr-area {
-            min-height: 190px;
-            padding: 18px;
-        }
-
-        .qr-code {
-            max-width: 168px;
-            border-radius: 12px;
-            box-shadow: none;
-        }
-
-        .btn,
-        .btn-handoff,
-        .btn-handoff-clear,
-        .btn-clear-auth,
-        .preset-btn {
-            min-height: 38px;
-            border-radius: 10px;
-            box-shadow: none;
-            white-space: normal;
-            transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease, opacity 0.16s ease;
-        }
-
-        .btn:hover,
-        .btn-handoff:hover,
-        .btn-handoff-clear:hover,
-        .btn-clear-auth:hover,
-        .preset-btn:hover {
-            transform: none;
-        }
-
-        .btn:active,
-        .btn-handoff:active,
-        .btn-handoff-clear:active,
-        .btn-clear-auth:active,
-        .preset-btn:active,
-        .global-reconnect-button:active:not(:disabled) {
-            transform: scale(0.98);
-        }
-
-        .btn-primary {
-            border: 1px solid rgba(101, 197, 164, 0.30);
-            background: var(--primary-glow);
-            color: #07120e;
-        }
-
-        .btn-primary:hover {
-            background: #78d0b2;
-            box-shadow: none;
-        }
-
-        .btn-outline,
-        .btn-ghost,
-        .btn-danger-outline,
-        .btn-danger,
-        .btn-clear-auth {
-            background: transparent;
-            border: 1px solid rgba(139, 160, 151, 0.18);
-            color: rgba(238, 244, 241, 0.82);
-        }
-
-        .btn-outline:hover,
-        .btn-ghost:hover,
-        .btn-clear-auth:hover {
-            background: var(--surface-container-high);
-            border-color: rgba(139, 160, 151, 0.28);
-            color: var(--text-main);
-        }
-
-        .btn-danger,
-        .btn-danger-outline {
-            color: #edb7b3;
-            border-color: rgba(237, 183, 179, 0.22);
-        }
-
-        .preset-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 8px;
-            margin-bottom: 16px;
-        }
-
-        .preset-btn {
-            padding: 12px;
-            text-align: left;
-            background: transparent;
-            border: 1px solid rgba(139, 160, 151, 0.16);
-        }
-
-        .preset-btn.active,
-        .preset-btn:hover {
-            background: rgba(101, 197, 164, 0.10);
-            border-color: rgba(101, 197, 164, 0.30);
-        }
-
-        input,
-        textarea,
-        select,
-        #handoff-keywords,
-        #handoff-resume-msg,
-        #handoff-phone,
-        #input-pair-phone {
-            min-height: 40px;
-            border-radius: 10px !important;
-            background: var(--surface-container-lowest) !important;
-            border: 1px solid rgba(139, 160, 151, 0.18) !important;
-            color: var(--text-main) !important;
-            box-shadow: none !important;
-        }
-
-        input:focus,
-        textarea:focus,
-        select:focus,
-        #handoff-keywords:focus,
-        #handoff-resume-msg:focus,
-        #handoff-phone:focus,
-        #input-pair-phone:focus {
-            border-color: rgba(101, 197, 164, 0.52) !important;
-            box-shadow: 0 0 0 3px rgba(101, 197, 164, 0.12) !important;
-        }
-
-        .info-item,
-        .usage-row {
-            grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-            gap: 10px;
-            min-width: 0;
-        }
-
-        .info-value,
-        .usage-value,
-        #info-effective-webhook,
-        #input-webhook {
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .status-badge,
-        .live-badge {
-            min-height: 28px;
-            border-radius: 999px;
-            background: var(--surface-container-lowest);
-            border: 1px solid rgba(139, 160, 151, 0.16);
-            box-shadow: none;
-        }
-
-        .log-container {
-            max-height: 260px;
-            overflow-y: auto;
-            overscroll-behavior: contain;
-            -webkit-overflow-scrolling: touch;
-        }
-
-        .footer {
-            flex: 0 0 auto;
-            margin-top: 12px;
-            padding: 10px 14px;
-            border-radius: 12px;
-            background: var(--surface-container-low);
-            border: 1px solid var(--outline-variant-soft);
-            box-shadow: none;
-            backdrop-filter: none;
-        }
-
-        .modal-overlay {
-            background: rgba(8, 14, 11, 0.74);
-        }
-
-        .modal {
-            border-radius: 16px;
-            background: var(--surface-container);
-            border: 1px solid var(--outline-variant-soft);
-            box-shadow: none;
-        }
-
-        .toast {
-            border-radius: 12px;
-            background: var(--surface-container);
-            border: 1px solid var(--outline-variant-soft);
-            box-shadow: none;
-        }
-
-        .instance-list-shell::-webkit-scrollbar,
-        .tools-section::-webkit-scrollbar,
-        .main::-webkit-scrollbar,
-        .welcome-screen::-webkit-scrollbar,
-        .global-reconnect-status::-webkit-scrollbar,
-        .log-container::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        .instance-list-shell::-webkit-scrollbar-track,
-        .tools-section::-webkit-scrollbar-track,
-        .main::-webkit-scrollbar-track,
-        .welcome-screen::-webkit-scrollbar-track,
-        .global-reconnect-status::-webkit-scrollbar-track,
-        .log-container::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        .instance-list-shell::-webkit-scrollbar-thumb,
-        .tools-section::-webkit-scrollbar-thumb,
-        .main::-webkit-scrollbar-thumb,
-        .welcome-screen::-webkit-scrollbar-thumb,
-        .global-reconnect-status::-webkit-scrollbar-thumb,
-        .log-container::-webkit-scrollbar-thumb {
-            background: rgba(156, 174, 166, 0.28);
-            border-radius: 999px;
-        }
-
-        @media (max-width: 1180px) {
-            .grid-12 {
-                grid-template-columns: 1fr;
-            }
-
-            .col-6,
-            .col-4,
-            .col-12 {
-                grid-column: 1;
-            }
-        }
-
-        @media (max-width: 1100px) {
-            html,
-            body {
-                height: auto;
-                overflow-y: auto;
-                overscroll-behavior-y: auto;
-            }
-
-            .app {
-                height: auto;
-                min-height: 100dvh;
-                overflow: visible;
-                flex-direction: column;
-            }
-
-            .sidebar {
-                position: relative !important;
-                inset: auto;
-                width: 100%;
-                height: auto !important;
-                max-height: none;
-                padding: 10px max(14px, env(safe-area-inset-right)) 12px max(14px, env(safe-area-inset-left));
-                overflow: visible;
-                border-right: 0;
-                border-bottom: 1px solid var(--outline-variant-soft);
-            }
-
-            .instances-section {
-                flex: none;
-                overflow: visible;
-            }
-
-            .instance-list-shell {
-                flex: none;
-                max-height: min(42dvh, 340px);
-                overflow-y: auto;
-            }
-
-            .tools-section {
-                display: grid !important;
-                max-height: none;
-                overflow: visible;
-            }
-
-            .main-wrapper {
-                margin-left: 0;
-                width: 100%;
-                height: auto;
-                min-height: 0;
-                padding: 16px max(16px, env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
-                display: block;
-                overflow: visible;
-            }
-
-            .welcome-screen,
-            .instance-detail.visible {
-                height: auto;
-                min-height: 360px;
-                overflow: visible;
-            }
-
-            .main {
-                max-height: none;
-                overflow-y: auto;
-                padding: 0;
-            }
-
-            .instance-header {
-                flex-direction: column;
-                align-items: stretch;
-                gap: 12px;
-            }
-
-            .header-left,
-            .header-actions {
-                width: 100%;
-            }
-
-            .header-actions {
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-            }
-        }
-
-        @media (max-width: 640px) {
-            .mobile-topbar {
-                padding-left: 4px;
-                padding-right: 4px;
-            }
-
-            .instance-list-shell {
-                max-height: min(46dvh, 360px);
-            }
-
-            .instance-item {
-                min-height: 56px;
-            }
-
-            .card {
-                padding: 16px;
-            }
-
-            .info-item,
-            .usage-row {
-                grid-template-columns: 1fr;
-                gap: 5px;
-                align-items: start;
-            }
-
-            .info-value,
-            .usage-value {
-                white-space: normal;
-                overflow-wrap: anywhere;
-            }
-
-            .header-actions,
-            .qr-buttons,
-            .preset-grid {
-                grid-template-columns: 1fr !important;
-            }
-
-            .footer,
-            .footer-status {
-                flex-direction: column;
-                align-items: stretch;
-                gap: 10px;
-            }
-        }
     </style>
 </head>
 <body>
-    <a class="skip-link" href="#dashboard-main">Skip to dashboard</a>
     <div class="app">
         <!-- Sidebar -->
         <aside class="sidebar">
@@ -4563,8 +2594,8 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12" y2="18"/></svg>
                     </div>
                     <div>
-                        <div style="font-family:'Outfit',sans-serif; font-size:15px; font-weight:800; letter-spacing:-0.03em; color:var(--text-main); line-height:1;">dev.wasup</div>
-                        <div style="font-size:10px; color:rgba(225,226,231,0.35); letter-spacing:0.18em; text-transform:uppercase; margin-top:2px;">Control Plane</div>
+                        <div style="font-family:'Manrope',sans-serif; font-size:15px; font-weight:800; letter-spacing:-0.03em; color:var(--text-main); line-height:1;">Wasup API</div>
+                        <div style="font-size:10px; color:rgba(225,226,231,0.35); letter-spacing:0.18em; text-transform:uppercase; margin-top:2px;">API Management</div>
                     </div>
                 </div>
                 <div class="mobile-topbar-actions">
@@ -4579,7 +2610,7 @@
 
             <!-- Mobile tools dropdown (hidden by default) -->
             <div class="mobile-tools-dropdown" id="mobile-tools-dropdown">
-                <a class="mobile-tools-link" href="/test" id="mobile-playground-link">
+                <a class="mobile-tools-link" href="/test">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3H5a2 2 0 0 0-2 2v4"/><path d="M15 3h4a2 2 0 0 1 2 2v4"/><path d="M21 15v4a2 2 0 0 1-2 2h-4"/><path d="M3 15v4a2 2 0 0 0 2 2h4"/><path d="M9 9h6v6H9z"/></svg>
                     API Tester
                 </a>
@@ -4590,6 +2621,10 @@
                 <a class="mobile-tools-link" href="/api/openapi.yaml" target="_blank" rel="noreferrer">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
                     OpenAPI YAML
+                </a>
+                <a class="mobile-tools-link" href="#" id="mobile-tool-link-api-key">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    API key
                 </a>
             </div>
 
@@ -4605,8 +2640,8 @@
                     <div class="logo-status"></div>
                 </div>
                 <div class="logo-text">
-                    <h1><span class="viper">dev.</span><span class="claw">wasup</span></h1>
-                    <span>Control Plane</span>
+                    <h1><span class="viper">Wasup</span><span class="claw"> API</span></h1>
+                    <span>API Management</span>
                 </div>
             </div>
 
@@ -4642,7 +2677,7 @@
                     <div class="instance-list-shell">
                         <div class="instance-list" id="instance-list">
                             <div class="empty-state" id="empty-instances">
-                                No instances yet.<br>Create the first line to begin routing messages.
+                                No instances yet.<br>Click + to create one.
                             </div>
                         </div>
                     </div>
@@ -4657,22 +2692,12 @@
                     </span>
                     <span id="mobile-tools-chevron" style="font-size:18px; color:rgba(225,226,231,0.7); line-height:1;">⌄</span>
                 </button>
-                <div class="reconnect-control">
-                    <button class="global-reconnect-button" id="btn-global-reconnect" type="button" data-smoke-marker="global-reconnect-disconnected-v1" title="Attempt reconnect for every disconnected instance">
-                        <svg style="color: var(--emerald-400)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 1-15.2 6.5"/><path d="M3 12A9 9 0 0 1 18.2 5.5"/><path d="M21 4v6h-6"/><path d="M3 20v-6h6"/></svg>
-                        <span class="reconnect-copy">
-                            <span class="tool-name">Reconnect disconnected</span>
-                            <span class="tool-helper">Retry offline lines only</span>
-                        </span>
-                    </button>
-                    <div class="global-reconnect-status" id="global-reconnect-status" aria-live="polite"></div>
-                </div>
                 <div class="mobile-section-panel" id="mobile-tools-panel">
                     <div class="tools-header">Tools</div>
                     <div class="tools-list">
-                        <a class="tool-link" href="/test" id="tool-playground-link">
+                        <a class="tool-link" href="/test">
                             <svg style="color: var(--sky-400)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3H5a2 2 0 0 0-2 2v4"/><path d="M15 3h4a2 2 0 0 1 2 2v4"/><path d="M21 15v4a2 2 0 0 1-2 2h-4"/><path d="M3 15v4a2 2 0 0 0 2 2h4"/><path d="M9 9h6v6H9z"/></svg>
-                            <span class="tool-name">Playground</span>
+                            <span class="tool-name">API Tester</span>
                         </a>
                         <a class="tool-link" href="/docs">
                             <svg style="color: var(--amber-400)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
@@ -4682,13 +2707,10 @@
                             <svg style="color: var(--fuchsia-400)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
                             <span class="tool-name">OpenAPI YAML</span>
                         </a>
-                    </div>
-                    <div class="api-key-settings" id="api-key-settings">
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label for="input-api-key">API Key</label>
-                            <input type="password" id="input-api-key" placeholder="Paste API key for protected actions" autocomplete="off">
-                            <div class="form-hint" id="api-key-hint">Stored only in this browser. Required when API auth is enabled.</div>
-                        </div>
+                        <a class="tool-link" href="#" id="tool-link-api-key">
+                            <svg style="color: var(--emerald-400)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                            <span class="tool-name">Set API key</span>
+                        </a>
                     </div>
                 </div>
             </div>
@@ -4698,8 +2720,9 @@
         <div class="main-wrapper">
             <!-- Welcome Screen -->
             <div class="welcome-screen" id="welcome-screen">
-                            <h2>Run every WhatsApp line from one calm command room.</h2>
-                <p>Manage numbers, pairing codes, profile controls, handoff rules, anti-ban limits, and webhook routing without leaving the dev.wasup dashboard.</p>
+                <h2>Welcome to Wasup</h2>
+                <p>Thank you for trusting this dashboard with your customer conversations. From here you can manage numbers, pairing, webhooks, handoff, anti-ban, and the small behaviours that make WhatsApp feel human — or keep your own phone in the loop when a real person needs to step in.</p>
+                <p style="font-size:12px;color:rgba(188,202,194,0.65);max-width:38rem;margin-top:12px;line-height:1.55;">If you use a hosted region with an API key, save it once under <strong>Tools → Set API key</strong> (stored only in this browser). We are grateful for your patience whenever a deploy or reconnect means scanning QR again — your team’s time matters.</p>
                 </div>
 
             <!-- Instance Detail -->
@@ -4724,15 +2747,15 @@
                     </div>
                 </header>
 
-                <main class="main" id="dashboard-main">
+                <main class="main">
                     <div class="grid-12">
                         <!-- Connection -->
                         <div class="card col-6">
                             <div class="card-title">Connection</div>
                             <div class="qr-area" id="qr-area">
                                 <div class="qr-placeholder" id="qr-placeholder">
-                                    <svg class="device-placeholder" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="14" y="5" width="20" height="38" rx="5"/><path d="M21 11h6"/><path d="M22 37h4"/></svg>
-                                    <p style="font-size: 12px;">Choose QR code or pair code to connect</p>
+                                    <div style="font-size: 32px; margin-bottom: 8px; opacity: 0.5;">📱</div>
+                                    <p style="font-size: 12px;">Click Connect (QR) or Pair with Code</p>
                                 </div>
                                 <img id="qr-code" class="qr-code" style="display: none;" alt="QR Code" />
                                 <div id="pairing-code-display" style="display: none; text-align: center; padding: 16px 0;">
@@ -4800,30 +2823,6 @@
                             <button class="btn btn-primary" style="width: 100%;" id="btn-save-webhook">Save Webhook</button>
             </div>
 
-                        <!-- Proxy -->
-                        <div class="card col-6">
-                            <div class="card-title">Egress Proxy</div>
-                            <div class="form-group">
-                                <label>Status</label>
-                                <input type="text" id="info-proxy-status" readonly placeholder="Direct connection">
-                            </div>
-                            <div class="form-group">
-                                <label>Active / Effective</label>
-                                <input type="text" id="info-proxy-effective" readonly placeholder="—">
-                            </div>
-                            <div class="form-group">
-                                <label>Webshare / Proxy Link</label>
-                                <input type="text" id="input-proxy-shorthand" placeholder="host:port:user:pass or http://user:pass@host:port">
-                                <div class="form-hint">Paste a Webshare line or full proxy URL to attach to this instance.</div>
-                            </div>
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
-                                <button class="btn btn-primary" id="btn-attach-proxy">Attach</button>
-                                <button class="btn btn-secondary" id="btn-detach-proxy">Detach</button>
-                            </div>
-                            <button class="btn btn-secondary" style="width: 100%;" id="btn-verify-proxy">Verify egress IP</button>
-                            <div class="form-hint" id="proxy-verify-result" style="margin-top: 8px;"></div>
-                        </div>
-
                         <!-- Profile -->
                         <div class="card col-6">
                             <div class="card-title">WhatsApp Profile</div>
@@ -4834,7 +2833,7 @@
                             <button class="btn btn-primary" style="width: 100%; margin-bottom: 12px;" id="btn-save-profile-name">Update Name</button>
                             <div class="form-group">
                                 <label>About / Status Text</label>
-                                <input type="text" id="input-profile-status" placeholder="We reply within minutes">
+                                <input type="text" id="input-profile-status" placeholder="We reply within minutes!">
                             </div>
                             <button class="btn btn-primary" style="width: 100%; margin-bottom: 12px;" id="btn-save-profile-status">Update About</button>
                             <div class="form-group">
@@ -4861,7 +2860,7 @@
                                         </div>
                                         <div class="handoff-field">
                                             <label>Auto-reply on resume</label>
-                                            <input type="text" id="handoff-resume-msg" placeholder="e.g. AI assistant is back online">
+                                            <input type="text" id="handoff-resume-msg" placeholder="e.g. AI assistant is back online!">
                                         </div>
                                         <button class="btn btn-primary btn-sm" onclick="saveHandoffSettings()">Save Settings</button>
                                     </div>
@@ -4878,89 +2877,183 @@
                             </div>
                         </div>
 
-                        <!-- Anti-Ban -->
-                        <div class="card col-6">
-                            <div class="card-title">Wasup Anti-Ban</div>
-                            <div class="preset-grid">
-                                <button class="preset-btn" data-preset="conservative">
-                                    <div class="preset-name">Conservative</div>
-                                    <div class="preset-value">100/hr</div>
-                </button>
-                <button class="preset-btn active" data-preset="balanced">
-                                    <div class="preset-name">Balanced</div>
-                                    <div class="preset-value">200/hr</div>
-                </button>
-                                <button class="preset-btn" data-preset="aggressive">
-                                    <div class="preset-name">Aggressive</div>
-                                    <div class="preset-value">400/hr</div>
-                </button>
-                <button class="preset-btn" data-preset="custom">
-                                    <div class="preset-name">Custom</div>
-                                    <div class="preset-value">Configure</div>
-                </button>
-            </div>
-                            <div class="usage-list">
-                                <div class="usage-row">
-                                    <span class="usage-label">Messages/Hour</span>
-                                    <span class="usage-value" id="usage-msgs-hour">0/200</span>
-                </div>
-                                <div class="usage-row">
-                                    <span class="usage-label">Messages/Day</span>
-                                    <span class="usage-value" id="usage-msgs-day">0/5000</span>
-                </div>
-                </div>
-            </div>
-
                         <!-- Behavior -->
-                        <div class="card col-6">
-                            <div class="card-title">Behavior Settings</div>
-                            <div class="behavior-profile-list">
-                                <label class="behavior-profile-option">
-                                    <input type="radio" name="behavior-profile" value="bot-native">
-                                    <span>
-                                        <strong>Bot-native</strong>
-                                        <span>Full anti-ban behaviour with typing, read timing, and natural delays.</span>
-                                    </span>
-                                </label>
-                                <label class="behavior-profile-option">
-                                    <input type="radio" name="behavior-profile" value="notification-balanced">
-                                    <span>
-                                        <strong>Notification-first</strong>
-                                        <span>Gives phone push notifications a short head start, then allows typing.</span>
-                                    </span>
-                                </label>
-                                <label class="behavior-profile-option">
-                                    <input type="radio" name="behavior-profile" value="notification-max">
-                                    <span>
-                                        <strong>Notification-max</strong>
-                                        <span>Prioritises phone notifications and disables typing simulation.</span>
-                                    </span>
-                                </label>
+                        <div class="card col-12 behavior-card">
+                            <div>
+                                <div class="card-title">Behaviour Profile</div>
+                                <p class="behavior-copy">Choose how the linked device behaves around notifications, typing, and reply timing. Notification modes improve alert delivery but cannot guarantee it.</p>
                             </div>
-                            <div class="toggle-list">
-                                <div class="toggle-row">
-                                    <div class="toggle-info">
-                                        <h4>Typing Simulation</h4>
-                                        <p>Show "typing..." indicator before sending</p>
-                </div>
-                                    <label class="toggle-switch">
-                                        <input type="checkbox" id="toggle-typing">
-                                        <span class="toggle-slider"></span>
-                                    </label>
-                        </div>
-                                <div class="toggle-row">
-                                    <div class="toggle-info">
-                                        <h4>Response Delays</h4>
-                                        <p>Human-like delay before responding</p>
-                        </div>
-                                    <label class="toggle-switch">
-                                        <input type="checkbox" id="toggle-delay">
-                                        <span class="toggle-slider"></span>
-                                    </label>
+                            <div class="behavior-profile-grid">
+                                <button type="button" class="behavior-profile-card" data-behavior-profile="bot-native">
+                                    <strong>Bot-native / Anti-Ban</strong>
+                                    <span>Active-device behaviour with typing, reads, delays, and presence cycling.</span>
+                                </button>
+                                <button type="button" class="behavior-profile-card" data-behavior-profile="notification-balanced">
+                                    <strong>Notification-first</strong>
+                                    <span>Webhook immediately, then wait before read, typing, and reply. Best balance.</span>
+                                </button>
+                                <button type="button" class="behavior-profile-card" data-behavior-profile="notification-max">
+                                    <strong>Notification-max</strong>
+                                    <span>Typing off, no automated read receipt, silent grace before reply.</span>
+                                </button>
+                            </div>
+                            <details class="behavior-advanced">
+                                <summary>Advanced controls</summary>
+                                <div class="behavior-grace-row">
+                                    <div>
+                                        <label for="input-notification-grace">Notification grace window</label>
+                                        <p>Seconds to wait after an inbound message before any read, typing, or reply in notification profiles.</p>
+                                    </div>
+                                    <input type="number" id="input-notification-grace" min="0" max="120" step="1" value="12">
+                                </div>
+                                <div class="toggle-list">
+                                    <div class="toggle-row">
+                                        <div class="toggle-info">
+                                            <h4>Typing simulation</h4>
+                                            <p>Allowed in bot-native and notification-first after the grace window.</p>
+                                        </div>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" id="toggle-typing">
+                                            <span class="toggle-slider"></span>
+                                        </label>
+                                    </div>
+                                    <div class="toggle-row">
+                                        <div class="toggle-info">
+                                            <h4>Response delays</h4>
+                                            <p>Short human-like pause before replies.</p>
+                                        </div>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" id="toggle-delay">
+                                            <span class="toggle-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </details>
+                            <button class="btn btn-primary" style="width: 100%;" id="btn-save-behavior">Save settings</button>
                     </div>
+
+                        <!-- Wasup Anti-Ban (dashboard + /api/instances/:id/antiban-v2) -->
+                        <div class="card col-12 antiban-v2-card" id="antiban-v2-card">
+                            <div class="v2-card-head">
+                                <div>
+                                    <div class="card-title" style="margin-bottom: 4px;">Wasup Anti-Ban</div>
+                                    <div class="v2-subtitle">Transport-level protection: rate limiting, warmup, health monitoring, LID resolver, retry tracker, presence choreographer, stealth connect.</div>
+                                </div>
+                                <div class="v2-status-block">
+                                    <span class="v2-risk-badge" id="v2-risk-badge">RISK —</span>
+                                    <span class="v2-running-pill" id="v2-running-pill">—</span>
+                                </div>
+                            </div>
+
+                            <!-- Top metrics -->
+                            <div class="v2-metrics">
+                                <div class="v2-metric-cell">
+                                    <div class="v2-metric-label">PRESET</div>
+                                    <div class="v2-metric-value" id="v2-preset">—</div>
+                                </div>
+                                <div class="v2-metric-cell">
+                                    <div class="v2-metric-label">SCORE</div>
+                                    <div class="v2-metric-value" id="v2-score">—</div>
+                                </div>
+                                <div class="v2-metric-cell">
+                                    <div class="v2-metric-label">SENT / BLOCKED</div>
+                                    <div class="v2-metric-value" id="v2-counts">—</div>
+                                </div>
+                                <div class="v2-metric-cell">
+                                    <div class="v2-metric-label">RETRIES</div>
+                                    <div class="v2-metric-value" id="v2-retries">—</div>
+                                </div>
+                                <div class="v2-metric-cell">
+                                    <div class="v2-metric-label">BAD MAC</div>
+                                    <div class="v2-metric-value" id="v2-badmac">—</div>
+                                </div>
+                                <div class="v2-metric-cell">
+                                    <div class="v2-metric-label">DELAY ACCRUED</div>
+                                    <div class="v2-metric-value" id="v2-delay">—</div>
+                                </div>
+                            </div>
+
+                            <!-- Recommendation row -->
+                            <div class="v2-reco" id="v2-reco">No recommendation yet</div>
+
+                            <!-- Warmup progress -->
+                            <div class="v2-section-head">Warmup</div>
+                            <div class="v2-warmup-row">
+                                <div class="v2-warmup-text">
+                                    <span id="v2-warmup-day">DAY —/—</span>
+                                    <span id="v2-warmup-quota">— / — today</span>
+                                </div>
+                                <div class="v2-warmup-bar">
+                                    <div class="v2-warmup-fill" id="v2-warmup-fill" style="width: 0%"></div>
+                                </div>
+                            </div>
+
+                            <!-- Module toggles -->
+                            <div class="v2-section-head">Modules</div>
+                            <div class="v2-modules-grid" id="v2-modules-grid">
+                                <!-- Populated dynamically -->
+                            </div>
+
+                            <!-- Preset switcher -->
+                            <div class="v2-section-head">Preset</div>
+                            <div class="v2-preset-grid">
+                                <button class="v2-preset-btn" data-v2preset="conservative">
+                                    <div class="preset-name">Conservative</div>
+                                    <div class="preset-value">5/min · 100/hr · 800/day</div>
+                                </button>
+                                <button class="v2-preset-btn" data-v2preset="moderate">
+                                    <div class="preset-name">Moderate</div>
+                                    <div class="preset-value">10/min · 300/hr · 1500/day</div>
+                                </button>
+                                <button class="v2-preset-btn" data-v2preset="aggressive">
+                                    <div class="preset-name">Aggressive</div>
+                                    <div class="preset-value">20/min · 800/hr · 4000/day</div>
+                                </button>
+                            </div>
+
+                            <!-- Custom rate-limit overrides -->
+                            <div class="v2-section-head">Rate-limit Overrides <span class="v2-section-hint">(blank = preset default; takes effect on next reconnect)</span></div>
+                            <div class="v2-overrides-grid">
+                                <div>
+                                    <label class="v2-input-label">Max / minute</label>
+                                    <input type="number" class="v2-input" id="v2-override-perminute" placeholder="—" min="1">
+                                </div>
+                                <div>
+                                    <label class="v2-input-label">Max / hour</label>
+                                    <input type="number" class="v2-input" id="v2-override-perhour" placeholder="—" min="1">
+                                </div>
+                                <div>
+                                    <label class="v2-input-label">Max / day</label>
+                                    <input type="number" class="v2-input" id="v2-override-perday" placeholder="—" min="1">
+                                </div>
+                                <div>
+                                    <label class="v2-input-label">Min delay (ms)</label>
+                                    <input type="number" class="v2-input" id="v2-override-mindelay" placeholder="—" min="0">
+                                </div>
+                                <div>
+                                    <label class="v2-input-label">Max delay (ms)</label>
+                                    <input type="number" class="v2-input" id="v2-override-maxdelay" placeholder="—" min="0">
+                                </div>
+                                <div>
+                                    <label class="v2-input-label">Alerts webhook (URL)</label>
+                                    <input type="text" class="v2-input" id="v2-alerts-webhook" placeholder="https://hooks.slack.com/...">
+                                </div>
+                            </div>
+
+                            <!-- Disconnect history -->
+                            <div class="v2-section-head">Recent disconnect classifications <span class="v2-section-hint">(latest 10, from activity log)</span></div>
+                            <div class="v2-disco-list" id="v2-disco-list">
+                                <div class="v2-disco-empty">No recent disconnects.</div>
+                            </div>
+
+                            <!-- Action buttons -->
+                            <div class="v2-actions">
+                                <button class="btn btn-primary" id="v2-save-config">Save config</button>
+                                <button class="btn v2-btn-pause" id="v2-pause">Pause</button>
+                                <button class="btn v2-btn-resume" id="v2-resume" disabled>Resume</button>
+                                <button class="btn v2-btn-reset" id="v2-reset">Nuclear reset</button>
+                            </div>
                         </div>
-                            <button class="btn btn-primary" style="width: 100%;" id="btn-save-behavior">Save Behavior</button>
-                    </div>
 
                         <!-- Activity Log -->
                         <div class="card col-12">
@@ -5013,10 +3106,9 @@
                 <label>Instance Name</label>
                 <input type="text" id="input-instance-name" placeholder="My WhatsApp">
                 </div>
-            <div class="form-group" id="create-api-key-group">
-                <label>API Key</label>
-                <input type="password" id="input-create-api-key" placeholder="Paste API key for protected actions" autocomplete="off">
-                <div class="form-hint">Stored only in this browser and sent as X-API-Key.</div>
+            <div class="form-group">
+                <label>Webhook URL (Optional)</label>
+                <input type="url" id="input-instance-webhook" placeholder="https://your-api.com/webhook">
             </div>
             <div class="modal-footer">
                 <button class="btn btn-ghost" id="btn-cancel-create">Cancel</button>
@@ -5043,7 +3135,26 @@
         </div>
     </div>
 
-    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <!-- API key (required when server has API_KEY set) -->
+    <div class="modal-overlay" id="modal-api-key">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Org API key</h3>
+                <button class="modal-close" type="button" id="modal-api-key-close">&times;</button>
+            </div>
+            <p id="modal-api-key-hint" style="font-size:12px;color:var(--zinc-500);margin:0 0 10px;line-height:1.45;">
+                Paste your full Wasup production/development API key from the Connection page. Existing keys may show only a public ID; rotate the key there and copy the new full key once. Stored only in this browser for this origin.
+            </p>
+            <div class="form-group">
+                <label>API key</label>
+                <input type="password" id="input-api-key" placeholder="Required for create, delete, connect…" autocomplete="off">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" type="button" id="btn-cancel-api-key">Cancel</button>
+                <button class="btn btn-primary" type="button" id="btn-save-api-key">Save</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         (function() {
@@ -5086,9 +3197,6 @@
             mobileInstancesChevron: document.getElementById('mobile-instances-chevron'),
             mobileToolsChevron: document.getElementById('mobile-tools-chevron'),
             btnNewInstance: document.getElementById('btn-new-instance'),
-            btnGlobalReconnect: document.getElementById('btn-global-reconnect'),
-            toolPlaygroundLink: document.getElementById('tool-playground-link'),
-            globalReconnectStatus: document.getElementById('global-reconnect-status'),
             btnConnect: document.getElementById('btn-connect'),
             btnDisconnect: document.getElementById('btn-disconnect'),
             btnClearAuth: document.getElementById('btn-clear-auth'),
@@ -5107,29 +3215,25 @@
             btnRemoveProfilePicture: document.getElementById('btn-remove-profile-picture'),
             btnSaveWebhook: document.getElementById('btn-save-webhook'),
             btnCopyWebhook: document.getElementById('btn-copy-webhook'),
-            infoProxyStatus: document.getElementById('info-proxy-status'),
-            infoProxyEffective: document.getElementById('info-proxy-effective'),
-            inputProxyShorthand: document.getElementById('input-proxy-shorthand'),
-            btnAttachProxy: document.getElementById('btn-attach-proxy'),
-            btnDetachProxy: document.getElementById('btn-detach-proxy'),
-            btnVerifyProxy: document.getElementById('btn-verify-proxy'),
-            proxyVerifyResult: document.getElementById('proxy-verify-result'),
             btnEditInstance: document.getElementById('btn-edit-instance'),
             btnDeleteInstance: document.getElementById('btn-delete-instance'),
             btnSaveBehavior: document.getElementById('btn-save-behavior'),
+            behaviorProfileButtons: document.querySelectorAll('[data-behavior-profile]'),
+            inputNotificationGrace: document.getElementById('input-notification-grace'),
             toggleTyping: document.getElementById('toggle-typing'),
             toggleDelay: document.getElementById('toggle-delay'),
-            behaviorProfileInputs: document.querySelectorAll('input[name="behavior-profile"]'),
             modalCreate: document.getElementById('modal-create'),
             modalClose: document.getElementById('modal-close'),
             inputInstanceName: document.getElementById('input-instance-name'),
-            apiKeySettings: document.getElementById('api-key-settings'),
-            createApiKeyGroup: document.getElementById('create-api-key-group'),
-            apiKeyInput: document.getElementById('input-api-key'),
-            createApiKeyInput: document.getElementById('input-create-api-key'),
-            apiKeyHint: document.getElementById('api-key-hint'),
+            inputInstanceWebhook: document.getElementById('input-instance-webhook'),
             btnCancelCreate: document.getElementById('btn-cancel-create'),
             btnConfirmCreate: document.getElementById('btn-confirm-create'),
+            modalApiKey: document.getElementById('modal-api-key'),
+            modalApiKeyClose: document.getElementById('modal-api-key-close'),
+            modalApiKeyHint: document.getElementById('modal-api-key-hint'),
+            inputApiKey: document.getElementById('input-api-key'),
+            btnCancelApiKey: document.getElementById('btn-cancel-api-key'),
+            btnSaveApiKey: document.getElementById('btn-save-api-key'),
             modalEdit: document.getElementById('modal-edit'),
             modalEditClose: document.getElementById('modal-edit-close'),
             inputEditName: document.getElementById('input-edit-name'),
@@ -5139,102 +3243,78 @@
                 usageMsgsDay: document.getElementById('usage-msgs-day'),
         };
 
-        const mobileSidebarState = {
-            instancesOpen: true,
-            toolsOpen: false
-        };
+        const WASUP_API_KEY_LS = 'wasup_api_key';
 
-        const API_KEY_STORAGE_KEY = 'wasup_api_key';
-        let dashboardConfig = {
-            allowPublicDashboard: false,
-            dashboardRequiresApiKey: true
-        };
-
-        function getStoredApiKey() {
+        function getWasupApiKey() {
             try {
-                return localStorage.getItem(API_KEY_STORAGE_KEY) || '';
+                return (localStorage.getItem(WASUP_API_KEY_LS) || '').trim();
             } catch (e) {
                 return '';
             }
         }
 
-        function setStoredApiKey(apiKey) {
+        function setWasupApiKey(value) {
+            const v = (value || '').trim();
             try {
-                if (apiKey) {
-                    localStorage.setItem(API_KEY_STORAGE_KEY, apiKey);
-                } else {
-                    localStorage.removeItem(API_KEY_STORAGE_KEY);
-                }
-            } catch (e) {}
-            syncApiKeyInputs(apiKey);
+                if (v) localStorage.setItem(WASUP_API_KEY_LS, v);
+                else localStorage.removeItem(WASUP_API_KEY_LS);
+            } catch (e) { /* ignore */ }
         }
 
-        function syncApiKeyInputs(apiKey = getStoredApiKey()) {
-            if (el.apiKeyInput && el.apiKeyInput.value !== apiKey) {
-                el.apiKeyInput.value = apiKey;
-            }
-            if (el.createApiKeyInput && el.createApiKeyInput.value !== apiKey) {
-                el.createApiKeyInput.value = apiKey;
-            }
-            if (el.apiKeyHint) {
-                el.apiKeyHint.textContent = apiKey
-                    ? 'API key saved in this browser for protected actions.'
-                    : 'Stored only in this browser. Required when API auth is enabled.';
-            }
+        function apiKeyHeaders() {
+            const k = getWasupApiKey();
+            const h = {};
+            if (k) h['X-API-Key'] = k;
+            return h;
         }
 
-        function getApiKey() {
-            if (dashboardConfig.allowPublicDashboard) {
-                return '';
+        function inferBehaviorProfile(settings) {
+            if (!settings) return 'bot-native';
+            if (settings.behaviorProfile) return settings.behaviorProfile;
+            if (settings.phoneNotificationsEnabled) {
+                return settings.typingSimulation === false ? 'notification-max' : 'notification-balanced';
             }
-            const apiKey = (el.createApiKeyInput?.value || el.apiKeyInput?.value || '').trim();
-            if (apiKey !== getStoredApiKey()) {
-                setStoredApiKey(apiKey);
-            }
-            return apiKey;
+            return 'bot-native';
         }
 
-        function applyAuthHeaders(headers = {}) {
-            const apiKey = getApiKey();
-            if (apiKey) {
-                headers['X-API-Key'] = apiKey;
+        function setBehaviorProfile(profile) {
+            el.behaviorProfileButtons?.forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.behaviorProfile === profile);
+            });
+            if (el.toggleTyping) {
+                el.toggleTyping.disabled = profile === 'notification-max';
+                if (profile === 'notification-max') el.toggleTyping.checked = false;
+                if (profile === 'bot-native' && !el.toggleTyping.checked) el.toggleTyping.checked = true;
             }
-            return headers;
-        }
-
-        function applyDashboardConfig(config = {}) {
-            dashboardConfig = {
-                ...dashboardConfig,
-                ...config
-            };
-
-            const hideApiKey = dashboardConfig.allowPublicDashboard || !dashboardConfig.dashboardRequiresApiKey;
-            if (hideApiKey) {
-                setStoredApiKey('');
-            }
-            if (el.apiKeySettings) {
-                el.apiKeySettings.style.display = hideApiKey ? 'none' : '';
-            }
-            if (el.createApiKeyGroup) {
-                el.createApiKeyGroup.style.display = hideApiKey ? 'none' : '';
-            }
-            if (el.apiKeyHint && !hideApiKey) {
-                syncApiKeyInputs();
+            if (el.inputNotificationGrace) {
+                el.inputNotificationGrace.disabled = profile === 'bot-native';
             }
         }
 
-        async function loadDashboardConfig() {
-            try {
-                const response = await fetch('/api/dashboard-config');
-                if (!response.ok) {
-                    return;
-                }
-                const config = await response.json();
-                applyDashboardConfig(config);
-            } catch (error) {
-                console.warn('Dashboard config unavailable:', error);
-            }
+        function selectedBehaviorProfile() {
+            const active = document.querySelector('[data-behavior-profile].active');
+            return active?.dataset.behaviorProfile || 'bot-native';
         }
+
+        function showApiKeyModal(opts) {
+            if (!el.modalApiKey) return;
+            if (el.modalApiKeyHint) {
+                el.modalApiKeyHint.textContent = (opts && opts.invalid)
+                    ? 'That key was rejected. Paste the full Wasup API key for this workspace URL. If you only have a sk-prod/sk-dev public ID, rotate the key in the Connection page and copy the new full key once.'
+                    : 'Paste your full Wasup production/development API key from the Connection page. Existing keys may show only a public ID; rotate the key there and copy the new full key once. Stored only in this browser for this origin.';
+            }
+            if (el.inputApiKey) el.inputApiKey.value = getWasupApiKey();
+            el.modalApiKey.classList.add('visible');
+        }
+
+        function hideApiKeyModal() {
+            el.modalApiKey?.classList.remove('visible');
+        }
+
+        const mobileSidebarState = {
+            instancesOpen: true,
+            toolsOpen: false
+        };
 
         function isMobileViewport() {
             return window.innerWidth <= 768;
@@ -5292,7 +3372,7 @@
 
             ws.onopen = () => {
                 el.connectionStatus.textContent = 'Live';
-                ws.send(JSON.stringify({ type: 'subscribe_all' }));
+                // subscribe_all is sent after init + optional WS auth (see handleMessage)
             };
 
             ws.onclose = () => {
@@ -5317,12 +3397,34 @@
                     instances = data.data.instances || [];
                     applyInstanceOrder();
                     renderInstanceList();
+                    if (data.data && data.data.requiresAuth) {
+                        const k = getWasupApiKey();
+                        if (k && ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: 'auth', apiKey: k }));
+                        } else {
+                            showApiKeyModal();
+                        }
+                    } else if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'subscribe_all' }));
+                    }
                         break;
+                case 'auth_success':
+                    hideApiKeyModal();
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'subscribe_all' }));
+                    }
+                    break;
+                case 'auth_failed':
+                    setWasupApiKey('');
+                    showApiKeyModal({ invalid: true });
+                    break;
                 case 'instance_created':
-                    instances.push(data.data);
+                    if (!instances.some(i => i.id === data.data.id)) {
+                        instances.push(data.data);
+                    }
                     renderInstanceList();
                     selectInstance(data.data.id);
-                        break;
+                    break;
                 case 'instance_status':
                     updateInstance(data.data);
                         break;
@@ -5382,18 +3484,13 @@
                 el.emptyInstances.innerHTML = `No instances matching "<b>${escapeHtml(query)}</b>"`;
             } else {
                 el.emptyInstances.style.display = filtered.length === 0 ? 'block' : 'none';
-                el.emptyInstances.innerHTML = 'No instances yet.<br>Create the first line to begin routing messages.';
+                el.emptyInstances.innerHTML = 'No instances yet.<br>Click + to create one.';
             }
 
             filtered.forEach(instance => {
                 const item = document.createElement('div');
                 item.className = `instance-item ${instance.id === selectedInstanceId ? 'active' : ''}`;
                 item.dataset.id = instance.id;
-                item.tabIndex = 0;
-                item.setAttribute('role', 'button');
-                if (instance.id === selectedInstanceId) {
-                    item.setAttribute('aria-current', 'true');
-                }
                 
                 const firstLetter = (instance.name || 'I').charAt(0).toUpperCase();
                 const isConnected = instance.status === 'connected';
@@ -5405,27 +3502,16 @@
                     : instance.status === 'connecting' 
                         ? 'Connecting...' 
                         : 'Not connected';
-                const statusClass = isConnected
-                    ? 'connected'
-                    : instance.status === 'connecting'
-                        ? 'connecting'
-                        : 'disconnected';
                 
                 item.innerHTML = `
                     <div class="instance-avatar ${isConnected ? 'connected' : 'disconnected'}">${firstLetter}</div>
                     <div class="instance-info">
                         <div class="instance-name">${escapeHtml(instance.name)}</div>
-                        <div class="instance-status-text ${statusClass}">${statusText}</div>
+                        <div class="instance-status-text ${isConnected ? 'connected' : ''}">${statusText}</div>
                     </div>
-                    <div class="instance-chevron" style="color:${isConnected ? 'rgba(89,220,181,0.58)' : 'rgba(188,202,194,0.28)'};">›</div>
+                    <div style="color:${isConnected ? 'rgba(89,220,181,0.5)' : 'rgba(188,202,194,0.24)'}; font-size:16px; line-height:1;">›</div>
                 `;
                 item.addEventListener('click', () => selectInstance(instance.id));
-                item.addEventListener('keydown', (event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        selectInstance(instance.id);
-                    }
-                });
 
                 if (!isMobileViewport() && !query) {
                     item.draggable = true;
@@ -5514,19 +3600,10 @@
             } catch(e) {}
         }
 
-        function updatePlaygroundLink(instanceId = selectedInstanceId) {
-            const href = instanceId ? `/test?instance=${encodeURIComponent(instanceId)}` : '/test';
-            if (el.toolPlaygroundLink) el.toolPlaygroundLink.href = href;
-            const mobilePlayground = document.querySelector('.mobile-tools-link[href="/test"], .mobile-tools-link[href^="/test?"]');
-            if (mobilePlayground) mobilePlayground.href = href;
-        }
-
         function selectInstance(id) {
             selectedInstanceId = id;
             const instance = instances.find(i => i.id === id);
             if (!instance) return;
-
-            updatePlaygroundLink(id);
 
             document.querySelectorAll('.instance-item').forEach(item => {
                 item.classList.toggle('active', item.dataset.id === id);
@@ -5614,14 +3691,14 @@
                 el.qrCode.style.display = 'none';
                 el.qrPlaceholder.style.display = 'flex';
                 el.qrPlaceholder.innerHTML = `
-                    <svg class="device-placeholder" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M24 8v8"/><path d="M24 32v8"/><path d="M8 24h8"/><path d="M32 24h8"/><path d="m12.7 12.7 5.6 5.6"/><path d="m29.7 29.7 5.6 5.6"/><path d="m35.3 12.7-5.6 5.6"/><path d="m18.3 29.7-5.6 5.6"/></svg>
+                    <div style="font-size: 32px; margin-bottom: 8px;">⏳</div>
                     <p style="font-size: 12px; color: var(--zinc-500);">Connecting...</p>
                 `;
             } else {
                 el.qrCode.style.display = 'none';
                 el.qrPlaceholder.style.display = 'flex';
                 el.qrPlaceholder.innerHTML = `
-                    <svg class="device-placeholder" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="14" y="5" width="20" height="38" rx="5"/><path d="M21 11h6"/><path d="M22 37h4"/></svg>
+                    <div style="font-size: 32px; margin-bottom: 8px; opacity: 0.5;">📱</div>
                     <p style="font-size: 12px; color: var(--zinc-500);">Click QR Code or Pair Code to connect</p>
                 `;
             }
@@ -5630,8 +3707,8 @@
             if (instance.antiBanHealth) {
                 const stats = instance.antiBanHealth.stats || {};
                 const limits = stats.limits || {};
-                el.usageMsgsHour.textContent = `${stats.messagesThisHour || 0}/${limits.messagesPerHour || 200}`;
-                el.usageMsgsDay.textContent = `${stats.messagesThisDay || 0}/${limits.messagesPerDay || 5000}`;
+                if (el.usageMsgsHour) el.usageMsgsHour.textContent = `${stats.messagesThisHour || 0}/${limits.messagesPerHour || 200}`;
+                if (el.usageMsgsDay) el.usageMsgsDay.textContent = `${stats.messagesThisDay || 0}/${limits.messagesPerDay || 5000}`;
                 el.infoMessages.textContent = stats.messagesThisDay || 0;
             }
 
@@ -5641,125 +3718,17 @@
             });
 
             if (instance.behaviorSettings) {
-                const profile = instance.behaviorSettings.behaviorProfile || 'bot-native';
-                el.behaviorProfileInputs.forEach(input => {
-                    input.checked = input.value === profile;
-                });
+                const profile = inferBehaviorProfile(instance.behaviorSettings);
+                setBehaviorProfile(profile);
+                if (el.inputNotificationGrace) {
+                    el.inputNotificationGrace.value = Math.round((instance.behaviorSettings.notificationGraceMs ?? 12000) / 1000);
+                }
                 el.toggleTyping.checked = instance.behaviorSettings.typingSimulation !== false;
+                if (profile === 'notification-max') {
+                    el.toggleTyping.checked = false;
+                    el.toggleTyping.disabled = true;
+                }
                 el.toggleDelay.checked = instance.behaviorSettings.delayEnabled !== false;
-            }
-
-            renderProxyPanel(instance);
-        }
-
-        function formatProxyEndpoint(proxy) {
-            if (!proxy?.host) return 'Direct connection';
-            const auth = proxy.username ? `${proxy.username}@` : '';
-            return `${proxy.type || 'http'}://${auth}${proxy.host}:${proxy.port}`;
-        }
-
-        function renderProxyPanel(instance) {
-            if (!el.infoProxyStatus) return;
-            const proxy = instance?.proxy;
-            if (!proxy) {
-                el.infoProxyStatus.value = 'Unknown';
-                el.infoProxyEffective.value = '—';
-                return;
-            }
-
-            const source = proxy.source || 'none';
-            const effective = proxy.effective;
-            const active = proxy.active;
-
-            if (source === 'disabled') {
-                el.infoProxyStatus.value = 'Disabled (direct)';
-            } else if (source === 'none') {
-                el.infoProxyStatus.value = 'Direct connection';
-            } else {
-                el.infoProxyStatus.value = `${source} — ${formatProxyEndpoint(effective)}`;
-            }
-
-            if (active?.proxy) {
-                el.infoProxyEffective.value = `Live: ${formatProxyEndpoint(active.proxy)} (${active.source})`;
-            } else if (effective) {
-                el.infoProxyEffective.value = `Configured: ${formatProxyEndpoint(effective)}`;
-            } else {
-                el.infoProxyEffective.value = 'No proxy configured';
-            }
-        }
-
-        async function refreshProxyStatus(instanceId = selectedInstanceId) {
-            if (!instanceId || !el.infoProxyStatus) return;
-            try {
-                const data = await apiCall(`/instances/${instanceId}/proxy`);
-                const idx = instances.findIndex(i => i.id === instanceId);
-                if (idx !== -1 && data.proxy) {
-                    instances[idx] = { ...instances[idx], proxy: data.proxy };
-                    if (selectedInstanceId === instanceId) {
-                        renderProxyPanel(instances[idx]);
-                    }
-                }
-            } catch (e) {
-                console.warn('Proxy status refresh failed:', e.message);
-            }
-        }
-
-        async function attachInstanceProxy() {
-            if (!selectedInstanceId) return;
-            const shorthand = el.inputProxyShorthand.value.trim();
-            if (!shorthand) {
-                showToast('Paste a proxy link first', 'error');
-                return;
-            }
-            el.btnAttachProxy.disabled = true;
-            try {
-                const body = shorthand.includes('://')
-                    ? { url: shorthand }
-                    : { shorthand };
-                const data = await apiCall(`/instances/${selectedInstanceId}/proxy`, 'PUT', body);
-                showToast('Proxy attached — reconnecting if online', 'success');
-                el.proxyVerifyResult.textContent = '';
-                await loadInstances();
-                if (data.proxy) renderProxyPanel({ id: selectedInstanceId, proxy: data.proxy });
-            } catch (e) {
-                showToast('Attach failed: ' + e.message, 'error');
-            } finally {
-                el.btnAttachProxy.disabled = false;
-            }
-        }
-
-        async function detachInstanceProxy() {
-            if (!selectedInstanceId) return;
-            el.btnDetachProxy.disabled = true;
-            try {
-                const data = await apiCall(`/instances/${selectedInstanceId}/proxy`, 'DELETE');
-                showToast('Proxy detached', 'success');
-                el.inputProxyShorthand.value = '';
-                el.proxyVerifyResult.textContent = '';
-                await loadInstances();
-                if (data.proxy) renderProxyPanel({ id: selectedInstanceId, proxy: data.proxy });
-            } catch (e) {
-                showToast('Detach failed: ' + e.message, 'error');
-            } finally {
-                el.btnDetachProxy.disabled = false;
-            }
-        }
-
-        async function verifyInstanceProxy() {
-            if (!selectedInstanceId) return;
-            el.btnVerifyProxy.disabled = true;
-            el.proxyVerifyResult.textContent = 'Checking egress IP...';
-            try {
-                const data = await apiCall(`/instances/${selectedInstanceId}/proxy/verify`, 'POST', {});
-                if (data.success && data.egressIp) {
-                    el.proxyVerifyResult.textContent = `Egress IP: ${data.egressIp} (${data.elapsedMs}ms, source: ${data.proxySource})`;
-                } else {
-                    el.proxyVerifyResult.textContent = data.error || 'Verification failed';
-                }
-            } catch (e) {
-                el.proxyVerifyResult.textContent = e.message;
-            } finally {
-                el.btnVerifyProxy.disabled = false;
             }
         }
 
@@ -5775,9 +3744,7 @@
 
         async function loadLogs(instanceId) {
             try {
-                const response = await fetch(`/api/instances/${instanceId}/logs`, {
-                    headers: applyAuthHeaders()
-                });
+                const response = await fetch(`/api/instances/${instanceId}/logs`, { headers: { ...apiKeyHeaders() } });
                 const data = await response.json();
                 renderLogs(data.logs || []);
             } catch (e) {
@@ -5817,20 +3784,6 @@
             }
         }
 
-        function getSelectedBehaviorProfile() {
-            return document.querySelector('input[name="behavior-profile"]:checked')?.value || 'bot-native';
-        }
-
-        function applyBehaviorProfileDefaults(profile) {
-            if (profile === 'notification-max') {
-                el.toggleTyping.checked = false;
-                el.toggleDelay.checked = true;
-            } else {
-                el.toggleTyping.checked = true;
-                el.toggleDelay.checked = true;
-            }
-        }
-
         function createLogEntry(log) {
             const entry = document.createElement('div');
             entry.className = 'log-entry';
@@ -5843,270 +3796,31 @@
         }
 
         async function apiCall(endpoint, method = 'GET', body = null) {
-            const options = { method, headers: applyAuthHeaders() };
+            const options = { method, headers: { ...apiKeyHeaders() } };
             if (body) {
                 options.headers['Content-Type'] = 'application/json';
                 options.body = JSON.stringify(body);
             }
-            const response = await fetch(`/api${endpoint}`, options);
-            const data = await response.json();
-            if (response.status === 401) {
-                data.error = 'Unauthorized. Enter a valid API key in the dashboard API Key field.';
-            }
-            return data;
-        }
-
-        function showToast(message, type = 'info') {
-            const region = document.getElementById('toast-region');
-            if (!region) return;
-            const toast = document.createElement('div');
-            toast.className = `toast ${type}`;
-            toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
-            toast.textContent = message;
-            region.appendChild(toast);
-            window.setTimeout(() => {
-                toast.style.opacity = '0';
-                toast.style.transform = 'translateY(8px) scale(0.98)';
-                window.setTimeout(() => toast.remove(), 220);
-            }, 3600);
-        }
-
-        const GLOBAL_RECONNECTABLE_STATUSES = new Set([
-            'disconnected',
-            'connecting-error',
-            'connection-error',
-            'connect_error',
-            'error',
-            'fatal',
-            'failed',
-            'closed'
-        ]);
-
-        function getConnectionStatus(instance) {
-            return String(
-                instance?.status ||
-                instance?.state ||
-                instance?.connectionState ||
-                ''
-            ).toLowerCase();
-        }
-
-        function isReconnectCandidate(instance) {
-            const status = getConnectionStatus(instance);
-            if (!status || status === 'connected' || status === 'connecting' || status === 'reconnecting') {
-                return false;
-            }
-            return GLOBAL_RECONNECTABLE_STATUSES.has(status) ||
-                status.includes('disconnect') ||
-                status.includes('error') ||
-                status.includes('fatal') ||
-                status.includes('failed');
-        }
-
-        function hasManualRepairSignal(instance) {
-            if (instance?.qrCode || instance?.pairingCode) {
-                return true;
-            }
-
-            const textFields = [
-                instance?.status,
-                instance?.state,
-                instance?.connectionState,
-                instance?.statusMessage,
-                instance?.message,
-                instance?.error,
-                instance?.lastError,
-                instance?.disconnectReason,
-                instance?.lastDisconnectReason,
-                instance?.reason
-            ];
-
-            const joined = textFields
-                .filter(value => typeof value === 'string')
-                .join(' ')
-                .toLowerCase();
-
-            return /401|logged\s*out|invalid\s*auth|bad\s*session|missing\s*auth|scan\s*qr|pair\s*again/.test(joined);
-        }
-
-        function classifyReconnectResult(instance, result) {
-            const error = String(result?.error || '').toLowerCase();
-            const updated = result?.instance || instance;
-            const status = getConnectionStatus(updated);
-
-            if (/already connected/.test(error) || status === 'connected') {
-                return 'connected';
-            }
-            if (/connection in progress/.test(error) || status === 'connecting' || status === 'reconnecting') {
-                return 'started reconnect';
-            }
-            if (hasManualRepairSignal(updated) || /401|logged\s*out|invalid\s*auth|bad\s*session|missing\s*auth|scan\s*qr|pair\s*again/.test(error)) {
-                return 'needs QR/manual repair';
-            }
-            if (result?.success) {
-                return 'started reconnect';
-            }
-            return error ? `failed: ${result.error}` : 'failed';
-        }
-
-        function renderGlobalReconnectStatus(rows, intro = '') {
-            if (!el.globalReconnectStatus) return;
-            const rowHtml = rows.map(row => `
-                <div class="global-reconnect-row">
-                    <span>${escapeHtml(row.name || row.id || 'Instance')}</span>
-                    <span class="result">${escapeHtml(row.result)}</span>
-                </div>
-            `).join('');
-            el.globalReconnectStatus.classList.add('visible');
-            el.globalReconnectStatus.innerHTML = `${intro ? `<div>${escapeHtml(intro)}</div>` : ''}${rowHtml}`;
-        }
-
-        function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
-        }
-
-        function globalReconnectHeaders(headers = {}) {
-            if (typeof applyAuthHeaders === 'function') {
-                return applyAuthHeaders(headers);
-            }
-
-            try {
-                const apiKey = localStorage.getItem(API_KEY_STORAGE_KEY) || '';
-                if (apiKey) {
-                    headers['X-API-Key'] = apiKey;
-                }
-            } catch (error) {}
-            return headers;
-        }
-
-        async function globalReconnectApiCall(endpoint, method = 'GET', body = null) {
-            const options = { method, headers: globalReconnectHeaders() };
-            if (body) {
-                options.headers['Content-Type'] = 'application/json';
-                options.body = JSON.stringify(body);
-            }
-
             const response = await fetch(`/api${endpoint}`, options);
             let data = {};
             try {
                 data = await response.json();
-            } catch (error) {
-                data = {};
+            } catch (e) {
+                data = { error: 'Invalid response from server' };
             }
-            if (response.status === 401) {
-                data.error = 'Unauthorized. Enter a valid API key in the dashboard API Key field.';
-            } else if (!response.ok && !data.error) {
-                data.error = `Request failed with HTTP ${response.status}`;
+            if (!response.ok) {
+                if (response.status === 401) {
+                    showApiKeyModal({ invalid: !!getWasupApiKey() });
+                }
+                return {
+                    error: data.error || data.message || `Request failed (${response.status})`,
+                    _httpStatus: response.status,
+                };
             }
             return data;
         }
 
-        function notifyGlobalReconnect(message, type = 'info') {
-            if (typeof showToast === 'function') {
-                showToast(message, type);
-            } else {
-                console[type === 'error' ? 'error' : 'log'](message);
-            }
-        }
-
-        async function refreshInstancesFromApi() {
-            const result = await globalReconnectApiCall('/instances');
-            if (result.error) {
-                throw new Error(result.error);
-            }
-            instances = result.instances || [];
-            applyInstanceOrder();
-            renderInstanceList();
-
-            if (selectedInstanceId) {
-                const selected = instances.find(i => i.id === selectedInstanceId);
-                if (selected) {
-                    renderInstanceDetail(selected);
-                } else {
-                    selectedInstanceId = null;
-                    showWelcome();
-                }
-            }
-
-            return instances;
-        }
-
-        async function reconnectDisconnectedInstances() {
-            if (!el.btnGlobalReconnect) return;
-
-            const originalText = el.btnGlobalReconnect.querySelector('.tool-name')?.textContent || 'Reconnect disconnected';
-            const buttonLabel = el.btnGlobalReconnect.querySelector('.tool-name');
-            el.btnGlobalReconnect.disabled = true;
-            if (buttonLabel) buttonLabel.textContent = 'Checking instances...';
-            renderGlobalReconnectStatus([], 'Checking disconnected instances...');
-
-            try {
-                const latestInstances = await refreshInstancesFromApi();
-                const candidates = latestInstances.filter(isReconnectCandidate);
-
-                if (candidates.length === 0) {
-                    renderGlobalReconnectStatus([], 'No disconnected instances need reconnect.');
-                    notifyGlobalReconnect('No disconnected instances to reconnect', 'success');
-                    return;
-                }
-
-                const rows = candidates.map(instance => ({
-                    id: instance.id,
-                    name: instance.name || instance.id,
-                    result: hasManualRepairSignal(instance) ? 'needs QR/manual repair' : 'queued'
-                }));
-                renderGlobalReconnectStatus(rows, `Attempting ${candidates.length} reconnect${candidates.length === 1 ? '' : 's'} sequentially...`);
-
-                for (let index = 0; index < candidates.length; index += 1) {
-                    const instance = candidates[index];
-                    const row = rows.find(item => item.id === instance.id);
-
-                    if (hasManualRepairSignal(instance)) {
-                        renderGlobalReconnectStatus(rows, `Skipped entries that already show QR/manual repair state.`);
-                        continue;
-                    }
-
-                    if (buttonLabel) buttonLabel.textContent = `Reconnect ${index + 1}/${candidates.length}`;
-                    row.result = 'attempting...';
-                    renderGlobalReconnectStatus(rows, `Attempting ${candidates.length} reconnect${candidates.length === 1 ? '' : 's'} sequentially...`);
-
-                    try {
-                        const result = await globalReconnectApiCall(`/instances/${encodeURIComponent(instance.id)}/connect`, 'POST');
-                        row.result = classifyReconnectResult(instance, result);
-                    } catch (error) {
-                        row.result = `failed: ${error.message}`;
-                    }
-
-                    renderGlobalReconnectStatus(rows, `Attempting ${candidates.length} reconnect${candidates.length === 1 ? '' : 's'} sequentially...`);
-
-                    if (index < candidates.length - 1) {
-                        await sleep(800);
-                    }
-                }
-
-                await refreshInstancesFromApi();
-
-                const failedCount = rows.filter(row => row.result.startsWith('failed')).length;
-                const manualCount = rows.filter(row => row.result.includes('manual repair')).length;
-                const startedCount = rows.length - failedCount - manualCount;
-                const summary = `${startedCount} started/connected, ${manualCount} need QR/manual repair, ${failedCount} failed.`;
-                renderGlobalReconnectStatus(rows, summary);
-                notifyGlobalReconnect(`Global reconnect complete: ${summary}`, failedCount ? 'error' : 'success');
-            } catch (error) {
-                renderGlobalReconnectStatus([], `Global reconnect failed: ${error.message}`);
-                notifyGlobalReconnect('Global reconnect failed: ' + error.message, 'error');
-            } finally {
-                el.btnGlobalReconnect.disabled = false;
-                if (buttonLabel) buttonLabel.textContent = originalText;
-            }
-        }
-
         // Event Handlers
-        syncApiKeyInputs();
-        loadDashboardConfig();
-        el.apiKeyInput?.addEventListener('input', (e) => setStoredApiKey(e.target.value.trim()));
-        el.createApiKeyInput?.addEventListener('input', (e) => setStoredApiKey(e.target.value.trim()));
-
         document.getElementById('instance-search')?.addEventListener('input', () => {
             renderInstanceList();
         });
@@ -6133,11 +3847,9 @@
 
         el.btnNewInstance.addEventListener('click', () => {
             el.inputInstanceName.value = '';
-            syncApiKeyInputs();
+            el.inputInstanceWebhook.value = '';
             el.modalCreate.classList.add('visible');
         });
-
-        el.btnGlobalReconnect?.addEventListener('click', reconnectDisconnectedInstances);
 
         el.mobileToggleInstances?.addEventListener('click', () => {
             updateMobileSectionState('instances', !mobileSidebarState.instancesOpen);
@@ -6152,22 +3864,56 @@
         el.modalClose.addEventListener('click', () => el.modalCreate.classList.remove('visible'));
         el.btnCancelCreate.addEventListener('click', () => el.modalCreate.classList.remove('visible'));
 
+        document.getElementById('tool-link-api-key')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            showApiKeyModal();
+        });
+        document.getElementById('mobile-tool-link-api-key')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            showApiKeyModal();
+            document.getElementById('mobile-tools-dropdown')?.classList.remove('open');
+            document.getElementById('mobile-tools-btn')?.classList.remove('active');
+        });
+        el.modalApiKeyClose?.addEventListener('click', () => hideApiKeyModal());
+        el.btnCancelApiKey?.addEventListener('click', () => hideApiKeyModal());
+        el.btnSaveApiKey?.addEventListener('click', () => {
+            const v = (el.inputApiKey && el.inputApiKey.value) ? el.inputApiKey.value.trim() : '';
+            if (!v) {
+                alert('Paste your API key first.');
+                return;
+            }
+            setWasupApiKey(v);
+            hideApiKeyModal();
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'auth', apiKey: v }));
+            }
+        });
+
         el.btnConfirmCreate.addEventListener('click', async () => {
             const name = el.inputInstanceName.value.trim() || 'My WhatsApp';
-            const payload = { name };
+            const webhookUrl = el.inputInstanceWebhook.value.trim();
 
             el.btnConfirmCreate.disabled = true;
             el.btnConfirmCreate.textContent = 'Creating...';
 
             try {
-                const result = await apiCall('/instances', 'POST', payload);
+                const result = await apiCall('/instances', 'POST', { name, webhookUrl });
                 if (result.error) {
-                    showToast('Error: ' + result.error, 'error');
+                    alert('Error: ' + result.error);
                 } else {
                     el.modalCreate.classList.remove('visible');
+                    if (result.instance) {
+                        const exists = instances.some(i => i.id === result.instance.id);
+                        if (!exists) {
+                            instances.push(result.instance);
+                            applyInstanceOrder();
+                            renderInstanceList();
+                            selectInstance(result.instance.id);
+                        }
+                    }
                 }
             } catch (e) {
-                showToast('Error: ' + e.message, 'error');
+                alert('Error: ' + e.message);
             }
 
             el.btnConfirmCreate.disabled = false;
@@ -6181,11 +3927,11 @@
             try {
                 const result = await apiCall(`/instances/${selectedInstanceId}/connect`, 'POST');
                 if (result.error) {
-                    showToast('Connection error: ' + result.error, 'error');
+                    alert('Connection error: ' + result.error);
                     el.btnConnect.disabled = false;
                 }
             } catch (e) {
-                showToast('Error: ' + e.message, 'error');
+                alert('Error: ' + e.message);
                 el.btnConnect.disabled = false;
             }
             el.btnConnect.textContent = 'Connect';
@@ -6203,7 +3949,7 @@
             if (!selectedInstanceId) return;
             const phoneNumber = el.inputPairPhone.value.trim().replace(/[^0-9]/g, '');
             if (!phoneNumber || phoneNumber.length < 10) {
-                showToast('Enter a valid phone number with country code, e.g. 447393002183', 'error');
+                alert('Enter a valid phone number with country code (e.g. 447393002183)');
                 return;
             }
 
@@ -6213,12 +3959,12 @@
             try {
                 const result = await apiCall(`/instances/${selectedInstanceId}/pair`, 'POST', { phoneNumber });
                 if (result.error) {
-                    showToast('Pairing error: ' + result.error, 'error');
+                    alert('Pairing error: ' + result.error);
                 } else {
                     el.pairPhoneInput.style.display = 'none';
                 }
             } catch (e) {
-                showToast('Error: ' + e.message, 'error');
+                alert('Error: ' + e.message);
             }
 
             el.btnConfirmPair.disabled = false;
@@ -6227,43 +3973,22 @@
 
         el.btnDisconnect.addEventListener('click', async () => {
             if (!selectedInstanceId) return;
-            if (!confirm('Disconnect this instance? Credentials will be kept so you can reconnect without scanning again.')) return;
+            if (!confirm('Disconnect this instance?')) return;
             el.btnDisconnect.disabled = true;
             try {
                 await apiCall(`/instances/${selectedInstanceId}/disconnect`, 'POST');
             } catch (e) {
-                showToast('Error: ' + e.message, 'error');
+                alert('Error: ' + e.message);
             }
         });
 
         el.btnClearAuth.addEventListener('click', async () => {
             if (!selectedInstanceId) return;
-            if (!confirm('Clear auth? You will need to scan QR or pair again.')) return;
-            el.btnClearAuth.disabled = true;
-            const originalText = el.btnClearAuth.textContent;
-            el.btnClearAuth.textContent = 'Clearing...';
+            if (!confirm('Clear auth? You will need to scan QR again.')) return;
             try {
-                const result = await apiCall(`/instances/${selectedInstanceId}/clear-auth`, 'POST');
-                if (result.instance) {
-                    const idx = instances.findIndex(i => i.id === result.instance.id);
-                    if (idx !== -1) {
-                        instances[idx] = result.instance;
-                    }
-                    renderInstanceList();
-                    renderInstanceDetail(result.instance);
-                } else {
-                    await loadInstances();
-                }
-                await loadLogs(selectedInstanceId);
-                el.btnClearAuth.textContent = 'Auth Cleared';
-                setTimeout(() => {
-                    el.btnClearAuth.textContent = originalText;
-                }, 1800);
+                await apiCall(`/instances/${selectedInstanceId}/clear-auth`, 'POST');
             } catch (e) {
-                showToast('Error: ' + e.message, 'error');
-                el.btnClearAuth.textContent = originalText;
-            } finally {
-                el.btnClearAuth.disabled = false;
+                alert('Error: ' + e.message);
             }
         });
 
@@ -6276,13 +4001,13 @@
 
             try {
                 await apiCall(`/instances/${selectedInstanceId}/webhook`, 'PUT', { webhookUrl });
-                el.btnSaveWebhook.textContent = 'Saved';
+                el.btnSaveWebhook.textContent = 'Saved!';
                 setTimeout(() => {
                     el.btnSaveWebhook.textContent = 'Save Webhook';
                     el.btnSaveWebhook.disabled = false;
                 }, 1500);
             } catch (e) {
-                showToast('Error: ' + e.message, 'error');
+                alert('Error: ' + e.message);
                 el.btnSaveWebhook.disabled = false;
                 el.btnSaveWebhook.textContent = 'Save Webhook';
             }
@@ -6299,35 +4024,24 @@
             }
         });
 
-        el.btnAttachProxy?.addEventListener('click', attachInstanceProxy);
-        el.btnDetachProxy?.addEventListener('click', detachInstanceProxy);
-        el.btnVerifyProxy?.addEventListener('click', verifyInstanceProxy);
-
-        let proxyPollTimer = null;
-        function startProxyPolling() {
-            clearInterval(proxyPollTimer);
-            proxyPollTimer = setInterval(() => {
-                if (selectedInstanceId) refreshProxyStatus(selectedInstanceId);
-            }, 15000);
-        }
-        startProxyPolling();
-
         el.btnDeleteInstance.addEventListener('click', async () => {
             if (!selectedInstanceId) return;
             if (!confirm('Delete this instance? This cannot be undone.')) return;
+            const id = selectedInstanceId;
             try {
-                await apiCall(`/instances/${selectedInstanceId}`, 'DELETE');
-            } catch (e) {
-                showToast('Error: ' + e.message, 'error');
-            }
-        });
-
-        el.behaviorProfileInputs.forEach(input => {
-            input.addEventListener('change', () => {
-                if (input.checked) {
-                    applyBehaviorProfileDefaults(input.value);
+                const result = await apiCall(`/instances/${id}`, 'DELETE');
+                if (result.error) {
+                    alert('Error: ' + result.error);
+                    return;
                 }
-            });
+                instances = instances.filter(i => i.id !== id);
+                saveInstanceOrder();
+                renderInstanceList();
+                selectedInstanceId = null;
+                showWelcome();
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
         });
 
         el.btnSaveBehavior.addEventListener('click', async () => {
@@ -6337,30 +4051,32 @@
             el.btnSaveBehavior.textContent = 'Saving...';
 
             try {
-                const behaviorProfile = getSelectedBehaviorProfile();
+                const profile = selectedBehaviorProfile();
+                const graceSeconds = Number(el.inputNotificationGrace?.value || 0);
                 await fetch(`/api/instances/${selectedInstanceId}/behavior`, {
                     method: 'PUT',
-                    headers: applyAuthHeaders({ 'Content-Type': 'application/json' }),
+                    headers: { 'Content-Type': 'application/json', ...apiKeyHeaders() },
                     body: JSON.stringify({
-                        behaviorProfile,
-                        typingSimulation: el.toggleTyping.checked,
+                        behaviorProfile: profile,
+                        typingSimulation: profile === 'notification-max' ? false : el.toggleTyping.checked,
                         delayEnabled: el.toggleDelay.checked,
-                        phoneNotificationsEnabled: behaviorProfile !== 'bot-native',
-                        notificationGraceMs: behaviorProfile === 'notification-max' ? 5000
-                            : behaviorProfile === 'notification-balanced' ? 2500
-                                : 0
+                        notificationGraceMs: Math.max(0, Math.min(120, graceSeconds || 0)) * 1000
                     })
                 });
-                el.btnSaveBehavior.textContent = 'Saved';
+                el.btnSaveBehavior.textContent = 'Saved!';
                 setTimeout(() => {
-                    el.btnSaveBehavior.textContent = 'Save Behavior';
+                    el.btnSaveBehavior.textContent = 'Save settings';
                     el.btnSaveBehavior.disabled = false;
                         }, 1500);
             } catch (e) {
-                showToast('Error: ' + e.message, 'error');
+                alert('Error: ' + e.message);
                 el.btnSaveBehavior.disabled = false;
-                el.btnSaveBehavior.textContent = 'Save Behavior';
+                el.btnSaveBehavior.textContent = 'Save settings';
             }
+        });
+
+        el.behaviorProfileButtons?.forEach(btn => {
+            btn.addEventListener('click', () => setBehaviorProfile(btn.dataset.behaviorProfile));
         });
 
         el.btnEditInstance.addEventListener('click', () => {
@@ -6383,7 +4099,7 @@
                 await apiCall(`/instances/${selectedInstanceId}`, 'PUT', { name });
                 el.modalEdit.classList.remove('visible');
             } catch (e) {
-                showToast('Error: ' + e.message, 'error');
+                alert('Error: ' + e.message);
             }
             el.btnConfirmEdit.disabled = false;
         });
@@ -6391,14 +4107,14 @@
         el.btnSaveProfileName.addEventListener('click', async () => {
             if (!selectedInstanceId) return;
             const name = el.inputProfileName.value.trim();
-            if (!name) return showToast('Enter a display name', 'error');
+            if (!name) return alert('Enter a display name');
             el.btnSaveProfileName.disabled = true;
             el.btnSaveProfileName.textContent = 'Updating...';
             try {
                 const result = await apiCall(`/instances/${selectedInstanceId}/profile/name`, 'PUT', { name });
-                if (result.error) { showToast('Error: ' + result.error, 'error'); }
-                else { el.btnSaveProfileName.textContent = 'Updated'; }
-            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+                if (result.error) { alert('Error: ' + result.error); }
+                else { el.btnSaveProfileName.textContent = 'Updated!'; }
+            } catch (e) { alert('Error: ' + e.message); }
             setTimeout(() => { el.btnSaveProfileName.textContent = 'Update Name'; el.btnSaveProfileName.disabled = false; }, 1500);
         });
 
@@ -6409,23 +4125,23 @@
             el.btnSaveProfileStatus.textContent = 'Updating...';
             try {
                 const result = await apiCall(`/instances/${selectedInstanceId}/profile/status`, 'PUT', { status });
-                if (result.error) { showToast('Error: ' + result.error, 'error'); }
-                else { el.btnSaveProfileStatus.textContent = 'Updated'; }
-            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+                if (result.error) { alert('Error: ' + result.error); }
+                else { el.btnSaveProfileStatus.textContent = 'Updated!'; }
+            } catch (e) { alert('Error: ' + e.message); }
             setTimeout(() => { el.btnSaveProfileStatus.textContent = 'Update About'; el.btnSaveProfileStatus.disabled = false; }, 1500);
         });
 
         el.btnSaveProfilePicture.addEventListener('click', async () => {
             if (!selectedInstanceId) return;
             const imageUrl = el.inputProfilePicture.value.trim();
-            if (!imageUrl) return showToast('Enter an image URL', 'error');
+            if (!imageUrl) return alert('Enter an image URL');
             el.btnSaveProfilePicture.disabled = true;
             el.btnSaveProfilePicture.textContent = 'Uploading...';
             try {
                 const result = await apiCall(`/instances/${selectedInstanceId}/profile/picture`, 'PUT', { imageUrl });
-                if (result.error) { showToast('Error: ' + result.error, 'error'); }
-                else { el.btnSaveProfilePicture.textContent = 'Done'; }
-            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+                if (result.error) { alert('Error: ' + result.error); }
+                else { el.btnSaveProfilePicture.textContent = 'Done!'; }
+            } catch (e) { alert('Error: ' + e.message); }
             setTimeout(() => { el.btnSaveProfilePicture.textContent = 'Set Picture'; el.btnSaveProfilePicture.disabled = false; }, 1500);
         });
 
@@ -6434,8 +4150,8 @@
             if (!confirm('Remove profile picture?')) return;
             try {
                 const result = await apiCall(`/instances/${selectedInstanceId}/profile/picture`, 'DELETE');
-                if (result.error) showToast('Error: ' + result.error, 'error');
-            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+                if (result.error) alert('Error: ' + result.error);
+            } catch (e) { alert('Error: ' + e.message); }
         });
 
         document.querySelectorAll('.preset-btn').forEach(btn => {
@@ -6484,14 +4200,14 @@
         }
 
         window.setHandoff = async function(active) {
-            if (!selectedInstanceId) return showToast('Select an instance first', 'error');
+            if (!selectedInstanceId) return alert('Select an instance first');
             const phone = document.getElementById('handoff-phone').value.replace(/[^\d]/g, '');
-            if (!phone) return showToast('Enter a phone number', 'error');
+            if (!phone) return alert('Enter a phone number');
             try {
                 const result = await apiCall(`/instances/${selectedInstanceId}/handoff`, 'POST', { phone, active });
                 if (result.humanModeChats) renderHandoffList(result.humanModeChats);
                 if (!active) document.getElementById('handoff-phone').value = '';
-            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+            } catch (e) { alert('Error: ' + e.message); }
         };
 
         window.setHandoffDirect = async function(phone, active) {
@@ -6499,7 +4215,7 @@
             try {
                 const result = await apiCall(`/instances/${selectedInstanceId}/handoff`, 'POST', { phone, active });
                 if (result.humanModeChats) renderHandoffList(result.humanModeChats);
-            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+            } catch (e) { alert('Error: ' + e.message); }
         };
 
         window.clearAllHandoffs = async function() {
@@ -6507,7 +4223,7 @@
             try {
                 await apiCall(`/instances/${selectedInstanceId}/handoff`, 'DELETE');
                 renderHandoffList([]);
-            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+            } catch (e) { alert('Error: ' + e.message); }
         };
 
         window.saveHandoffSettings = async function() {
@@ -6515,12 +4231,12 @@
             const keywordsRaw = document.getElementById('handoff-keywords').value;
             const resumeMessage = document.getElementById('handoff-resume-msg').value;
             const resumeKeywords = keywordsRaw.split(',').map(k => k.trim()).filter(Boolean);
-            if (!resumeKeywords.length) return showToast('Enter at least one resume keyword', 'error');
+            if (!resumeKeywords.length) return alert('Enter at least one resume keyword');
             try {
                 const result = await apiCall(`/instances/${selectedInstanceId}/handoff/settings`, 'PUT', { resumeKeywords, resumeMessage });
                 if (result.settings) loadHandoffSettings(result.settings);
-                showToast('Handoff settings saved', 'success');
-            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+                alert('Handoff settings saved!');
+            } catch (e) { alert('Error: ' + e.message); }
         };
 
         function loadHandoffSettings(settings) {
@@ -6539,10 +4255,381 @@
             if (instance.handoffSettings) loadHandoffSettings(instance.handoffSettings);
         };
 
+        // ==========================================
+        // ANTI-BAN v2 controls
+        // ==========================================
+        const v2 = {
+            pollTimer: null,
+            currentInstanceId: null,
+            lastConfig: null,
+        };
+
+        const v2Modules = [
+            { key: 'warmup',            label: '7-Day Warmup',        desc: 'Day 1: 20 → Day 7: 680 messages' },
+            { key: 'replyRatio',        label: 'Reply-Ratio Guard',   desc: 'Block contacts with <10% reply rate' },
+            { key: 'contactGraph',      label: 'Contact Graph',       desc: 'Handshake before bulk/group sends' },
+            { key: 'presence',          label: 'Presence Choreographer', desc: 'WPM typing model + circadian rhythm' },
+            { key: 'retryTracker',      label: 'Retry Tracker',       desc: 'Detects retry spirals + reasons' },
+            { key: 'reconnectThrottle', label: 'Reconnect Throttle',  desc: 'Ramps 10% → 100% over 60s after reconnect' },
+            { key: 'lidResolver',       label: 'LID Resolver',        desc: 'LID↔PN canonical fix (drops Bad MAC)' },
+            { key: 'sessionStability',  label: 'Session Stability',   desc: 'Tracks Bad MAC ratio, alerts on degradation' },
+            { key: 'stealthConnect',    label: 'Stealth Connect',     desc: 'Random fingerprint + 45-120s presence ramp' },
+        ];
+
+        async function v2LoadFor(instanceId) {
+            v2StopPolling();
+            v2.currentInstanceId = instanceId;
+            await v2Refresh();
+            v2.pollTimer = setInterval(v2Refresh, 5000);
+        }
+
+        function v2StopPolling() {
+            if (v2.pollTimer) { clearInterval(v2.pollTimer); v2.pollTimer = null; }
+        }
+
+        async function v2Refresh() {
+            if (!v2.currentInstanceId) return;
+            try {
+                const result = await apiCall(`/instances/${v2.currentInstanceId}/antiban-v2`);
+                if (result && result.success) {
+                    v2Render(result.antibanV2);
+                }
+            } catch (e) {
+                console.warn('v2 refresh failed:', e.message);
+            }
+        }
+
+        function v2Render(data) {
+            const card = document.getElementById('antiban-v2-card');
+            if (!card) return;
+
+            if (!data) {
+                // Instance has no v2 yet (lazy-init on first connect)
+                document.getElementById('v2-risk-badge').className = 'v2-risk-badge risk-unknown';
+                document.getElementById('v2-risk-badge').textContent = 'NOT INITIALIZED';
+                document.getElementById('v2-running-pill').className = 'v2-running-pill stopped';
+                document.getElementById('v2-running-pill').textContent = 'AWAITING CONNECT';
+                document.getElementById('v2-preset').textContent = '—';
+                document.getElementById('v2-score').textContent = '—';
+                document.getElementById('v2-counts').textContent = '—';
+                document.getElementById('v2-retries').textContent = '—';
+                document.getElementById('v2-badmac').textContent = '—';
+                document.getElementById('v2-delay').textContent = '—';
+                document.getElementById('v2-reco').textContent = 'Connect this instance to initialize the anti-ban pipeline. Config below will apply on first connect.';
+                document.getElementById('v2-warmup-day').textContent = 'WARMUP NOT STARTED';
+                document.getElementById('v2-warmup-quota').textContent = '— / —';
+                document.getElementById('v2-warmup-fill').style.width = '0%';
+                v2RenderModules(null);
+                v2RenderPresetButtons(null);
+                v2.lastConfig = null;
+                return;
+            }
+
+            v2.lastConfig = data.config || null;
+            const enabled = data.enabled !== false;
+            const running = !!data.running;
+            const isPaused = !!(data.health && data.health.isPaused);
+            const risk = (data.health && data.health.risk) || (running ? 'low' : 'unknown');
+            const score = (data.health && data.health.score) ?? 0;
+
+            // Status pills
+            const riskBadge = document.getElementById('v2-risk-badge');
+            riskBadge.className = `v2-risk-badge risk-${risk}`;
+            riskBadge.textContent = `RISK ${risk.toUpperCase()}`;
+
+            const runningPill = document.getElementById('v2-running-pill');
+            if (!enabled) {
+                runningPill.className = 'v2-running-pill disabled';
+                runningPill.textContent = 'V2 DISABLED';
+            } else if (isPaused) {
+                runningPill.className = 'v2-running-pill paused';
+                runningPill.textContent = 'PAUSED';
+            } else if (running) {
+                runningPill.className = 'v2-running-pill running';
+                runningPill.textContent = 'RUNNING';
+            } else {
+                runningPill.className = 'v2-running-pill stopped';
+                runningPill.textContent = 'NOT RUNNING';
+            }
+
+            // Metrics
+            document.getElementById('v2-preset').textContent = (data.preset || '—').toUpperCase();
+            document.getElementById('v2-score').textContent = `${score}/100`;
+            document.getElementById('v2-counts').textContent = `${data.messagesAllowed || 0} / ${data.messagesBlocked || 0}`;
+            document.getElementById('v2-retries').textContent = `${(data.retryTracker && data.retryTracker.spiralsDetected) || 0} spirals`;
+            document.getElementById('v2-badmac').textContent = `${(data.sessionStability && data.sessionStability.badMacCount) || 0}`;
+            const delayMs = data.totalDelayMs || 0;
+            document.getElementById('v2-delay').textContent = delayMs > 60000 ? `${Math.round(delayMs/60000)}m` : `${Math.round(delayMs/1000)}s`;
+
+            // Recommendation
+            const reco = document.getElementById('v2-reco');
+            reco.className = `v2-reco risk-${risk}`;
+            reco.textContent = (data.health && data.health.recommendation) || 'Operating normally';
+
+            // Warmup
+            if (data.warmup) {
+                const w = data.warmup;
+                document.getElementById('v2-warmup-day').textContent = w.complete
+                    ? `GRADUATED (${w.totalDays}/${w.totalDays})`
+                    : `DAY ${w.day || 1}/${w.totalDays || 7}`;
+                const limit = w.todayLimit === -1 || w.todayLimit === null ? '∞' : w.todayLimit;
+                document.getElementById('v2-warmup-quota').textContent = `${w.todaySent || 0} / ${limit} today`;
+                const fill = document.getElementById('v2-warmup-fill');
+                fill.style.width = `${Math.min(100, w.progress || 0)}%`;
+                fill.classList.toggle('complete', !!w.complete);
+            } else {
+                document.getElementById('v2-warmup-day').textContent = 'WARMUP STATE PENDING';
+                document.getElementById('v2-warmup-quota').textContent = '— / —';
+                document.getElementById('v2-warmup-fill').style.width = '0%';
+            }
+
+            // Modules toggles
+            v2RenderModules(data.modules || {});
+
+            // Preset buttons
+            v2RenderPresetButtons(data.preset);
+
+            // Overrides — only fill if not focused (don't clobber typing user)
+            const cfg = (data.config && data.config.overrides) || {};
+            v2FillOverride('v2-override-perminute', cfg.maxPerMinute);
+            v2FillOverride('v2-override-perhour', cfg.maxPerHour);
+            v2FillOverride('v2-override-perday', cfg.maxPerDay);
+            v2FillOverride('v2-override-mindelay', cfg.minDelayMs);
+            v2FillOverride('v2-override-maxdelay', cfg.maxDelayMs);
+
+            const webhookEl = document.getElementById('v2-alerts-webhook');
+            if (webhookEl && document.activeElement !== webhookEl) {
+                webhookEl.value = (data.config && data.config.alertsWebhook) || '';
+            }
+
+            // Pause/Resume button states
+            const pauseBtn = document.getElementById('v2-pause');
+            const resumeBtn = document.getElementById('v2-resume');
+            if (pauseBtn && resumeBtn) {
+                pauseBtn.disabled = !running || isPaused;
+                resumeBtn.disabled = !running || !isPaused;
+            }
+
+            // Disconnect history from logs
+            v2RefreshDisconnectHistory();
+        }
+
+        function v2FillOverride(elId, value) {
+            const el = document.getElementById(elId);
+            if (!el || document.activeElement === el) return;
+            el.value = (value !== undefined && value !== null) ? value : '';
+        }
+
+        function v2RenderModules(modules) {
+            const grid = document.getElementById('v2-modules-grid');
+            if (!grid) return;
+            grid.innerHTML = '';
+            for (const m of v2Modules) {
+                const cfg = modules ? modules[m.key] : null;
+                const enabled = cfg ? cfg.enabled !== false : true;
+                const row = document.createElement('label');
+                row.className = `v2-module-toggle ${enabled ? '' : 'disabled'}`;
+                row.innerHTML = `
+                    <div>
+                        <div class="v2-module-name">${escapeHtml(m.label)}</div>
+                        <div class="v2-module-desc">${escapeHtml(m.desc)}</div>
+                    </div>
+                    <label class="toggle-switch" style="pointer-events: auto">
+                        <input type="checkbox" data-v2module="${m.key}" ${enabled ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                `;
+                grid.appendChild(row);
+            }
+        }
+
+        function v2RenderPresetButtons(activePreset) {
+            document.querySelectorAll('.v2-preset-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.v2preset === activePreset);
+            });
+        }
+
+        async function v2RefreshDisconnectHistory() {
+            if (!v2.currentInstanceId) return;
+            try {
+                const result = await apiCall(`/instances/${v2.currentInstanceId}/logs?limit=200`);
+                const logs = result?.logs || [];
+                const discos = [];
+                // Match lines like "Connection lost (rate-limited: ...) — reconnecting in 300s"
+                const re = /Connection lost \((\w+(?:-\w+)?): ([^)]+)\)/;
+                for (const log of logs) {
+                    if (!log || !log.message) continue;
+                    const m = log.message.match(re);
+                    if (m) {
+                        discos.push({
+                            time: log.timestamp,
+                            category: m[1],
+                            message: m[2],
+                        });
+                    }
+                    if (discos.length >= 10) break;
+                }
+                v2RenderDisconnectHistory(discos);
+            } catch (e) {
+                // silent
+            }
+        }
+
+        function v2RenderDisconnectHistory(discos) {
+            const list = document.getElementById('v2-disco-list');
+            if (!list) return;
+            if (!discos || discos.length === 0) {
+                list.innerHTML = '<div class="v2-disco-empty">No recent disconnects.</div>';
+                return;
+            }
+            list.innerHTML = '';
+            for (const d of discos) {
+                const row = document.createElement('div');
+                row.className = `v2-disco-row cat-${d.category}`;
+                const t = new Date(d.time);
+                row.innerHTML = `
+                    <span class="disco-time">${t.toLocaleTimeString('en-GB')}</span>
+                    <span class="disco-code">${escapeHtml(d.category.toUpperCase())}</span>
+                    <span class="disco-msg">${escapeHtml(d.message)}</span>
+                    <span class="disco-cat">${escapeHtml(d.category)}</span>
+                `;
+                list.appendChild(row);
+            }
+        }
+
+        // Build payload for PUT /antiban-v2/config from current UI state
+        function v2BuildPayload(extraOverrides = {}) {
+            const activePreset = document.querySelector('.v2-preset-btn.active')?.dataset.v2preset
+                || (v2.lastConfig?.preset)
+                || 'moderate';
+
+            const overrides = {};
+            const fields = [
+                ['v2-override-perminute', 'maxPerMinute'],
+                ['v2-override-perhour', 'maxPerHour'],
+                ['v2-override-perday', 'maxPerDay'],
+                ['v2-override-mindelay', 'minDelayMs'],
+                ['v2-override-maxdelay', 'maxDelayMs'],
+            ];
+            for (const [id, key] of fields) {
+                const v = document.getElementById(id)?.value.trim();
+                if (v) overrides[key] = Number(v);
+            }
+            Object.assign(overrides, extraOverrides);
+
+            const modules = {};
+            document.querySelectorAll('input[data-v2module]').forEach(box => {
+                modules[box.dataset.v2module] = { enabled: box.checked };
+            });
+
+            return {
+                enabled: true,
+                preset: activePreset,
+                overrides,
+                modules,
+                alertsWebhook: document.getElementById('v2-alerts-webhook')?.value.trim() || null,
+            };
+        }
+
+        async function v2PutConfig(payload, btn) {
+            if (!v2.currentInstanceId) return;
+            const originalLabel = btn?.textContent;
+            if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+            try {
+                const result = await apiCall(`/instances/${v2.currentInstanceId}/antiban-v2/config`, 'PUT', payload);
+                if (result?.success) {
+                    await v2Refresh();
+                    if (btn) {
+                        btn.textContent = '✓ Saved';
+                        setTimeout(() => { if (btn) btn.textContent = originalLabel; }, 1500);
+                    }
+                } else {
+                    alert('Save failed: ' + (result?.error || 'unknown'));
+                    if (btn) btn.textContent = originalLabel;
+                }
+            } catch (e) {
+                alert('Save failed: ' + e.message);
+                if (btn) btn.textContent = originalLabel;
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        // -- Wire up event handlers (one-time on page load) --
+        document.querySelectorAll('.v2-preset-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                if (!v2.currentInstanceId) return;
+                document.querySelectorAll('.v2-preset-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                await v2PutConfig({ preset: btn.dataset.v2preset });
+            });
+        });
+
+        document.getElementById('v2-save-config')?.addEventListener('click', async (e) => {
+            await v2PutConfig(v2BuildPayload(), e.currentTarget);
+        });
+
+        document.getElementById('v2-pause')?.addEventListener('click', async (e) => {
+            if (!v2.currentInstanceId) return;
+            const btn = e.currentTarget;
+            btn.disabled = true;
+            try {
+                await apiCall(`/instances/${v2.currentInstanceId}/antiban-v2/pause`, 'POST');
+                await v2Refresh();
+            } catch (err) { alert('Pause failed: ' + err.message); }
+            finally { btn.disabled = false; }
+        });
+
+        document.getElementById('v2-resume')?.addEventListener('click', async (e) => {
+            if (!v2.currentInstanceId) return;
+            const btn = e.currentTarget;
+            btn.disabled = true;
+            try {
+                await apiCall(`/instances/${v2.currentInstanceId}/antiban-v2/resume`, 'POST');
+                await v2Refresh();
+            } catch (err) { alert('Resume failed: ' + err.message); }
+            finally { btn.disabled = false; }
+        });
+
+        document.getElementById('v2-reset')?.addEventListener('click', async (e) => {
+            if (!v2.currentInstanceId) return;
+            const ok = confirm(
+                'NUCLEAR RESET on this instance:\n\n' +
+                '• Warmup state wiped\n' +
+                '• Rate-limit history wiped\n' +
+                '• Health score wiped\n' +
+                '• LID mappings KEPT\n' +
+                '• Stealth fingerprint KEPT\n\n' +
+                'Use only after a real ban. Continue?'
+            );
+            if (!ok) return;
+            const btn = e.currentTarget;
+            btn.disabled = true;
+            try {
+                await apiCall(`/instances/${v2.currentInstanceId}/antiban-v2/reset`, 'POST');
+                await v2Refresh();
+            } catch (err) { alert('Reset failed: ' + err.message); }
+            finally { btn.disabled = false; }
+        });
+
+        // Hook into selectInstance so v2 polling switches with the selected instance
+        const origSelectInstance = selectInstance;
+        selectInstance = function(id) {
+            origSelectInstance(id);
+            v2LoadFor(id);
+        };
+
+        // Stop polling if user goes back to the welcome screen
+        const origShowWelcome = showWelcome;
+        showWelcome = function() {
+            origShowWelcome();
+            v2StopPolling();
+            v2.currentInstanceId = null;
+        };
+
             syncMobileSidebar();
             connectWebSocket();
         })();
     </script>
-    <script src="/worker-dashboard-overlay.js" defer></script>
 </body>
 </html>

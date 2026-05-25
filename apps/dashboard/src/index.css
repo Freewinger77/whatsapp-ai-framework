@@ -1,0 +1,320 @@
+/* Fonts loaded in index.html for faster first paint */
+
+/* Tailwind v3 directives */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light dark;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Border Radius */
+  --radius: 0.625rem;
+
+  /* Box Shadow */
+  --shadow-2xs: 0 1px rgb(0 0 0 / 0.05);
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg:
+    0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-xl:
+    0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --shadow-2xl: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+
+  /* Fonts */
+  --font-sans:
+    Outfit, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-serif: Fraunces, ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+
+  /* Shadcn colors */
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 3.9%;
+  --primary: 240 5.9% 10%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 5.9% 10%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 240 5.9% 10%;
+  --chart-1: 12 76% 61%;
+  --chart-2: 173 58% 39%;
+  --chart-3: 197 37% 24%;
+  --chart-4: 43 74% 66%;
+  --chart-5: 27 87% 67%;
+  --sidebar: 223.8 0% 98%;
+  --sidebar-foreground: 223.8 0% 3.9%;
+  --sidebar-primary: 223.8 0% 9.1%;
+  --sidebar-primary-foreground: 223.8 0% 98%;
+  --sidebar-accent: 223.8 0% 96.1%;
+  --sidebar-accent-foreground: 223.8 0% 9.1%;
+  --sidebar-border: 223.8 0% 89.8%;
+  --sidebar-ring: 223.8 0% 63%;
+
+  --instance-gradient-wasup-1: linear-gradient(
+    135deg,
+    #5e7281 0%,
+    #b7cbd4 100%
+  );
+  --instance-gradient-wasup-2: linear-gradient(
+    135deg,
+    #5f7567 0%,
+    #c0d0bf 100%
+  );
+  --instance-gradient-wasup-3: linear-gradient(
+    135deg,
+    #8b6b5c 0%,
+    #d2b5a7 100%
+  );
+  --instance-gradient-slate: linear-gradient(135deg, #5d6874 0%, #c7ced6 100%);
+  --instance-gradient-moss: linear-gradient(135deg, #64705b 0%, #c9d0bd 100%);
+  --instance-gradient-fallback: linear-gradient(
+    135deg,
+    #4b5563 0%,
+    #c3ccd6 100%
+  );
+}
+
+.dark {
+  /* Shadcn colors */
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 240 10% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 10% 3.9%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 0 0% 98%;
+  --primary-foreground: 240 5.9% 10%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --ring: 240 4.9% 83.9%;
+  --chart-1: 220 70% 50%;
+  --chart-2: 160 60% 45%;
+  --chart-3: 30 80% 55%;
+  --chart-4: 280 65% 60%;
+  --chart-5: 340 75% 55%;
+  --sidebar: 223.8 0% 9.1%;
+  --sidebar-foreground: 223.8 0% 98%;
+  --sidebar-primary: 225.3 84.1% 49%;
+  --sidebar-primary-foreground: 223.8 0% 98%;
+  --sidebar-accent: 223.8 0% 14.9%;
+  --sidebar-accent-foreground: 223.8 0% 98%;
+  --sidebar-border: 223.8 0% 15.5%;
+  --sidebar-ring: 223.8 0% 32.2%;
+
+  --instance-gradient-wasup-1: linear-gradient(
+    135deg,
+    #172330 0%,
+    #3f6070 100%
+  );
+  --instance-gradient-wasup-2: linear-gradient(
+    135deg,
+    #18271f 0%,
+    #46664d 100%
+  );
+  --instance-gradient-wasup-3: linear-gradient(
+    135deg,
+    #33221d 0%,
+    #855f4e 100%
+  );
+  --instance-gradient-slate: linear-gradient(135deg, #141b24 0%, #4b5563 100%);
+  --instance-gradient-moss: linear-gradient(135deg, #1f291b 0%, #596949 100%);
+  --instance-gradient-fallback: linear-gradient(
+    135deg,
+    #111827 0%,
+    #4b5563 100%
+  );
+}
+
+body {
+  font-family:
+    var(--font-sans),
+    system-ui,
+    -apple-system,
+    sans-serif;
+
+  line-height: 1.5;
+  font-weight: 400;
+
+  color: hsl(var(--foreground));
+  background-color: hsl(var(--background));
+}
+
+.wasup-display-headline {
+  font-family: "Fraunces", Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-weight: 400;
+  font-variation-settings: "SOFT" 100, "WONK" 1;
+  letter-spacing: -0.02em;
+  line-height: 1.08;
+}
+
+.wasup-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+[data-wasup-login] .wasup-login-clerk {
+  --clerk-border-radius: 10px;
+  --cl-radius: 10px;
+  width: 100%;
+  min-height: 320px;
+}
+
+[data-wasup-login] .wasup-login-clerk [class*="cl-rootBox"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-cardBox"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-card"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-main"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-form"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-socialButtons"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-formFieldRow"] {
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0.75rem !important;
+  width: 100% !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  min-height: unset !important;
+}
+
+[data-wasup-login] .wasup-login-clerk :is(button, input, [class*="cl-"]) {
+  border-radius: 10px !important;
+}
+
+[data-wasup-login] .wasup-login-clerk [class*="cl-formFieldInput"] {
+  height: 50px !important;
+  min-height: 50px !important;
+  width: 100% !important;
+}
+
+[data-wasup-login] .wasup-login-clerk [class*="cl-formButtonPrimary"],
+[data-wasup-login] .wasup-login-clerk [class*="cl-socialButtonsBlockButton"] {
+  position: relative !important;
+  height: 50px !important;
+  min-height: 50px !important;
+  width: 100% !important;
+}
+
+[data-wasup-login] .wasup-login-clerk [class*="cl-formButtonPrimary"] {
+  box-shadow: 0 10px 26px rgba(0, 200, 83, 0.18) !important;
+}
+
+@layer utilities {
+  @keyframes fadeUp {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes popIn {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  @keyframes feedTicketIn {
+    from {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes scaleIn {
+    from {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .animate-fade-up {
+    animation: fadeUp 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-fade-in {
+    animation: fadeIn 220ms ease-out both;
+  }
+  .animate-pop-in {
+    animation: popIn 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-feed-ticket {
+    animation: feedTicketIn 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-scale-in {
+    animation: scaleIn 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes wasup-shake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    20% {
+      transform: translateX(-5px);
+    }
+    40% {
+      transform: translateX(5px);
+    }
+    60% {
+      transform: translateX(-3px);
+    }
+    80% {
+      transform: translateX(3px);
+    }
+  }
+  .animate-wasup-shake {
+    animation: wasup-shake 420ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
+  }
+}

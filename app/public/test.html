@@ -3,1112 +3,1115 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Playground</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <title>Wasup Worker Test Console</title>
+    <meta name="description" content="Functional test console for this Wasup worker deployment">
     <style>
         :root {
-            --bg: #0f1115;
-            --panel: #171a21;
-            --panel-border: rgba(255, 255, 255, 0.08);
-            --text: #e7e9ee;
-            --muted: rgba(231, 233, 238, 0.62);
-            --accent: #59dcb5;
-            --accent-soft: rgba(89, 220, 181, 0.12);
-            --danger: #f87171;
-            --success: #59dcb5;
-            --warning: #fbbf24;
+            color-scheme: dark;
+            --bg: #060807;
+            --bg-2: #0b1110;
+            --panel: rgba(13, 18, 17, 0.88);
+            --panel-strong: #101817;
+            --border: rgba(99, 115, 129, 0.22);
+            --border-strong: rgba(34, 197, 94, 0.34);
+            --text: #ecfdf5;
+            --muted: #98a2b3;
+            --soft: #d1fae5;
+            --accent: #22c55e;
+            --accent-2: #14b8a6;
+            --accent-dark: #052e16;
+            --warn: #f59e0b;
+            --err: #fb7185;
+            --shadow: 0 28px 90px rgba(0, 0, 0, 0.38);
+            --radius: 22px;
         }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-
-        html, body {
-            min-height: 100dvh;
-            background: var(--bg);
-            color: var(--text);
-            font-family: 'Outfit', sans-serif;
-        }
-
+        * { box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
         body {
-            padding: 24px 16px 48px;
+            margin: 0;
+            min-height: 100vh;
+            background:
+                radial-gradient(circle at 15% 0%, rgba(34, 197, 94, 0.18), transparent 34rem),
+                radial-gradient(circle at 85% 10%, rgba(20, 184, 166, 0.12), transparent 30rem),
+                linear-gradient(180deg, var(--bg), var(--bg-2) 46%, #060807);
+            color: var(--text);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         }
 
-        .container {
-            max-width: 980px;
+        a { color: inherit; }
+        button, input, textarea, select { font: inherit; }
+        button { border: 0; }
+        code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+
+        .shell {
+            width: min(1240px, calc(100% - 32px));
             margin: 0 auto;
+            padding: 28px 0 42px;
         }
 
-        .topbar {
-            display: flex;
+        .hero {
+            position: relative;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 30px;
+            background: linear-gradient(135deg, rgba(16, 24, 23, 0.96), rgba(8, 12, 11, 0.86));
+            box-shadow: var(--shadow);
+            padding: clamp(22px, 4vw, 42px);
+        }
+
+        .hero::after {
+            content: "";
+            position: absolute;
+            inset: auto -10% -40% auto;
+            width: 28rem;
+            height: 28rem;
+            border-radius: 999px;
+            background: rgba(34, 197, 94, 0.12);
+            filter: blur(18px);
+            pointer-events: none;
+        }
+
+        .eyebrow {
+            display: inline-flex;
             align-items: center;
-            justify-content: space-between;
-            gap: 16px;
-            margin-bottom: 24px;
-            flex-wrap: wrap;
+            gap: 8px;
+            border: 1px solid var(--border-strong);
+            border-radius: 999px;
+            background: rgba(34, 197, 94, 0.1);
+            color: #bbf7d0;
+            padding: 7px 11px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
         }
-
-        .back-link {
-            color: var(--muted);
-            text-decoration: none;
-            font-size: 14px;
-        }
-
-        .back-link:hover { color: var(--text); }
 
         h1 {
-            font-size: 28px;
-            font-weight: 700;
-            letter-spacing: -0.03em;
+            margin: 18px 0 10px;
+            max-width: 800px;
+            font-size: clamp(34px, 6vw, 64px);
+            line-height: 0.95;
+            letter-spacing: -0.06em;
         }
 
-        .subtitle {
+        .hero-copy {
+            max-width: 760px;
             color: var(--muted);
-            font-size: 14px;
-            margin-top: 6px;
-            max-width: 62ch;
-            line-height: 1.5;
+            font-size: 16px;
+            line-height: 1.7;
         }
 
-        .grid {
+        .hero-grid {
+            position: relative;
+            z-index: 1;
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
+            grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+            gap: 22px;
+            align-items: end;
         }
 
-        @media (max-width: 768px) {
-            .grid { grid-template-columns: 1fr; }
-        }
-
-        .card {
+        .auth-card, .card {
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
             background: var(--panel);
-            border: 1px solid var(--panel-border);
-            border-radius: 18px;
-            padding: 20px;
-            margin-bottom: 16px;
+            box-shadow: 0 14px 45px rgba(0, 0, 0, 0.22);
         }
 
-        .card-title {
-            font-size: 13px;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: var(--accent);
-            margin-bottom: 14px;
+        .auth-card {
+            padding: 18px;
+            backdrop-filter: blur(18px);
         }
 
-        .form-group { margin-bottom: 14px; }
+        .field { display: grid; gap: 8px; margin-bottom: 14px; }
+        .field:last-child { margin-bottom: 0; }
 
         label {
-            display: block;
-            margin-bottom: 6px;
+            color: var(--soft);
             font-size: 12px;
-            font-weight: 600;
-            color: var(--muted);
+            font-weight: 700;
+            letter-spacing: 0.1em;
             text-transform: uppercase;
-            letter-spacing: 0.06em;
         }
 
         input, textarea, select {
             width: 100%;
-            padding: 11px 12px;
-            border: 1px solid var(--panel-border);
-            border-radius: 10px;
-            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: rgba(3, 7, 6, 0.78);
             color: var(--text);
-            font-size: 14px;
-            font-family: inherit;
-        }
-
-        input[type="checkbox"] {
-            width: 16px;
-            height: 16px;
-            min-width: 16px;
-            padding: 0;
-            margin: 0;
-            accent-color: var(--accent);
-            cursor: pointer;
+            padding: 12px 13px;
+            outline: none;
+            transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
         }
 
         input:focus, textarea:focus, select:focus {
-            outline: none;
-            border-color: rgba(89, 220, 181, 0.45);
-            box-shadow: 0 0 0 3px rgba(89, 220, 181, 0.08);
+            border-color: var(--accent);
+            box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.12);
+            background: rgba(3, 7, 6, 0.96);
         }
 
         input[readonly] {
-            opacity: 0.72;
+            color: #bbf7d0;
+            border-color: rgba(34, 197, 94, 0.22);
+            background: rgba(34, 197, 94, 0.06);
             cursor: not-allowed;
         }
 
         textarea {
-            min-height: 96px;
+            min-height: 128px;
             resize: vertical;
+            line-height: 1.55;
         }
 
         .hint {
-            margin-top: 6px;
-            font-size: 12px;
             color: var(--muted);
+            font-size: 12px;
             line-height: 1.45;
         }
 
-        .preset-row {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-bottom: 14px;
-        }
-
-        .preset-btn, .btn {
-            border: 1px solid var(--panel-border);
-            border-radius: 999px;
-            padding: 8px 14px;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
-            font-family: inherit;
-        }
-
-        .preset-btn {
-            background: rgba(255, 255, 255, 0.03);
-            color: var(--text);
-        }
-
-        .preset-btn:hover, .btn:hover:not(:disabled) {
-            transform: translateY(-1px);
-            border-color: rgba(89, 220, 181, 0.35);
-        }
-
-        .preset-btn:active, .btn:active:not(:disabled) {
-            transform: scale(0.98);
-        }
-
-        .btn-primary {
-            background: var(--accent);
-            color: #08110d;
-            border-color: transparent;
-        }
-
-        .btn-secondary {
-            background: rgba(255, 255, 255, 0.04);
-            color: var(--text);
-        }
-
-        .btn:disabled {
-            opacity: 0.55;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        .btn-row {
-            display: flex;
+        .key-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
             gap: 10px;
+            align-items: end;
+        }
+
+        .check {
+            display: inline-flex;
+            gap: 9px;
+            align-items: center;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.35;
+        }
+
+        .check input { width: auto; }
+
+        .nav {
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            margin: 18px 0;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: rgba(6, 8, 7, 0.82);
+            backdrop-filter: blur(18px);
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+        }
+
+        .tab {
+            flex: 0 0 auto;
+            border-radius: 999px;
+            background: transparent;
+            color: var(--muted);
+            cursor: pointer;
+            font-weight: 700;
+            padding: 10px 14px;
+            transition: background 160ms ease, color 160ms ease;
+        }
+
+        .tab:hover, .tab.active {
+            background: rgba(34, 197, 94, 0.14);
+            color: var(--text);
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
+            gap: 18px;
+            align-items: start;
+        }
+
+        .panel-stack { display: grid; gap: 18px; }
+        .page { display: none; }
+        .page.active { display: grid; gap: 18px; }
+
+        .card {
+            padding: clamp(18px, 3vw, 24px);
+        }
+
+        .card-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 18px;
+        }
+
+        .card h2, .card h3 {
+            margin: 0;
+            letter-spacing: -0.03em;
+        }
+
+        .card p {
+            color: var(--muted);
+            line-height: 1.6;
+            margin: 6px 0 0;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .button-row {
+            display: grid;
+            grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) auto;
+            gap: 10px;
+            align-items: end;
+            margin-bottom: 10px;
+        }
+
+        .actions {
+            display: flex;
             flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
             margin-top: 16px;
         }
 
-        .checkbox-row {
+        .btn, a.btn {
+            display: inline-flex;
+            min-height: 42px;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            border-radius: 13px;
+            cursor: pointer;
+            text-decoration: none;
+            font-weight: 800;
+            padding: 0 15px;
+            transition: transform 160ms ease, background 160ms ease, opacity 160ms ease;
+        }
+
+        .btn:hover { transform: translateY(-1px); }
+        .btn:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
+        .primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--accent-dark); }
+        .secondary { background: rgba(148, 163, 184, 0.14); color: var(--text); border: 1px solid var(--border); }
+        .danger { background: rgba(251, 113, 133, 0.14); color: #fecdd3; border: 1px solid rgba(251, 113, 133, 0.24); }
+
+        .response {
+            position: sticky;
+            top: 92px;
+        }
+
+        .status-line {
             display: flex;
             align-items: center;
             gap: 10px;
-            min-height: 36px;
-            padding: 8px 12px;
-            border: 1px solid var(--panel-border);
-            border-radius: 10px;
-            background: rgba(255, 255, 255, 0.02);
-        }
-
-        .checkbox-row label {
-            margin: 0;
-            text-transform: none;
-            letter-spacing: 0;
+            color: var(--muted);
             font-size: 13px;
-            color: var(--text);
-            font-weight: 500;
-            cursor: pointer;
-            flex: 1;
+            margin-bottom: 12px;
         }
 
-        .options-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
-            margin-top: 12px;
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 999px;
+            background: var(--muted);
+            box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.1);
         }
 
-        @media (max-width: 640px) {
-            .options-grid {
-                grid-template-columns: 1fr;
-            }
-        }
+        .dot.ok { background: var(--accent); box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.12); }
+        .dot.err { background: var(--err); box-shadow: 0 0 0 4px rgba(251, 113, 133, 0.12); }
+        .dot.loading { background: var(--warn); animation: pulse 1s infinite; }
+        @keyframes pulse { 50% { opacity: 0.45; } }
 
-        .payload-preview, .response-box, .curl-box {
-            background: rgba(0, 0, 0, 0.22);
-            border: 1px solid var(--panel-border);
-            border-radius: 12px;
-            padding: 14px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 12px;
-            line-height: 1.5;
+        pre {
+            min-height: 380px;
+            max-height: 68vh;
+            overflow: auto;
+            margin: 0;
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            background: rgba(0, 0, 0, 0.42);
+            color: #d1fae5;
+            padding: 16px;
             white-space: pre-wrap;
             word-break: break-word;
-            overflow: auto;
-            max-height: 320px;
+            line-height: 1.5;
+            font-size: 12px;
         }
 
-        .response-box.success { border-color: rgba(89, 220, 181, 0.45); }
-        .response-box.error { border-color: rgba(248, 113, 113, 0.45); }
-
-        .status-bar {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 10px;
-            font-size: 13px;
-            color: var(--muted);
+        .mini-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
         }
 
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: rgba(255, 255, 255, 0.25);
+        .metric {
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            background: rgba(148, 163, 184, 0.08);
+            padding: 13px;
         }
 
-        .status-dot.success { background: var(--success); }
-        .status-dot.error { background: var(--danger); }
-        .status-dot.loading { background: var(--warning); animation: pulse 1s infinite; }
+        .metric b { display: block; font-size: 21px; letter-spacing: -0.04em; }
+        .metric span { color: var(--muted); font-size: 12px; }
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.45; }
+        .table-wrap {
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: 18px;
         }
 
-        .history-item {
-            border-top: 1px solid var(--panel-border);
-            padding: 12px 0;
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 640px;
             font-size: 13px;
         }
 
-        .history-item:first-child { border-top: none; padding-top: 0; }
+        th, td {
+            border-bottom: 1px solid var(--border);
+            padding: 11px 12px;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        th { color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+        tr:last-child td { border-bottom: 0; }
 
         .badge {
             display: inline-flex;
             align-items: center;
-            padding: 2px 8px;
+            border: 1px solid var(--border);
             border-radius: 999px;
+            color: var(--soft);
+            background: rgba(148, 163, 184, 0.08);
+            padding: 4px 8px;
             font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.04em;
+            font-weight: 800;
         }
 
-        .badge.success { background: var(--accent-soft); color: var(--accent); }
-        .badge.error { background: rgba(248, 113, 113, 0.12); color: var(--danger); }
-
-        .section-note {
-            padding: 12px 14px;
-            border-radius: 12px;
-            background: rgba(89, 220, 181, 0.08);
-            border: 1px solid rgba(89, 220, 181, 0.16);
+        .qr {
+            display: grid;
+            place-items: center;
+            min-height: 220px;
+            border: 1px dashed var(--border-strong);
+            border-radius: 18px;
+            background: rgba(34, 197, 94, 0.05);
             color: var(--muted);
-            font-size: 13px;
-            line-height: 1.5;
-            margin-bottom: 14px;
+            padding: 16px;
+            text-align: center;
+        }
+
+        .qr img {
+            max-width: min(100%, 280px);
+            border-radius: 14px;
+            background: white;
+            padding: 10px;
+        }
+
+        .empty {
+            border: 1px dashed var(--border);
+            border-radius: 18px;
+            color: var(--muted);
+            padding: 16px;
+            text-align: center;
+        }
+
+        @media (max-width: 980px) {
+            .hero-grid, .layout { grid-template-columns: 1fr; }
+            .response { position: static; }
+        }
+
+        @media (max-width: 680px) {
+            .shell { width: min(100% - 20px, 1240px); padding-top: 10px; }
+            .hero { border-radius: 22px; }
+            .grid-2, .mini-grid, .key-row, .button-row { grid-template-columns: 1fr; }
+            .nav { border-radius: 22px; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="topbar">
-            <div>
-                <a href="/" class="back-link">Back to dashboard</a>
-                <h1>WhatsApp Playground</h1>
-                <p class="subtitle" data-marker="interactive-message-playground">
-                    Test plain text, link previews, CTA URL buttons, quick reply buttons, and reactions through the worker API.
-                </p>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-title">Connection</div>
-            <div class="grid">
-                <div class="form-group">
-                    <label for="baseUrl">Base URL</label>
-                    <input type="text" id="baseUrl" readonly>
-                    <div class="hint">Locked to the current worker origin.</div>
+    <main class="shell">
+        <section class="hero">
+            <div class="hero-grid">
+                <div>
+                    <span class="eyebrow">Worker test console</span>
+                    <h1>Run live checks against this Wasup worker.</h1>
+                    <p class="hero-copy">
+                        The base URL is locked to this deployment. Paste an org API key from the Wasup dashboard Connection page to test health, instances, QR connection, messages, logs, and docs links. This page does not reveal deployment or server keys.
+                    </p>
                 </div>
-                <div class="form-group">
-                    <label for="apiKey">API Key</label>
-                    <input type="password" id="apiKey" placeholder="Only needed when worker auth is enabled">
-                </div>
-            </div>
-            <div class="grid">
-                <div class="form-group">
-                    <label for="sendMode">Send Route</label>
-                    <select id="sendMode">
-                        <option value="interactive">Instance interactive send</option>
-                        <option value="instance">Instance send</option>
-                        <option value="global">Global /api/send</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="instanceId">Instance</label>
-                    <select id="instanceId">
-                        <option value="">Loading instances...</option>
-                    </select>
+                <div class="auth-card">
+                    <div class="field">
+                        <label for="base-url">Base URL</label>
+                        <input id="base-url" class="mono" type="text" readonly aria-readonly="true">
+                        <div class="hint">Locked to <code>window.location.origin</code> for this browser tab.</div>
+                    </div>
+                    <div class="field">
+                        <label for="api-key">Org API key</label>
+                        <div class="key-row">
+                            <input id="api-key" type="password" autocomplete="off" placeholder="sk-prod-... or sk-dev-...">
+                            <button class="btn secondary" type="button" id="toggle-key">Show</button>
+                        </div>
+                        <label class="check" for="remember-key">
+                            <input id="remember-key" type="checkbox">
+                            Remember in this browser origin. Otherwise the key stays in session storage only.
+                        </label>
+                        <div class="hint">Use a customer/org key copied from <code>dev.wasup.co</code>. Avoid screenshots with visible keys.</div>
+                    </div>
                 </div>
             </div>
-        </div>
+        </section>
 
-        <div class="card">
-            <div class="card-title">Message</div>
-            <div class="section-note">
-                Send plain text, link previews, quick reply buttons, or a CTA URL button. Buttons and CTA links appear as native WhatsApp interactive messages — the same experience your customers see from the WhatsApp app.
+        <nav class="nav" aria-label="Test console sections">
+            <button class="tab active" type="button" data-page="overview">Health</button>
+            <button class="tab" type="button" data-page="instances">Instances</button>
+            <button class="tab" type="button" data-page="connect">Connect and QR</button>
+            <button class="tab" type="button" data-page="send">Send Message</button>
+            <button class="tab" type="button" data-page="buttons">Interactive Buttons</button>
+            <button class="tab" type="button" data-page="logs">Logs and Events</button>
+            <button class="tab" type="button" data-page="docs">Docs</button>
+        </nav>
+
+        <section class="layout">
+            <div class="panel-stack">
+                <section class="page active" id="page-overview">
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h2>Health and status</h2>
+                                <p>Confirm the worker is reachable and inspect the instance summary.</p>
+                            </div>
+                        </div>
+                        <div class="mini-grid" id="metrics">
+                            <div class="metric"><b>--</b><span>Health</span></div>
+                            <div class="metric"><b>--</b><span>Instances</span></div>
+                            <div class="metric"><b>--</b><span>Connected</span></div>
+                        </div>
+                        <div class="actions">
+                            <button class="btn primary" type="button" data-action="health">Check health</button>
+                            <button class="btn secondary" type="button" data-action="status">Load status</button>
+                            <button class="btn secondary" type="button" data-action="instances-list">Refresh instances</button>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="page" id="page-instances">
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h2>Instances</h2>
+                                <p>List existing WhatsApp instances or create a new test instance.</p>
+                            </div>
+                            <button class="btn secondary" type="button" data-action="instances-list">Refresh</button>
+                        </div>
+                        <div class="table-wrap" id="instances-table">
+                            <div class="empty">Load instances to populate this table.</div>
+                        </div>
+                    </div>
+
+                    <form class="card" id="create-form">
+                        <div class="card-head">
+                            <div>
+                                <h3>Create instance</h3>
+                                <p>Creates an isolated worker instance. Leave ID empty for the worker default.</p>
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="create-id">Instance ID</label>
+                                <input id="create-id" placeholder="optional-instance-id">
+                            </div>
+                            <div class="field">
+                                <label for="create-name">Display name</label>
+                                <input id="create-name" placeholder="Sales WhatsApp">
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="create-webhook">Webhook URL</label>
+                            <input id="create-webhook" type="url" placeholder="https://n8n.example.com/webhook/...">
+                        </div>
+                        <div class="actions">
+                            <button class="btn primary" type="submit">Create instance</button>
+                        </div>
+                    </form>
+                </section>
+
+                <section class="page" id="page-connect">
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h2>Connect and QR</h2>
+                                <p>Start a WhatsApp connection, request a QR, or inspect connection state.</p>
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="connect-id">Instance ID</label>
+                                <input id="connect-id" placeholder="instance-id">
+                            </div>
+                            <div class="field">
+                                <label for="pair-phone">Pairing phone</label>
+                                <input id="pair-phone" placeholder="Optional, country code only">
+                            </div>
+                        </div>
+                        <div class="actions">
+                            <button class="btn primary" type="button" data-action="connect">Start QR connection</button>
+                            <button class="btn secondary" type="button" data-action="pair">Generate pairing code</button>
+                            <button class="btn secondary" type="button" data-action="qr">Get QR</button>
+                            <button class="btn secondary" type="button" data-action="connection">Connection status</button>
+                            <button class="btn danger" type="button" data-action="disconnect">Disconnect</button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h3>QR and pairing output</h3>
+                                <p>QR codes are rendered from authenticated JSON responses, not unauthenticated image URLs.</p>
+                            </div>
+                        </div>
+                        <div class="qr" id="qr-panel">Request a QR after starting connection.</div>
+                    </div>
+                </section>
+
+                <section class="page" id="page-send">
+                    <form class="card" id="send-form">
+                        <div class="card-head">
+                            <div>
+                                <h2>Send message</h2>
+                                <p>Send a practical test message through a selected instance.</p>
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="send-id">Instance ID</label>
+                                <input id="send-id" placeholder="instance-id">
+                            </div>
+                            <div class="field">
+                                <label for="send-to">Recipient phone or JID</label>
+                                <input id="send-to" placeholder="60123456789">
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="send-message">Message</label>
+                            <textarea id="send-message">Hello from the Wasup worker test console.</textarea>
+                        </div>
+                        <div class="grid-2">
+                            <label class="check" for="typing-simulation">
+                                <input id="typing-simulation" type="checkbox" checked>
+                                Typing simulation
+                            </label>
+                            <label class="check" for="delay-enabled">
+                                <input id="delay-enabled" type="checkbox" checked>
+                                Human delay
+                            </label>
+                        </div>
+                        <div class="actions">
+                            <button class="btn primary" type="submit">Send message</button>
+                            <button class="btn secondary" type="button" id="sample-message">Use sample</button>
+                        </div>
+                    </form>
+                </section>
+
+                <section class="page" id="page-buttons">
+                    <form class="card" id="buttons-form">
+                        <div class="card-head">
+                            <div>
+                                <h2>Interactive buttons</h2>
+                                <p>Send native WhatsApp quick-reply buttons through a selected instance. WhatsApp clients typically support up to 3 quick replies.</p>
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="buttons-id">Instance ID</label>
+                                <input id="buttons-id" placeholder="instance-id">
+                            </div>
+                            <div class="field">
+                                <label for="buttons-to">Recipient phone or JID</label>
+                                <input id="buttons-to" placeholder="60123456789">
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="buttons-message">Message</label>
+                            <textarea id="buttons-message">Choose an option</textarea>
+                        </div>
+                        <div class="field">
+                            <label for="buttons-footer">Footer</label>
+                            <input id="buttons-footer" placeholder="Wasup" value="Wasup">
+                        </div>
+                        <div class="field">
+                            <label>Buttons</label>
+                            <div id="button-rows">
+                                <div class="button-row">
+                                    <input class="button-id" placeholder="id" value="yes">
+                                    <input class="button-text" placeholder="Button text" value="Yes">
+                                    <button class="btn secondary remove-button-row" type="button">Remove</button>
+                                </div>
+                                <div class="button-row">
+                                    <input class="button-id" placeholder="id" value="no">
+                                    <input class="button-text" placeholder="Button text" value="No">
+                                    <button class="btn secondary remove-button-row" type="button">Remove</button>
+                                </div>
+                            </div>
+                            <div class="hint">Button text is capped at 20 characters before sending. Keep IDs stable so webhook replies can route choices.</div>
+                        </div>
+                        <div class="actions">
+                            <button class="btn primary" type="submit">Send buttons</button>
+                            <button class="btn secondary" type="button" id="add-button-row">Add button</button>
+                            <button class="btn secondary" type="button" id="sample-buttons">Use sample</button>
+                        </div>
+                    </form>
+                </section>
+
+                <section class="page" id="page-logs">
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h2>Logs and events</h2>
+                                <p>Read recent instance activity and message history for debugging.</p>
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="logs-id">Instance ID</label>
+                                <input id="logs-id" placeholder="instance-id">
+                            </div>
+                            <div class="field">
+                                <label for="logs-limit">Limit</label>
+                                <input id="logs-limit" type="number" min="1" max="200" value="50">
+                            </div>
+                        </div>
+                        <div class="actions">
+                            <button class="btn primary" type="button" data-action="logs">Load logs</button>
+                            <button class="btn secondary" type="button" data-action="messages">Load messages</button>
+                            <button class="btn secondary" type="button" data-action="anti-ban">Anti-ban status</button>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="page" id="page-docs">
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h2>Docs and OpenAPI</h2>
+                                <p>Open worker documentation or copy starter curl commands with redacted keys.</p>
+                            </div>
+                        </div>
+                        <div class="actions">
+                            <a class="btn primary" href="/docs">Open docs</a>
+                            <a class="btn secondary" href="/api/openapi.yaml" target="_blank" rel="noreferrer">OpenAPI YAML</a>
+                            <button class="btn secondary" type="button" data-action="copy-curl-list">Copy list curl</button>
+                            <button class="btn secondary" type="button" data-action="copy-curl-send">Copy send curl</button>
+                        </div>
+                    </div>
+                </section>
             </div>
 
-            <div class="preset-row">
-                <button type="button" class="preset-btn" onclick="loadTextExample()">Plain text</button>
-                <button type="button" class="preset-btn" onclick="loadLinkExample()">Link preview</button>
-                <button type="button" class="preset-btn" onclick="loadCtaExample()">CTA link button</button>
-                <button type="button" class="preset-btn" onclick="loadButtonExample()">Reply buttons</button>
-                <button type="button" class="preset-btn" onclick="loadCtaButtonsExample()">CTA + reply buttons</button>
-            </div>
-
-            <div class="grid">
-                <div class="form-group">
-                    <label for="fromPhone">From Phone</label>
-                    <input type="text" id="fromPhone" placeholder="60123456789">
-                    <div class="hint">Only used for global /api/send. Leave empty to use the first connected instance.</div>
+            <aside class="card response">
+                <div class="card-head">
+                    <div>
+                        <h2>Response</h2>
+                        <p id="last-request">Run a request to see details here.</p>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="toPhone">To Phone</label>
-                    <input type="text" id="toPhone" placeholder="60198765432" required>
+                <div class="status-line">
+                    <span class="dot" id="status-dot"></span>
+                    <span id="status-text">Ready</span>
                 </div>
-            </div>
-
-            <div class="form-group">
-                <label for="message">Message</label>
-                <textarea id="message" placeholder="Type your message here...">Hello! This is a test message.</textarea>
-            </div>
-
-            <div class="grid">
-                <div class="form-group">
-                    <label for="linkUrl">Link URL</label>
-                    <input type="url" id="linkUrl" placeholder="https://example.com/demo">
-                </div>
-                <div class="form-group">
-                    <label for="ctaUrl">CTA URL</label>
-                    <input type="url" id="ctaUrl" placeholder="https://example.com/book">
-                </div>
-            </div>
-
-            <div class="grid">
-                <div class="form-group">
-                    <label for="ctaLabel">CTA Label</label>
-                    <input type="text" id="ctaLabel" placeholder="Book now" maxlength="25">
-                </div>
-                <div class="form-group">
-                    <label for="buttonsText">Quick Reply Buttons</label>
-                    <input type="text" id="buttonsText" placeholder="Yes, No, Talk to human">
-                    <div class="hint">Comma-separated. Max 3 total including CTA URL (e.g. 2 reply + 1 CTA).</div>
-                </div>
-            </div>
-
-            <div class="options-grid">
-                <div class="checkbox-row">
-                    <input type="checkbox" id="linkPreview" checked>
-                    <label for="linkPreview">Enable link preview</label>
-                </div>
-
-                <div class="checkbox-row">
-                    <input type="checkbox" id="typingSimulation" checked>
-                    <label for="typingSimulation">Typing simulation</label>
-                </div>
-
-                <div class="checkbox-row">
-                    <input type="checkbox" id="delayEnabled" checked>
-                    <label for="delayEnabled">Human delays</label>
-                </div>
-
-                <div class="checkbox-row">
-                    <input type="checkbox" id="skipContactSave">
-                    <label for="skipContactSave">Skip contact save</label>
-                </div>
-            </div>
-
-            <div class="btn-row">
-                <button type="button" class="btn btn-primary" id="sendBtn" onclick="sendMessage()">
-                    <span id="sendBtnText">Send test message</span>
-                </button>
-                <button type="button" class="btn btn-secondary" onclick="clearForm()">Clear</button>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-title">Media</div>
-            <div class="section-note">
-                Send images, documents, voice notes, or location pins through the same send endpoints. Use a public URL or a stored <code>mediaId</code> from inbound messages or <code>GET /api/instances/{id}/media</code>.
-            </div>
-
-            <div class="form-group">
-                <label for="mediaType">Media Type</label>
-                <select id="mediaType">
-                    <option value="">Text / interactive only</option>
-                    <option value="image">Image</option>
-                    <option value="document">Document</option>
-                    <option value="audio">Audio / voice note</option>
-                    <option value="location">Location pin</option>
-                </select>
-            </div>
-
-            <div class="grid">
-                <div class="form-group">
-                    <label for="mediaUrl">Media URL</label>
-                    <input type="url" id="mediaUrl" placeholder="https://example.com/photo.jpg">
-                </div>
-                <div class="form-group">
-                    <label for="mediaId">Stored mediaId</label>
-                    <input type="text" id="mediaId" placeholder="abc123 from inbound webhook">
-                </div>
-            </div>
-
-            <div class="grid">
-                <div class="form-group">
-                    <label for="mediaCaption">Caption / filename</label>
-                    <input type="text" id="mediaCaption" placeholder="Optional caption or invoice.pdf">
-                </div>
-                <div class="form-group">
-                    <label for="mediaMime">MIME type</label>
-                    <input type="text" id="mediaMime" placeholder="application/pdf">
-                </div>
-            </div>
-
-            <div class="grid" id="locationFields" style="display:none;">
-                <div class="form-group">
-                    <label for="locationLat">Latitude</label>
-                    <input type="text" id="locationLat" placeholder="51.5074">
-                </div>
-                <div class="form-group">
-                    <label for="locationLng">Longitude</label>
-                    <input type="text" id="locationLng" placeholder="-0.1278">
-                </div>
-            </div>
-
-            <div class="form-group" id="locationNameField" style="display:none;">
-                <label for="locationName">Location label</label>
-                <input type="text" id="locationName" placeholder="London office">
-            </div>
-
-            <div class="preset-row">
-                <button type="button" class="preset-btn" onclick="loadImageExample()">Image example</button>
-                <button type="button" class="preset-btn" onclick="loadDocumentExample()">Document example</button>
-                <button type="button" class="preset-btn" onclick="loadAudioExample()">Voice note example</button>
-                <button type="button" class="preset-btn" onclick="loadLocationExample()">Location example</button>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-title">Reaction</div>
-            <div class="section-note">
-                React to a message the customer or this instance already sent. You need the WhatsApp message ID from a webhook, activity log, or send response. Set <strong>From me</strong> when reacting to an outbound message. Leave emoji empty to remove a reaction.
-            </div>
-
-            <div class="grid">
-                <div class="form-group">
-                    <label for="reactToPhone">Chat Phone</label>
-                    <input type="text" id="reactToPhone" placeholder="60198765432">
-                </div>
-                <div class="form-group">
-                    <label for="reactMessageId">Message ID</label>
-                    <input type="text" id="reactMessageId" placeholder="3EB0...">
-                    <div class="hint">Copy from instance logs or webhook payload key.id.</div>
-                </div>
-            </div>
-
-            <div class="grid">
-                <div class="form-group">
-                    <label for="reactEmoji">Emoji</label>
-                    <input type="text" id="reactEmoji" value="👍" maxlength="8">
-                </div>
-                <div class="form-group">
-                    <label for="reactFromPhone">From Phone (optional)</label>
-                    <input type="text" id="reactFromPhone" placeholder="Uses selected instance if empty">
-                </div>
-            </div>
-
-            <div class="options-grid">
-                <div class="checkbox-row">
-                    <input type="checkbox" id="reactFromMe">
-                    <label for="reactFromMe">Target message was sent by this instance</label>
-                </div>
-            </div>
-
-            <div class="preset-row">
-                <button type="button" class="preset-btn" onclick="setReactionEmoji('👍')">Thumbs up</button>
-                <button type="button" class="preset-btn" onclick="setReactionEmoji('❤️')">Heart</button>
-                <button type="button" class="preset-btn" onclick="setReactionEmoji('😂')">Laugh</button>
-                <button type="button" class="preset-btn" onclick="setReactionEmoji('')">Remove reaction</button>
-            </div>
-
-            <div class="btn-row">
-                <button type="button" class="btn btn-primary" id="reactBtn" onclick="sendReaction()">
-                    <span id="reactBtnText">Send reaction</span>
-                </button>
-            </div>
-        </div>
-
-        <div class="grid">
-            <div class="card">
-                <div class="card-title">Payload Preview</div>
-                <div class="payload-preview" id="payloadPreview">Payload preview will appear here.</div>
-            </div>
-            <div class="card">
-                <div class="card-title">API Request</div>
-                <div class="curl-box" id="curlPreview">Request preview will appear here.</div>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-title">Response</div>
-            <div class="status-bar">
-                <div class="status-dot" id="statusIndicator"></div>
-                <span id="statusText">Ready to send</span>
-            </div>
-            <div class="response-box" id="responseBox">Waiting for request...</div>
-        </div>
-
-        <div class="card">
-            <div class="card-title">Request History</div>
-            <div id="historyContainer">
-                <p class="hint">No requests yet</p>
-            </div>
-            <div class="btn-row">
-                <button type="button" class="btn btn-secondary" onclick="clearHistory()">Clear history</button>
-            </div>
-        </div>
-    </div>
+                <pre id="response-box">No response yet.</pre>
+            </aside>
+        </section>
+    </main>
 
     <script>
-        const state = {
-            instances: []
-        };
+        (function () {
+            const baseUrl = window.location.origin;
+            const state = {
+                instances: [],
+                lastInstanceId: '',
+            };
 
-        document.addEventListener('DOMContentLoaded', async () => {
-            const origin = window.location.origin;
-            document.getElementById('baseUrl').value = origin;
+            const els = {
+                baseUrl: document.getElementById('base-url'),
+                apiKey: document.getElementById('api-key'),
+                rememberKey: document.getElementById('remember-key'),
+                toggleKey: document.getElementById('toggle-key'),
+                statusDot: document.getElementById('status-dot'),
+                statusText: document.getElementById('status-text'),
+                responseBox: document.getElementById('response-box'),
+                lastRequest: document.getElementById('last-request'),
+                metrics: document.getElementById('metrics'),
+                instancesTable: document.getElementById('instances-table'),
+                qrPanel: document.getElementById('qr-panel'),
+            };
 
-            const params = new URLSearchParams(window.location.search);
-            const savedApiKey = localStorage.getItem('wa_test_apiKey');
-            const savedFromPhone = localStorage.getItem('wa_test_fromPhone');
-            if (savedApiKey) document.getElementById('apiKey').value = savedApiKey;
-            if (savedFromPhone) document.getElementById('fromPhone').value = savedFromPhone;
+            els.baseUrl.value = baseUrl;
 
-            await loadInstances(params.get('instance'));
-            wireInputs();
-            updatePayloadPreview();
-            loadHistory();
-        });
+            const persistedKey = localStorage.getItem('wasup_test_api_key') || '';
+            const sessionKey = sessionStorage.getItem('wasup_test_api_key') || '';
+            if (persistedKey) {
+                els.apiKey.value = persistedKey;
+                els.rememberKey.checked = true;
+            } else if (sessionKey) {
+                els.apiKey.value = sessionKey;
+            }
 
-        function wireInputs() {
-            [
-                'fromPhone', 'toPhone', 'message', 'linkUrl', 'ctaUrl', 'ctaLabel',
-                'buttonsText', 'linkPreview', 'typingSimulation',
-                'delayEnabled', 'skipContactSave', 'sendMode', 'instanceId', 'apiKey'
-            ].forEach((id) => {
-                const element = document.getElementById(id);
-                element?.addEventListener('input', updatePayloadPreview);
-                element?.addEventListener('change', updatePayloadPreview);
-            });
+            function apiKey() {
+                return els.apiKey.value.trim();
+            }
 
-            document.getElementById('apiKey').addEventListener('change', (event) => {
-                localStorage.setItem('wa_test_apiKey', event.target.value);
-            });
-            document.getElementById('fromPhone').addEventListener('change', (event) => {
-                localStorage.setItem('wa_test_fromPhone', event.target.value);
-            });
-            document.getElementById('message').addEventListener('keydown', (event) => {
-                if (event.ctrlKey && event.key === 'Enter') sendMessage();
-            });
-            document.getElementById('mediaType').addEventListener('change', syncMediaFields);
-            syncMediaFields();
-        }
+            function persistKey() {
+                const key = apiKey();
+                sessionStorage.setItem('wasup_test_api_key', key);
+                if (els.rememberKey.checked) {
+                    localStorage.setItem('wasup_test_api_key', key);
+                } else {
+                    localStorage.removeItem('wasup_test_api_key');
+                }
+            }
 
-        async function loadInstances(preferredInstanceId) {
-            const select = document.getElementById('instanceId');
-            try {
-                const response = await fetch('/api/instances', { headers: buildAuthHeaders() });
-                const data = await response.json();
-                state.instances = Array.isArray(data.instances) ? data.instances : (Array.isArray(data) ? data : []);
-                if (state.instances.length === 0) {
-                    select.innerHTML = '<option value="">No instances found</option>';
+            function authHeaders(includeJson) {
+                const headers = {};
+                const key = apiKey();
+                if (includeJson) headers['Content-Type'] = 'application/json';
+                if (key) {
+                    headers['X-API-Key'] = key;
+                    headers.Authorization = 'Bearer ' + key;
+                }
+                return headers;
+            }
+
+            function setStatus(kind, text) {
+                els.statusDot.className = 'dot' + (kind ? ' ' + kind : '');
+                els.statusText.textContent = text;
+            }
+
+            function redact(value) {
+                return JSON.stringify(value, function (key, item) {
+                    if (/apiKey|api_key|authorization|x-api-key|token|secret|password/i.test(key)) {
+                        return item ? '[redacted]' : item;
+                    }
+                    return item;
+                }, 2);
+            }
+
+            function showResponse(label, request, data, ok, status) {
+                els.lastRequest.textContent = request;
+                setStatus(ok ? 'ok' : 'err', (ok ? 'Success' : 'Error') + (status ? ' - HTTP ' + status : ''));
+                els.responseBox.textContent = redact({
+                    label,
+                    request,
+                    status,
+                    response: data,
+                });
+            }
+
+            async function callApi(label, method, path, body) {
+                persistKey();
+                const hasBody = body !== undefined && body !== null;
+                const request = method + ' ' + path;
+                setStatus('loading', 'Loading ' + request);
+                els.lastRequest.textContent = request;
+
+                try {
+                    const response = await fetch(baseUrl + path, {
+                        method,
+                        headers: authHeaders(hasBody),
+                        body: hasBody ? JSON.stringify(body) : undefined,
+                    });
+                    const contentType = response.headers.get('content-type') || '';
+                    const data = contentType.includes('application/json')
+                        ? await response.json().catch(function () { return {}; })
+                        : await response.text();
+                    showResponse(label, request, data, response.ok, response.status);
+                    return { ok: response.ok, status: response.status, data };
+                } catch (error) {
+                    showResponse(label, request, { error: error.message || 'Network error' }, false, 0);
+                    return { ok: false, status: 0, data: { error: error.message } };
+                }
+            }
+
+            function currentInstanceId(preferredId) {
+                const value = document.getElementById(preferredId).value.trim();
+                if (value) return value;
+                return state.lastInstanceId || (state.instances[0] && state.instances[0].id) || '';
+            }
+
+            function setInstanceHints(id) {
+                if (!id) return;
+                state.lastInstanceId = id;
+                ['connect-id', 'send-id', 'buttons-id', 'logs-id'].forEach(function (inputId) {
+                    const input = document.getElementById(inputId);
+                    if (input && !input.value.trim()) input.value = id;
+                });
+            }
+
+            function renderMetrics(health, instances) {
+                const connected = instances.filter(function (item) { return item.status === 'connected'; }).length;
+                els.metrics.innerHTML = [
+                    '<div class="metric"><b>' + (health || '--') + '</b><span>Health</span></div>',
+                    '<div class="metric"><b>' + instances.length + '</b><span>Instances</span></div>',
+                    '<div class="metric"><b>' + connected + '</b><span>Connected</span></div>',
+                ].join('');
+            }
+
+            function renderInstances(instances) {
+                state.instances = instances;
+                if (instances[0]) setInstanceHints(instances[0].id);
+                renderMetrics('ok', instances);
+
+                if (!instances.length) {
+                    els.instancesTable.innerHTML = '<div class="empty">No instances returned by this worker.</div>';
                     return;
                 }
 
-                select.innerHTML = state.instances.map((instance) => {
-                    const label = `${instance.name || instance.id} (${instance.status || 'unknown'})`;
-                    return `<option value="${instance.id}">${label}</option>`;
+                const rows = instances.map(function (item) {
+                    const id = escapeHtml(item.id || '');
+                    const name = escapeHtml(item.name || 'Unnamed');
+                    const phone = escapeHtml(item.connectedPhone || item.phone || '');
+                    const status = escapeHtml(item.status || 'unknown');
+                    return '<tr>' +
+                        '<td><button class="btn secondary pick-instance" type="button" data-id="' + id + '">Use</button></td>' +
+                        '<td class="mono">' + id + '</td>' +
+                        '<td>' + name + '</td>' +
+                        '<td><span class="badge">' + status + '</span></td>' +
+                        '<td class="mono">' + (phone || '-') + '</td>' +
+                    '</tr>';
                 }).join('');
 
-                const preferred = preferredInstanceId && state.instances.some((item) => item.id === preferredInstanceId)
-                    ? preferredInstanceId
-                    : state.instances.find((item) => item.status === 'connected')?.id || state.instances[0].id;
-                select.value = preferred;
-
-                const connected = state.instances.find((item) => item.id === preferred);
-                if (connected?.connectedPhone) {
-                    document.getElementById('fromPhone').value = connected.connectedPhone;
-                }
-            } catch (error) {
-                select.innerHTML = '<option value="">Failed to load instances</option>';
-            }
-        }
-
-        function buildAuthHeaders() {
-            const headers = {};
-            const apiKey = document.getElementById('apiKey').value.trim();
-            if (apiKey) headers['X-API-Key'] = apiKey;
-            return headers;
-        }
-
-        function parseButtons(value) {
-            return value
-                .split(',')
-                .map((text) => text.trim())
-                .filter(Boolean)
-                .slice(0, 3)
-                .map((text, index) => ({
-                    id: `choice_${index + 1}`,
-                    text
-                }));
-        }
-
-        function syncMediaFields() {
-            const mediaType = document.getElementById('mediaType').value;
-            const showLocation = mediaType === 'location';
-            document.getElementById('locationFields').style.display = showLocation ? 'grid' : 'none';
-            document.getElementById('locationNameField').style.display = showLocation ? 'block' : 'none';
-        }
-
-        function buildMediaPayload() {
-            const mediaType = document.getElementById('mediaType').value;
-            if (!mediaType) return null;
-
-            const mediaUrl = document.getElementById('mediaUrl').value.trim();
-            const mediaId = document.getElementById('mediaId').value.trim();
-            const caption = document.getElementById('mediaCaption').value.trim();
-            const mimeType = document.getElementById('mediaMime').value.trim();
-
-            if (mediaType === 'location') {
-                const latitude = Number(document.getElementById('locationLat').value.trim());
-                const longitude = Number(document.getElementById('locationLng').value.trim());
-                if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-                    throw new Error('Location requires valid latitude and longitude.');
-                }
-                return {
-                    location: {
-                        latitude,
-                        longitude,
-                        name: document.getElementById('locationName').value.trim() || undefined,
-                    }
-                };
-            }
-
-            const source = mediaId ? { mediaId } : mediaUrl ? { url: mediaUrl } : null;
-            if (!source) {
-                throw new Error(`Provide a media URL or stored mediaId for ${mediaType} sends.`);
-            }
-
-            if (mediaType === 'image') {
-                return { image: { ...source, caption: caption || undefined } };
-            }
-            if (mediaType === 'document') {
-                return {
-                    document: {
-                        ...source,
-                        fileName: caption || undefined,
-                        mimetype: mimeType || undefined,
-                        caption: caption || undefined,
-                    }
-                };
-            }
-            if (mediaType === 'audio') {
-                return {
-                    audio: {
-                        ...source,
-                        mimetype: mimeType || 'audio/mpeg',
-                        ptt: true,
-                    }
-                };
-            }
-
-            return null;
-        }
-
-        function buildPayloadCore() {
-            const message = document.getElementById('message').value.trim();
-            const linkUrl = document.getElementById('linkUrl').value.trim();
-            const ctaUrl = document.getElementById('ctaUrl').value.trim();
-            const ctaLabel = document.getElementById('ctaLabel').value.trim();
-            const buttons = parseButtons(document.getElementById('buttonsText').value);
-            const contactName = document.getElementById('contactName')?.value?.trim?.() || '';
-
-            const payload = {
-                message,
-                typingSimulation: document.getElementById('typingSimulation').checked,
-                delayEnabled: document.getElementById('delayEnabled').checked,
-                skipContactSave: document.getElementById('skipContactSave').checked,
-                linkPreview: document.getElementById('linkPreview').checked
-            };
-
-            if (contactName) payload.contactName = contactName;
-            if (linkUrl) payload.link = { url: linkUrl };
-            if (ctaUrl) payload.ctaUrl = { url: ctaUrl, label: ctaLabel || 'Open link' };
-            if (buttons.length > 0) payload.buttons = buttons;
-
-            const mediaPayload = buildMediaPayload();
-            if (mediaPayload) Object.assign(payload, mediaPayload);
-            return payload;
-        }
-
-        function resolveRequest() {
-            const baseUrl = document.getElementById('baseUrl').value || window.location.origin;
-            const sendMode = document.getElementById('sendMode').value;
-            const instanceId = document.getElementById('instanceId').value;
-            const toPhone = document.getElementById('toPhone').value.trim();
-            const fromPhone = document.getElementById('fromPhone').value.trim();
-            const payload = buildPayloadCore();
-
-            if (sendMode === 'global') {
-                return {
-                    url: `${baseUrl}/api/send`,
-                    body: {
-                        ...payload,
-                        to_phone: toPhone,
-                        ...(fromPhone ? { from_phone: fromPhone } : {})
-                    }
-                };
-            }
-
-            if (!instanceId) {
-                throw new Error('Select an instance for instance-scoped sends');
-            }
-
-            return {
-                url: `${baseUrl}/api/instances/${encodeURIComponent(instanceId)}/send${sendMode === 'interactive' ? '/interactive' : ''}`,
-                body: {
-                    ...payload,
-                    to: toPhone
-                }
-            };
-        }
-
-        function updatePayloadPreview() {
-            try {
-                const request = resolveRequest();
-                document.getElementById('payloadPreview').textContent = JSON.stringify(request.body, null, 2);
-                document.getElementById('curlPreview').textContent = [
-                    `curl -X POST '${request.url}' \\`,
-                    `  -H 'Content-Type: application/json' \\`,
-                    document.getElementById('apiKey').value.trim() ? `  -H 'X-API-Key: <your-key>' \\` : '',
-                    `  -d '${JSON.stringify(request.body)}'`
-                ].filter(Boolean).join('\n');
-            } catch (error) {
-                document.getElementById('payloadPreview').textContent = error.message;
-                document.getElementById('curlPreview').textContent = 'Fix the form to preview the request.';
-            }
-        }
-
-        function loadTextExample() {
-            document.getElementById('message').value = 'Hello! This is a plain text test.';
-            document.getElementById('linkUrl').value = '';
-            document.getElementById('ctaUrl').value = '';
-            document.getElementById('ctaLabel').value = '';
-            document.getElementById('buttonsText').value = '';
-            updatePayloadPreview();
-        }
-
-        function loadLinkExample() {
-            document.getElementById('message').value = 'Here is the booking page.';
-            document.getElementById('linkUrl').value = 'https://example.com/booking';
-            document.getElementById('ctaUrl').value = '';
-            document.getElementById('ctaLabel').value = '';
-            document.getElementById('buttonsText').value = '';
-            updatePayloadPreview();
-        }
-
-        function loadCtaExample() {
-            document.getElementById('message').value = 'Ready to book your slot?';
-            document.getElementById('linkUrl').value = '';
-            document.getElementById('ctaUrl').value = 'https://example.com/book';
-            document.getElementById('ctaLabel').value = 'Book now';
-            document.getElementById('buttonsText').value = '';
-            updatePayloadPreview();
-        }
-
-        function loadButtonExample() {
-            document.getElementById('message').value = 'Choose an option and reply with the number.';
-            document.getElementById('linkUrl').value = '';
-            document.getElementById('ctaUrl').value = '';
-            document.getElementById('ctaLabel').value = '';
-            document.getElementById('buttonsText').value = 'Pricing, Demo, Human';
-            document.getElementById('mediaType').value = '';
-            syncMediaFields();
-            updatePayloadPreview();
-        }
-
-        function loadCtaButtonsExample() {
-            document.getElementById('message').value = 'Ready to book your slot?';
-            document.getElementById('linkUrl').value = '';
-            document.getElementById('ctaUrl').value = 'https://example.com/book';
-            document.getElementById('ctaLabel').value = 'Book now';
-            document.getElementById('buttonsText').value = 'Talk to human';
-            document.getElementById('mediaType').value = '';
-            syncMediaFields();
-            updatePayloadPreview();
-        }
-
-        function loadImageExample() {
-            document.getElementById('mediaType').value = 'image';
-            document.getElementById('mediaUrl').value = 'https://picsum.photos/800/600';
-            document.getElementById('mediaId').value = '';
-            document.getElementById('mediaCaption').value = 'Sample product photo';
-            document.getElementById('mediaMime').value = 'image/jpeg';
-            syncMediaFields();
-            updatePayloadPreview();
-        }
-
-        function loadDocumentExample() {
-            document.getElementById('mediaType').value = 'document';
-            document.getElementById('mediaUrl').value = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';
-            document.getElementById('mediaId').value = '';
-            document.getElementById('mediaCaption').value = 'brochure.pdf';
-            document.getElementById('mediaMime').value = 'application/pdf';
-            syncMediaFields();
-            updatePayloadPreview();
-        }
-
-        function loadAudioExample() {
-            document.getElementById('mediaType').value = 'audio';
-            document.getElementById('mediaUrl').value = 'https://filesamples.com/samples/audio/mp3/sample3.mp3';
-            document.getElementById('mediaId').value = '';
-            document.getElementById('mediaCaption').value = '';
-            document.getElementById('mediaMime').value = 'audio/mpeg';
-            syncMediaFields();
-            updatePayloadPreview();
-        }
-
-        function loadLocationExample() {
-            document.getElementById('mediaType').value = 'location';
-            document.getElementById('locationLat').value = '51.5074';
-            document.getElementById('locationLng').value = '-0.1278';
-            document.getElementById('locationName').value = 'London';
-            syncMediaFields();
-            updatePayloadPreview();
-        }
-
-        function clearForm() {
-            document.getElementById('toPhone').value = '';
-            loadTextExample();
-            document.getElementById('typingSimulation').checked = true;
-            document.getElementById('delayEnabled').checked = true;
-            document.getElementById('skipContactSave').checked = false;
-            updatePayloadPreview();
-        }
-
-        function setStatus(status, text) {
-            document.getElementById('statusIndicator').className = `status-dot ${status}`;
-            document.getElementById('statusText').textContent = text;
-            document.getElementById('responseBox').className = `response-box ${status === 'error' ? 'error' : status === 'success' ? 'success' : ''}`;
-        }
-
-        function setReactionEmoji(emoji) {
-            document.getElementById('reactEmoji').value = emoji;
-        }
-
-        function resolveReactionRequest() {
-            const baseUrl = document.getElementById('baseUrl').value || window.location.origin;
-            const instanceId = document.getElementById('instanceId').value;
-            const to = document.getElementById('reactToPhone').value.trim() || document.getElementById('toPhone').value.trim();
-            const messageId = document.getElementById('reactMessageId').value.trim();
-            const fromPhone = document.getElementById('reactFromPhone').value.trim() || document.getElementById('fromPhone').value.trim();
-
-            const body = {
-                to,
-                messageId,
-                emoji: document.getElementById('reactEmoji').value,
-                fromMe: document.getElementById('reactFromMe').checked
-            };
-
-            if (instanceId) {
-                return {
-                    url: `${baseUrl}/api/instances/${encodeURIComponent(instanceId)}/react`,
-                    body
-                };
-            }
-
-            return {
-                url: `${baseUrl}/api/react`,
-                body: {
-                    ...body,
-                    ...(fromPhone ? { from_phone: fromPhone } : {})
-                }
-            };
-        }
-
-        async function sendReaction() {
-            let request;
-            try {
-                request = resolveReactionRequest();
-            } catch (error) {
-                setStatus('error', 'Invalid reaction form');
-                document.getElementById('responseBox').textContent = error.message;
-                return;
-            }
-
-            if (!request.body.to || !request.body.messageId) {
-                setStatus('error', 'Missing reaction fields');
-                document.getElementById('responseBox').textContent = 'Fill in Chat Phone and Message ID.';
-                return;
-            }
-
-            const reactBtn = document.getElementById('reactBtn');
-            const reactBtnText = document.getElementById('reactBtnText');
-            reactBtn.disabled = true;
-            reactBtnText.textContent = 'Sending reaction...';
-            setStatus('loading', 'Sending reaction...');
-
-            const headers = {
-                'Content-Type': 'application/json',
-                ...buildAuthHeaders()
-            };
-
-            const startTime = Date.now();
-            try {
-                const response = await fetch(request.url, {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify(request.body)
+                els.instancesTable.innerHTML = '<table><thead><tr><th></th><th>ID</th><th>Name</th><th>Status</th><th>Phone</th></tr></thead><tbody>' + rows + '</tbody></table>';
+                document.querySelectorAll('.pick-instance').forEach(function (button) {
+                    button.addEventListener('click', function () { setInstanceHints(button.dataset.id); });
                 });
-                const elapsed = Date.now() - startTime;
-                const data = await response.json();
+            }
 
-                if (response.ok) {
-                    setStatus('success', `Reaction sent (${elapsed}ms)`);
-                    document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
+            function renderQr(data) {
+                const qr = data && data.qrCode;
+                const pairing = data && data.pairingCode;
+                if (qr) {
+                    const src = qr.startsWith('data:') ? qr : 'data:image/png;base64,' + qr;
+                    els.qrPanel.innerHTML = '<img alt="WhatsApp QR code" src="' + src + '">';
+                } else if (pairing) {
+                    els.qrPanel.innerHTML = '<div><div class="hint">Pairing code</div><div class="mono" style="font-size:34px;color:var(--text);">' + escapeHtml(pairing) + '</div></div>';
                 } else {
-                    setStatus('error', `Error ${response.status} (${elapsed}ms)`);
-                    document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
+                    els.qrPanel.textContent = (data && data.message) || 'No QR or pairing code returned yet.';
                 }
-            } catch (error) {
-                setStatus('error', 'Reaction request failed');
-                document.getElementById('responseBox').textContent = `Error: ${error.message}`;
-            } finally {
-                reactBtn.disabled = false;
-                reactBtnText.textContent = 'Send reaction';
-            }
-        }
-
-        async function sendMessage() {
-            let request;
-            try {
-                request = resolveRequest();
-            } catch (error) {
-                setStatus('error', 'Invalid form');
-                document.getElementById('responseBox').textContent = error.message;
-                return;
             }
 
-            const toPhone = request.body.to || request.body.to_phone;
-            const hasMedia = Boolean(request.body.image || request.body.document || request.body.audio || request.body.location);
-            const hasTextPayload = Boolean(
-                request.body.message
-                || request.body.link
-                || request.body.ctaUrl
-                || request.body.buttons?.length
-            );
-
-            if (!toPhone || (!hasMedia && !hasTextPayload)) {
-                setStatus('error', 'Missing required fields');
-                document.getElementById('responseBox').textContent = 'Fill in To Phone and at least one message, link, CTA, button, or media field.';
-                return;
-            }
-
-            const sendBtn = document.getElementById('sendBtn');
-            const sendBtnText = document.getElementById('sendBtnText');
-            sendBtn.disabled = true;
-            sendBtnText.textContent = 'Sending...';
-            setStatus('loading', 'Sending message...');
-
-            const headers = {
-                'Content-Type': 'application/json',
-                ...buildAuthHeaders()
-            };
-
-            const startTime = Date.now();
-            try {
-                const response = await fetch(request.url, {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify(request.body)
+            function escapeHtml(value) {
+                return String(value).replace(/[&<>"']/g, function (char) {
+                    return {
+                        '&': '&amp;',
+                        '<': '&lt;',
+                        '>': '&gt;',
+                        '"': '&quot;',
+                        "'": '&#39;',
+                    }[char];
                 });
-                const elapsed = Date.now() - startTime;
-                const data = await response.json();
+            }
 
-                if (response.ok) {
-                    setStatus('success', `Success (${elapsed}ms)`);
-                    document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
-                    addToHistory(toPhone, request.body.message || '[interactive]', true, elapsed);
-                } else {
-                    setStatus('error', `Error ${response.status} (${elapsed}ms)`);
-                    document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
-                    addToHistory(toPhone, request.body.message || '[interactive]', false, elapsed, data.error);
+            function copyText(text) {
+                navigator.clipboard.writeText(text).then(function () {
+                    setStatus('ok', 'Copied to clipboard');
+                }).catch(function () {
+                    setStatus('err', 'Could not copy to clipboard');
+                });
+            }
+
+            function addButtonRow(id, text) {
+                const row = document.createElement('div');
+                row.className = 'button-row';
+                row.innerHTML = '<input class="button-id" placeholder="id" value="' + escapeHtml(id || '') + '">' +
+                    '<input class="button-text" placeholder="Button text" value="' + escapeHtml(text || '') + '">' +
+                    '<button class="btn secondary remove-button-row" type="button">Remove</button>';
+                document.getElementById('button-rows').appendChild(row);
+                wireRemoveButton(row.querySelector('.remove-button-row'));
+            }
+
+            function wireRemoveButton(button) {
+                button.addEventListener('click', function () {
+                    const rows = document.querySelectorAll('#button-rows .button-row');
+                    if (rows.length <= 1) {
+                        showResponse('Interactive buttons', 'POST /api/instances/:id/send', { error: 'Keep at least one button row.' }, false, 0);
+                        return;
+                    }
+                    button.closest('.button-row').remove();
+                });
+            }
+
+            function collectButtons() {
+                return Array.prototype.slice.call(document.querySelectorAll('#button-rows .button-row')).map(function (row, index) {
+                    const id = row.querySelector('.button-id').value.trim() || 'button_' + (index + 1);
+                    const text = row.querySelector('.button-text').value.trim();
+                    return text ? { id, text } : null;
+                }).filter(Boolean);
+            }
+
+            async function loadInstances() {
+                const result = await callApi('List instances', 'GET', '/api/instances');
+                const instances = result.data && Array.isArray(result.data.instances) ? result.data.instances : [];
+                renderInstances(instances);
+                return instances;
+            }
+
+            document.querySelectorAll('.tab').forEach(function (tab) {
+                tab.addEventListener('click', function () {
+                    document.querySelectorAll('.tab').forEach(function (item) { item.classList.remove('active'); });
+                    document.querySelectorAll('.page').forEach(function (item) { item.classList.remove('active'); });
+                    tab.classList.add('active');
+                    document.getElementById('page-' + tab.dataset.page).classList.add('active');
+                });
+            });
+
+            els.apiKey.addEventListener('input', persistKey);
+            els.rememberKey.addEventListener('change', persistKey);
+            els.toggleKey.addEventListener('click', function () {
+                const isPassword = els.apiKey.type === 'password';
+                els.apiKey.type = isPassword ? 'text' : 'password';
+                els.toggleKey.textContent = isPassword ? 'Hide' : 'Show';
+            });
+
+            document.getElementById('create-form').addEventListener('submit', async function (event) {
+                event.preventDefault();
+                const body = {};
+                const id = document.getElementById('create-id').value.trim();
+                const name = document.getElementById('create-name').value.trim();
+                const webhookUrl = document.getElementById('create-webhook').value.trim();
+                if (id) body.id = id;
+                if (name) body.name = name;
+                if (webhookUrl) body.webhookUrl = webhookUrl;
+                const result = await callApi('Create instance', 'POST', '/api/instances', body);
+                if (result.ok && result.data && result.data.instance) {
+                    setInstanceHints(result.data.instance.id);
+                    await loadInstances();
                 }
-            } catch (error) {
-                const elapsed = Date.now() - startTime;
-                setStatus('error', 'Request failed');
-                document.getElementById('responseBox').textContent = `Error: ${error.message}`;
-                addToHistory(toPhone, request.body.message || '[interactive]', false, elapsed, error.message);
-            } finally {
-                sendBtn.disabled = false;
-                sendBtnText.textContent = 'Send test message';
-            }
-        }
+            });
 
-        function addToHistory(to, message, success, elapsed, error = null) {
-            const history = JSON.parse(localStorage.getItem('wa_test_history') || '[]');
-            history.unshift({ to, message, success, elapsed, error, time: new Date().toLocaleTimeString() });
-            if (history.length > 10) history.pop();
-            localStorage.setItem('wa_test_history', JSON.stringify(history));
-            loadHistory();
-        }
+            document.getElementById('send-form').addEventListener('submit', async function (event) {
+                event.preventDefault();
+                const id = currentInstanceId('send-id');
+                const to = document.getElementById('send-to').value.trim();
+                const message = document.getElementById('send-message').value;
+                if (!id || !to || !message) {
+                    showResponse('Send message', 'POST /api/instances/:id/send', { error: 'Instance ID, recipient, and message are required.' }, false, 0);
+                    return;
+                }
+                await callApi('Send message', 'POST', '/api/instances/' + encodeURIComponent(id) + '/send', {
+                    to,
+                    message,
+                    typingSimulation: document.getElementById('typing-simulation').checked,
+                    delayEnabled: document.getElementById('delay-enabled').checked,
+                });
+            });
 
-        function loadHistory() {
-            const history = JSON.parse(localStorage.getItem('wa_test_history') || '[]');
-            const container = document.getElementById('historyContainer');
-            if (history.length === 0) {
-                container.innerHTML = '<p class="hint">No requests yet</p>';
-                return;
-            }
+            document.getElementById('sample-message').addEventListener('click', function () {
+                document.getElementById('send-message').value = 'Hello from the Wasup worker test console.';
+            });
 
-            container.innerHTML = history.map((item) => `
-                <div class="history-item">
-                    <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:6px;">
-                        <span class="badge ${item.success ? 'success' : 'error'}">${item.success ? 'SUCCESS' : 'FAILED'}</span>
-                        <span class="hint">${item.time} (${item.elapsed}ms)</span>
-                    </div>
-                    <div><strong>To:</strong> ${item.to}</div>
-                    <div><strong>Message:</strong> ${item.message}</div>
-                    ${item.error ? `<div style="color:var(--danger);"><strong>Error:</strong> ${item.error}</div>` : ''}
-                </div>
-            `).join('');
-        }
+            document.querySelectorAll('.remove-button-row').forEach(wireRemoveButton);
 
-        function clearHistory() {
-            localStorage.removeItem('wa_test_history');
-            loadHistory();
-        }
+            document.getElementById('add-button-row').addEventListener('click', function () {
+                const count = document.querySelectorAll('#button-rows .button-row').length;
+                if (count >= 3) {
+                    showResponse('Interactive buttons', 'POST /api/instances/:id/send', { error: 'WhatsApp quick replies support up to 3 buttons.' }, false, 0);
+                    return;
+                }
+                addButtonRow('option_' + (count + 1), 'Option ' + (count + 1));
+            });
+
+            document.getElementById('sample-buttons').addEventListener('click', function () {
+                document.getElementById('buttons-message').value = 'Choose an option';
+                document.getElementById('buttons-footer').value = 'Wasup';
+                document.getElementById('button-rows').innerHTML = '';
+                addButtonRow('yes', 'Yes');
+                addButtonRow('no', 'No');
+            });
+
+            document.getElementById('buttons-form').addEventListener('submit', async function (event) {
+                event.preventDefault();
+                const id = currentInstanceId('buttons-id');
+                const to = document.getElementById('buttons-to').value.trim();
+                const text = document.getElementById('buttons-message').value.trim();
+                const footer = document.getElementById('buttons-footer').value.trim();
+                const buttons = collectButtons();
+                if (!id || !to || !text || buttons.length === 0) {
+                    showResponse('Interactive buttons', 'POST /api/instances/:id/send', { error: 'Instance ID, recipient, message, and at least one button are required.' }, false, 0);
+                    return;
+                }
+                await callApi('Interactive buttons', 'POST', '/api/instances/' + encodeURIComponent(id) + '/send', {
+                    to,
+                    text,
+                    buttons,
+                    footer,
+                });
+            });
+
+            document.querySelectorAll('[data-action]').forEach(function (button) {
+                button.addEventListener('click', async function () {
+                    const action = button.dataset.action;
+                    if (action === 'health') {
+                        const result = await callApi('Health', 'GET', '/api/health');
+                        renderMetrics(result.ok ? 'ok' : 'error', state.instances);
+                    }
+                    if (action === 'status') await callApi('Status', 'GET', '/api/status');
+                    if (action === 'instances-list') await loadInstances();
+                    if (action === 'connect') {
+                        const id = currentInstanceId('connect-id');
+                        if (!id) return showResponse('Connect', 'POST /api/instances/:id/connect', { error: 'Instance ID is required.' }, false, 0);
+                        const result = await callApi('Connect', 'POST', '/api/instances/' + encodeURIComponent(id) + '/connect', {});
+                        if (result.data) renderQr(result.data);
+                    }
+                    if (action === 'pair') {
+                        const id = currentInstanceId('connect-id');
+                        const phone = document.getElementById('pair-phone').value.trim();
+                        if (!id || !phone) return showResponse('Pair', 'POST /api/instances/:id/pair', { error: 'Instance ID and pairing phone are required.' }, false, 0);
+                        const result = await callApi('Pair', 'POST', '/api/instances/' + encodeURIComponent(id) + '/pair', { phoneNumber: phone });
+                        if (result.data) renderQr(result.data);
+                    }
+                    if (action === 'qr') {
+                        const id = currentInstanceId('connect-id');
+                        if (!id) return showResponse('QR', 'GET /api/instances/:id/qr', { error: 'Instance ID is required.' }, false, 0);
+                        const result = await callApi('QR', 'GET', '/api/instances/' + encodeURIComponent(id) + '/qr');
+                        if (result.data) renderQr(result.data);
+                    }
+                    if (action === 'connection') {
+                        const id = currentInstanceId('connect-id');
+                        if (!id) return showResponse('Connection status', 'GET /api/instances/:id/connection', { error: 'Instance ID is required.' }, false, 0);
+                        await callApi('Connection status', 'GET', '/api/instances/' + encodeURIComponent(id) + '/connection');
+                    }
+                    if (action === 'disconnect') {
+                        const id = currentInstanceId('connect-id');
+                        if (!id) return showResponse('Disconnect', 'POST /api/instances/:id/disconnect', { error: 'Instance ID is required.' }, false, 0);
+                        await callApi('Disconnect', 'POST', '/api/instances/' + encodeURIComponent(id) + '/disconnect', {});
+                    }
+                    if (action === 'logs') {
+                        const id = currentInstanceId('logs-id');
+                        const limit = document.getElementById('logs-limit').value || '50';
+                        if (!id) return showResponse('Logs', 'GET /api/instances/:id/logs', { error: 'Instance ID is required.' }, false, 0);
+                        await callApi('Logs', 'GET', '/api/instances/' + encodeURIComponent(id) + '/logs?limit=' + encodeURIComponent(limit));
+                    }
+                    if (action === 'messages') {
+                        const id = currentInstanceId('logs-id');
+                        if (!id) return showResponse('Messages', 'GET /api/instances/:id/messages', { error: 'Instance ID is required.' }, false, 0);
+                        await callApi('Messages', 'GET', '/api/instances/' + encodeURIComponent(id) + '/messages?limit=50');
+                    }
+                    if (action === 'anti-ban') {
+                        const id = currentInstanceId('logs-id');
+                        if (!id) return showResponse('Anti-ban', 'GET /api/instances/:id/anti-ban', { error: 'Instance ID is required.' }, false, 0);
+                        await callApi('Anti-ban', 'GET', '/api/instances/' + encodeURIComponent(id) + '/anti-ban');
+                    }
+                    if (action === 'copy-curl-list') {
+                        copyText('curl -sS -H "X-API-Key: YOUR_ORG_API_KEY" "' + baseUrl + '/api/instances"');
+                    }
+                    if (action === 'copy-curl-send') {
+                        copyText('curl -sS -X POST "' + baseUrl + '/api/instances/INSTANCE_ID/send" \\\n  -H "X-API-Key: YOUR_ORG_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d \'{"to":"60123456789","message":"Hello from Wasup"}\'');
+                    }
+                });
+            });
+
+            renderMetrics('--', []);
+            callApi('Health', 'GET', '/api/health').then(function (result) {
+                renderMetrics(result.ok ? 'ok' : 'error', []);
+            });
+        })();
     </script>
 </body>
 </html>

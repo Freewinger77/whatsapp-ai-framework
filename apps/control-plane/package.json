@@ -12,9 +12,16 @@
     "stripe:products": "node scripts/create-stripe-products.mjs"
   },
   "dependencies": {
+    "@azure/arm-compute": "^24.0.0",
+    "@azure/arm-network": "^36.0.0",
+    "@azure/arm-resources": "^7.0.0",
+    "@azure/arm-resourcesdeployments": "^1.0.0-alpha.20250716.1",
+    "@azure/identity": "^4.13.1",
     "@clerk/nextjs": "latest",
     "@supabase/supabase-js": "latest",
+    "@types/nodemailer": "^8.0.0",
     "next": "latest",
+    "nodemailer": "^8.0.7",
     "react": "latest",
     "react-dom": "latest",
     "stripe": "^22.1.1",
