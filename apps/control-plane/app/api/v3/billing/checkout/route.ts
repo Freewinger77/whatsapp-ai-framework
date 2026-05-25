@@ -74,6 +74,8 @@ export async function POST(req: Request) {
   const session = await getStripe().checkout.sessions.create({
     mode: 'subscription',
     customer,
+    // Skip card fields when nothing is due today (100% promo, trial, etc.).
+    payment_method_collection: 'if_required',
     customer_update: {
       address: 'auto',
       name: 'auto'
