@@ -326,7 +326,7 @@
                 <a href="/" class="back-link">Back to dashboard</a>
                 <h1>WhatsApp Playground</h1>
                 <p class="subtitle" data-marker="interactive-message-playground">
-                    Test plain text, link previews, CTA URL buttons, and quick reply buttons through the worker API.
+                    Test plain text, link previews, CTA URL buttons, quick reply buttons, and reactions through the worker API.
                 </p>
             </div>
         </div>
@@ -365,7 +365,7 @@
         <div class="card">
             <div class="card-title">Message</div>
             <div class="section-note">
-                Buttons and CTA links always send as native WhatsApp interactive messages through baileys_helpers.
+                Send plain text, link previews, quick reply buttons, or a CTA URL button. Buttons and CTA links appear as native WhatsApp interactive messages — the same experience your customers see from the WhatsApp app.
             </div>
 
             <div class="preset-row">
@@ -373,6 +373,7 @@
                 <button type="button" class="preset-btn" onclick="loadLinkExample()">Link preview</button>
                 <button type="button" class="preset-btn" onclick="loadCtaExample()">CTA link button</button>
                 <button type="button" class="preset-btn" onclick="loadButtonExample()">Reply buttons</button>
+                <button type="button" class="preset-btn" onclick="loadCtaButtonsExample()">CTA + reply buttons</button>
             </div>
 
             <div class="grid">
@@ -411,7 +412,7 @@
                 <div class="form-group">
                     <label for="buttonsText">Quick Reply Buttons</label>
                     <input type="text" id="buttonsText" placeholder="Yes, No, Talk to human">
-                    <div class="hint">Comma-separated. Max 3 buttons, 20 characters each.</div>
+                    <div class="hint">Comma-separated. Max 3 total including CTA URL (e.g. 2 reply + 1 CTA).</div>
                 </div>
             </div>
 
@@ -446,9 +447,72 @@
         </div>
 
         <div class="card">
+            <div class="card-title">Media</div>
+            <div class="section-note">
+                Send images, documents, voice notes, or location pins through the same send endpoints. Use a public URL or a stored <code>mediaId</code> from inbound messages or <code>GET /api/instances/{id}/media</code>.
+            </div>
+
+            <div class="form-group">
+                <label for="mediaType">Media Type</label>
+                <select id="mediaType">
+                    <option value="">Text / interactive only</option>
+                    <option value="image">Image</option>
+                    <option value="document">Document</option>
+                    <option value="audio">Audio / voice note</option>
+                    <option value="location">Location pin</option>
+                </select>
+            </div>
+
+            <div class="grid">
+                <div class="form-group">
+                    <label for="mediaUrl">Media URL</label>
+                    <input type="url" id="mediaUrl" placeholder="https://example.com/photo.jpg">
+                </div>
+                <div class="form-group">
+                    <label for="mediaId">Stored mediaId</label>
+                    <input type="text" id="mediaId" placeholder="abc123 from inbound webhook">
+                </div>
+            </div>
+
+            <div class="grid">
+                <div class="form-group">
+                    <label for="mediaCaption">Caption / filename</label>
+                    <input type="text" id="mediaCaption" placeholder="Optional caption or invoice.pdf">
+                </div>
+                <div class="form-group">
+                    <label for="mediaMime">MIME type</label>
+                    <input type="text" id="mediaMime" placeholder="application/pdf">
+                </div>
+            </div>
+
+            <div class="grid" id="locationFields" style="display:none;">
+                <div class="form-group">
+                    <label for="locationLat">Latitude</label>
+                    <input type="text" id="locationLat" placeholder="51.5074">
+                </div>
+                <div class="form-group">
+                    <label for="locationLng">Longitude</label>
+                    <input type="text" id="locationLng" placeholder="-0.1278">
+                </div>
+            </div>
+
+            <div class="form-group" id="locationNameField" style="display:none;">
+                <label for="locationName">Location label</label>
+                <input type="text" id="locationName" placeholder="London office">
+            </div>
+
+            <div class="preset-row">
+                <button type="button" class="preset-btn" onclick="loadImageExample()">Image example</button>
+                <button type="button" class="preset-btn" onclick="loadDocumentExample()">Document example</button>
+                <button type="button" class="preset-btn" onclick="loadAudioExample()">Voice note example</button>
+                <button type="button" class="preset-btn" onclick="loadLocationExample()">Location example</button>
+            </div>
+        </div>
+
+        <div class="card">
             <div class="card-title">Reaction</div>
             <div class="section-note">
-                React to an existing WhatsApp message using its message ID. Use an empty emoji to remove a reaction.
+                React to a message the customer or this instance already sent. You need the WhatsApp message ID from a webhook, activity log, or send response. Set <strong>From me</strong> when reacting to an outbound message. Leave emoji empty to remove a reaction.
             </div>
 
             <div class="grid">
@@ -567,6 +631,8 @@
             document.getElementById('message').addEventListener('keydown', (event) => {
                 if (event.ctrlKey && event.key === 'Enter') sendMessage();
             });
+            document.getElementById('mediaType').addEventListener('change', syncMediaFields);
+            syncMediaFields();
         }
 
         async function loadInstances(preferredInstanceId) {
@@ -618,6 +684,68 @@
                 }));
         }
 
+        function syncMediaFields() {
+            const mediaType = document.getElementById('mediaType').value;
+            const showLocation = mediaType === 'location';
+            document.getElementById('locationFields').style.display = showLocation ? 'grid' : 'none';
+            document.getElementById('locationNameField').style.display = showLocation ? 'block' : 'none';
+        }
+
+        function buildMediaPayload() {
+            const mediaType = document.getElementById('mediaType').value;
+            if (!mediaType) return null;
+
+            const mediaUrl = document.getElementById('mediaUrl').value.trim();
+            const mediaId = document.getElementById('mediaId').value.trim();
+            const caption = document.getElementById('mediaCaption').value.trim();
+            const mimeType = document.getElementById('mediaMime').value.trim();
+
+            if (mediaType === 'location') {
+                const latitude = Number(document.getElementById('locationLat').value.trim());
+                const longitude = Number(document.getElementById('locationLng').value.trim());
+                if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+                    throw new Error('Location requires valid latitude and longitude.');
+                }
+                return {
+                    location: {
+                        latitude,
+                        longitude,
+                        name: document.getElementById('locationName').value.trim() || undefined,
+                    }
+                };
+            }
+
+            const source = mediaId ? { mediaId } : mediaUrl ? { url: mediaUrl } : null;
+            if (!source) {
+                throw new Error(`Provide a media URL or stored mediaId for ${mediaType} sends.`);
+            }
+
+            if (mediaType === 'image') {
+                return { image: { ...source, caption: caption || undefined } };
+            }
+            if (mediaType === 'document') {
+                return {
+                    document: {
+                        ...source,
+                        fileName: caption || undefined,
+                        mimetype: mimeType || undefined,
+                        caption: caption || undefined,
+                    }
+                };
+            }
+            if (mediaType === 'audio') {
+                return {
+                    audio: {
+                        ...source,
+                        mimetype: mimeType || 'audio/mpeg',
+                        ptt: true,
+                    }
+                };
+            }
+
+            return null;
+        }
+
         function buildPayloadCore() {
             const message = document.getElementById('message').value.trim();
             const linkUrl = document.getElementById('linkUrl').value.trim();
@@ -638,6 +766,9 @@
             if (linkUrl) payload.link = { url: linkUrl };
             if (ctaUrl) payload.ctaUrl = { url: ctaUrl, label: ctaLabel || 'Open link' };
             if (buttons.length > 0) payload.buttons = buttons;
+
+            const mediaPayload = buildMediaPayload();
+            if (mediaPayload) Object.assign(payload, mediaPayload);
             return payload;
         }
 
@@ -722,6 +853,58 @@
             document.getElementById('ctaUrl').value = '';
             document.getElementById('ctaLabel').value = '';
             document.getElementById('buttonsText').value = 'Pricing, Demo, Human';
+            document.getElementById('mediaType').value = '';
+            syncMediaFields();
+            updatePayloadPreview();
+        }
+
+        function loadCtaButtonsExample() {
+            document.getElementById('message').value = 'Ready to book your slot?';
+            document.getElementById('linkUrl').value = '';
+            document.getElementById('ctaUrl').value = 'https://example.com/book';
+            document.getElementById('ctaLabel').value = 'Book now';
+            document.getElementById('buttonsText').value = 'Talk to human';
+            document.getElementById('mediaType').value = '';
+            syncMediaFields();
+            updatePayloadPreview();
+        }
+
+        function loadImageExample() {
+            document.getElementById('mediaType').value = 'image';
+            document.getElementById('mediaUrl').value = 'https://picsum.photos/800/600';
+            document.getElementById('mediaId').value = '';
+            document.getElementById('mediaCaption').value = 'Sample product photo';
+            document.getElementById('mediaMime').value = 'image/jpeg';
+            syncMediaFields();
+            updatePayloadPreview();
+        }
+
+        function loadDocumentExample() {
+            document.getElementById('mediaType').value = 'document';
+            document.getElementById('mediaUrl').value = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';
+            document.getElementById('mediaId').value = '';
+            document.getElementById('mediaCaption').value = 'brochure.pdf';
+            document.getElementById('mediaMime').value = 'application/pdf';
+            syncMediaFields();
+            updatePayloadPreview();
+        }
+
+        function loadAudioExample() {
+            document.getElementById('mediaType').value = 'audio';
+            document.getElementById('mediaUrl').value = 'https://filesamples.com/samples/audio/mp3/sample3.mp3';
+            document.getElementById('mediaId').value = '';
+            document.getElementById('mediaCaption').value = '';
+            document.getElementById('mediaMime').value = 'audio/mpeg';
+            syncMediaFields();
+            updatePayloadPreview();
+        }
+
+        function loadLocationExample() {
+            document.getElementById('mediaType').value = 'location';
+            document.getElementById('locationLat').value = '51.5074';
+            document.getElementById('locationLng').value = '-0.1278';
+            document.getElementById('locationName').value = 'London';
+            syncMediaFields();
             updatePayloadPreview();
         }
 
@@ -838,9 +1021,17 @@
             }
 
             const toPhone = request.body.to || request.body.to_phone;
-            if (!toPhone || (!request.body.message && !request.body.link && !request.body.ctaUrl && !request.body.buttons?.length)) {
+            const hasMedia = Boolean(request.body.image || request.body.document || request.body.audio || request.body.location);
+            const hasTextPayload = Boolean(
+                request.body.message
+                || request.body.link
+                || request.body.ctaUrl
+                || request.body.buttons?.length
+            );
+
+            if (!toPhone || (!hasMedia && !hasTextPayload)) {
                 setStatus('error', 'Missing required fields');
-                document.getElementById('responseBox').textContent = 'Fill in To Phone and at least one message, link, CTA, or button field.';
+                document.getElementById('responseBox').textContent = 'Fill in To Phone and at least one message, link, CTA, button, or media field.';
                 return;
             }
 

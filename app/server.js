@@ -26,6 +26,8 @@ const __dirname = dirname(__filename);
 
 // Instance Manager
 import { InstanceManager } from './src/utils/instance-manager.js';
+import { initMediaStorage, listMedia, resolveMediaBuffer } from './src/utils/media-storage.js';
+import { hasMediaPayload } from './src/utils/media-builder.js';
 import axios from 'axios';
 import {
     getDeploymentDefaultProxy,
@@ -46,11 +48,14 @@ const DEFAULT_WEBHOOK_URL = process.env.DEFAULT_WEBHOOK_URL || process.env.N8N_W
 const ALLOW_PUBLIC_DASHBOARD = ['true', '1', 'yes'].includes(
     (process.env.ALLOW_PUBLIC_DASHBOARD || '').toLowerCase()
 );
-const DOCS_REVEAL_PASSWORD = process.env.DOCS_REVEAL_PASSWORD || ADMIN_PASSWORD || '';
+const WASUP_DASHBOARD_URL = String(process.env.WASUP_DASHBOARD_URL || '').trim().replace(/\/+$/, '');
+const DOCS_REVEAL_PASSWORD = process.env.DOCS_REVEAL_PASSWORD || 'Wasup@123';
 const VALID_BEHAVIOR_PROFILES = new Set(['bot-native', 'notification-balanced', 'notification-max']);
 const MAX_MESSAGE_LENGTH = 4096;
 const MAX_BUTTONS = 3;
 const MAX_BUTTON_TEXT_LENGTH = 20;
+const MAX_BUTTON_ID_LENGTH = 256;
+const WASUP_CONTROL_PLANE_URL = String(process.env.WASUP_CONTROL_PLANE_URL || '').trim().replace(/\/+$/, '');
 const WASUP_WORKER_SHARED_SECRET = process.env.WASUP_WORKER_SHARED_SECRET || '';
 const WASUP_WORKER_MODE = (process.env.WASUP_WORKER_MODE || 'multi').toLowerCase();
 const REGION_CODE = process.env.REGION_CODE || null;
@@ -257,7 +262,13 @@ function resolveRouteInstanceId(req) {
 }
 
 function authenticateAPI(req, res, next) {
-    if (req.path === '/health' || req.path.startsWith('/internal') || req.path.startsWith('/docs')) {
+    if (
+        req.path === '/health'
+        || req.path.startsWith('/internal')
+        || req.path.startsWith('/docs')
+        || req.path === '/openapi.yaml'
+        || req.path === '/openapi.json'
+    ) {
         return next();
     }
 
@@ -474,6 +485,11 @@ function parseMessagePayload(body) {
         errors.push('linkPreview must be a boolean when provided');
     }
 
+    const interactiveCount = buttons.length + (ctaUrl?.url ? 1 : 0);
+    if (interactiveCount > MAX_BUTTONS) {
+        errors.push(`Combined quick reply buttons and CTA URL supports at most ${MAX_BUTTONS} interactive buttons total`);
+    }
+
     if (!text) {
         if (link?.label) {
             text = link.label;
@@ -581,11 +597,76 @@ function parseSendOptions(body) {
     return { options, messagePayload };
 }
 
+function parseMediaPayload(body) {
+    const errors = [];
+    const to = normalizeText(body.to || body.to_phone);
+    if (!to) errors.push('Missing required field: to');
+
+    const mediaFields = ['image', 'video', 'document', 'audio', 'location'];
+    const present = mediaFields.filter((field) => body[field]);
+    if (present.length === 0) {
+        errors.push('Provide one of: image, video, document, audio, location');
+    } else if (present.length > 1) {
+        errors.push('Send one media type per request');
+    }
+
+    if (errors.length > 0) {
+        return { errors };
+    }
+
+    const options = {};
+    const optionFields = [
+        'behaviorProfile',
+        'typingSimulation',
+        'delayEnabled',
+        'phoneNotificationsEnabled',
+        'notificationGraceMs',
+        'contactName',
+        'skipContactSave',
+    ];
+
+    for (const field of optionFields) {
+        if (body[field] !== undefined) {
+            options[field] = body[field];
+        }
+    }
+
+    const mediaPayload = {};
+    for (const field of present) {
+        mediaPayload[field] = body[field];
+    }
+
+    return { to, mediaPayload, options };
+}
+
+async function handleSendRequest(req, res, instanceId) {
+    if (hasMediaPayload(req.body)) {
+        const parsed = parseMediaPayload(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ error: 'Invalid media payload', details: parsed.errors });
+        }
+
+        const result = await instanceManager.sendMedia(instanceId, parsed.to, parsed.mediaPayload, parsed.options);
+        return res.json({ success: true, result });
+    }
+
+    const { options, messagePayload, errors } = parseSendOptions(req.body);
+    if (errors) {
+        return res.status(400).json({ error: 'Invalid send payload', details: errors });
+    }
+
+    const result = await instanceManager.sendMessage(instanceId, req.body.to, messagePayload.text, options);
+    return res.json({ success: true, result });
+}
+
 app.get('/api/dashboard-config', (req, res) => {
     res.json({
         success: true,
         allowPublicDashboard: ALLOW_PUBLIC_DASHBOARD,
-        dashboardRequiresApiKey: !!API_KEY && !ALLOW_PUBLIC_DASHBOARD
+        dashboardRequiresApiKey: !!API_KEY && !ALLOW_PUBLIC_DASHBOARD,
+        dashboardUrl: WASUP_DASHBOARD_URL || null,
+        showDashboardReturnOverlay: Boolean(WASUP_DASHBOARD_URL),
+        workerHost: getPublicBaseUrl(req),
     });
 });
 
@@ -948,25 +1029,12 @@ app.get('/api/instances/:id/qr', (req, res) => {
 app.post('/api/instances/:id/send', async (req, res) => {
     try {
         const { to } = req.body;
-        
+
         if (!to) {
             return res.status(400).json({ error: 'Missing required field: to' });
         }
 
-        const { options, messagePayload, errors } = parseSendOptions(req.body);
-        if (errors) {
-            return res.status(400).json({
-                error: 'Invalid send payload',
-                details: errors
-            });
-        }
-        
-        const result = await instanceManager.sendMessage(req.params.id, to, messagePayload.text, options);
-        
-        res.json({ 
-            success: true, 
-            result 
-        });
+        await handleSendRequest(req, res, req.params.id);
     } catch (error) {
         res.status(400).json({ error: error.message });
     }
@@ -985,20 +1053,7 @@ app.post('/api/instances/:id/send/interactive', async (req, res) => {
             return res.status(400).json({ error: 'Missing required field: to' });
         }
 
-        const { options, messagePayload, errors } = parseSendOptions(req.body);
-        if (errors) {
-            return res.status(400).json({
-                error: 'Invalid send payload',
-                details: errors
-            });
-        }
-
-        const result = await instanceManager.sendMessage(req.params.id, to, messagePayload.text, options);
-
-        res.json({
-            success: true,
-            result
-        });
+        await handleSendRequest(req, res, req.params.id);
     } catch (error) {
         res.status(400).json({ error: error.message });
     }
@@ -1082,6 +1137,50 @@ app.post('/api/react', async (req, res) => {
         });
     } catch (error) {
         res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/instances/:id/media
+ * List stored media for an instance (inbound + outbound uploads)
+ */
+app.get('/api/instances/:id/media', async (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+
+        const items = await listMedia(req.params.id, {
+            mediaType: req.query.type || req.query.mediaType || undefined,
+            limit: Number(req.query.limit || 50),
+        });
+
+        res.json({ success: true, count: items.length, media: items });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/instances/:id/media/:mediaId
+ * Download stored media file for an instance
+ */
+app.get('/api/instances/:id/media/:mediaId', async (req, res) => {
+    try {
+        const resolved = await resolveMediaBuffer(req.params.id, req.params.mediaId);
+        if (!resolved) {
+            return res.status(404).json({ error: 'Media not found' });
+        }
+
+        res.setHeader('Content-Type', resolved.entry.mimeType || 'application/octet-stream');
+        res.setHeader(
+            'Content-Disposition',
+            `inline; filename="${resolved.entry.fileName || `${req.params.mediaId}.bin`}"`
+        );
+        res.send(resolved.buffer);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 
@@ -1346,12 +1445,28 @@ app.post('/api/send', async (req, res) => {
             return res.status(400).json({ error: 'Missing required field: to_phone' });
         }
 
-        const { options, messagePayload, errors } = parseSendOptions(req.body);
-        if (errors) {
-            return res.status(400).json({
-                error: 'Invalid send payload',
-                details: errors
-            });
+        const isMediaSend = hasMediaPayload(req.body);
+        let messagePayload = null;
+        let mediaPayload = null;
+        let options = {};
+
+        if (isMediaSend) {
+            const parsed = parseMediaPayload({ ...req.body, to: toPhone });
+            if (parsed.errors) {
+                return res.status(400).json({ error: 'Invalid media payload', details: parsed.errors });
+            }
+            mediaPayload = parsed.mediaPayload;
+            options = parsed.options;
+        } else {
+            const parsed = parseSendOptions(req.body);
+            if (parsed.errors) {
+                return res.status(400).json({
+                    error: 'Invalid send payload',
+                    details: parsed.errors
+                });
+            }
+            messagePayload = parsed.messagePayload;
+            options = parsed.options;
         }
         
         let targetInstanceId = null;
@@ -1417,7 +1532,9 @@ app.post('/api/send', async (req, res) => {
             targetInstanceId = matchedInstance.id;
         }
         
-        const result = await instanceManager.sendMessage(targetInstanceId, toPhone, messagePayload.text, options);
+        const result = isMediaSend
+            ? await instanceManager.sendMedia(targetInstanceId, toPhone, mediaPayload, options)
+            : await instanceManager.sendMessage(targetInstanceId, toPhone, messagePayload.text, options);
         
         // Determine status based on actual result
         let status = 'sent';
@@ -1430,9 +1547,11 @@ app.post('/api/send', async (req, res) => {
             created_at: new Date().toISOString(),
             from_phone: normalizePhone(matchedInstance.connectedPhone),
             to_phone: normalizePhone(toPhone),
-            message: result.messageText || messagePayload.text,
+            message: result.messageText || messagePayload?.text || result.mediaType || 'media',
+            media_type: result.mediaType || (isMediaSend ? 'media' : 'text'),
             status: status,
-            interactive: result.interactive
+            interactive: result.interactive,
+            media: result.media || null,
         }]);
     } catch (error) {
         // Check if error indicates a ban or connection issue
@@ -2092,7 +2211,14 @@ Initializing...
     
     // Initialize instance manager
     instanceManager = new InstanceManager();
+    await initMediaStorage();
     await instanceManager.init();
+    
+    if (WASUP_CONTROL_PLANE_URL && WASUP_ORG_ID && WASUP_WORKER_SHARED_SECRET) {
+        console.log(`[Server] Control plane activity sync enabled → ${WASUP_CONTROL_PLANE_URL}`);
+    } else if (WASUP_CONTROL_PLANE_URL) {
+        console.log('[Server] Control plane activity sync disabled (set WASUP_ORG_ID + WASUP_WORKER_SHARED_SECRET)');
+    }
     
     // Set up event handlers
     instanceManager.onStatusChange = (instanceId, status) => {

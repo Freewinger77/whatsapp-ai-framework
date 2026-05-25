@@ -26,13 +26,13 @@
         .top {
             max-width: 1100px;
             margin: 0 auto;
-            padding: 1rem 1.25rem 0;
+            padding: 0.75rem 1.25rem 0;
         }
         .nav {
             display: flex;
             flex-wrap: wrap;
             gap: 0.75rem;
-            margin-bottom: 0.75rem;
+            margin-bottom: 0.5rem;
             font-size: 0.875rem;
         }
         .nav a {
@@ -40,19 +40,45 @@
             text-decoration: none;
         }
         .nav a:hover { text-decoration: underline; }
-        .panel {
-            background: var(--panel);
+        .deploy-details {
+            margin-bottom: 0.5rem;
             border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 1rem 1.25rem;
-            margin-bottom: 1rem;
+            border-radius: 8px;
+            background: transparent;
         }
-        .panel h1 {
-            font-size: 1.1rem;
+        .deploy-details > summary {
+            cursor: pointer;
+            list-style: none;
+            padding: 0.55rem 0.85rem;
+            font-size: 0.8rem;
+            color: var(--muted);
+            user-select: none;
+        }
+        .deploy-details > summary::-webkit-details-marker { display: none; }
+        .deploy-details > summary::before {
+            content: '▸';
+            display: inline-block;
+            margin-right: 0.45rem;
+            transition: transform 0.15s ease;
+        }
+        .deploy-details[open] > summary::before { transform: rotate(90deg); }
+        .deploy-details > summary:hover { color: var(--text); }
+        .deploy-details:not([open]) .deploy-body { display: none; }
+        .deploy-body {
+            padding: 0 0.85rem 0.85rem;
+            border-top: 1px solid var(--border);
+        }
+        .deploy-body h2 {
+            font-size: 0.95rem;
             font-weight: 600;
-            margin: 0 0 0.5rem;
+            margin: 0.75rem 0 0.35rem;
         }
-        .panel p { margin: 0.35rem 0; color: var(--muted); font-size: 0.875rem; line-height: 1.5; }
+        .deploy-body p {
+            margin: 0.35rem 0;
+            color: var(--muted);
+            font-size: 0.8rem;
+            line-height: 1.5;
+        }
         .row { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; margin-top: 0.75rem; }
         label { display: block; font-size: 0.75rem; color: var(--muted); margin-bottom: 0.25rem; }
         input[type="password"], input[type="text"] {
@@ -101,35 +127,68 @@
             <a href="/playground">Playground</a>
             <a href="/api/openapi.yaml" target="_blank" rel="noreferrer">OpenAPI YAML</a>
         </nav>
-        <div class="panel" id="auth-panel">
-            <h1>This deployment</h1>
-            <p><strong>Base URL</strong>: <span class="mono" style="display:inline;padding:0.15rem 0.4rem;border-radius:4px;" id="base-display"></span></p>
-            <p>Use deployment <code>X-API-Key</code> for admin access, or per-instance <code>wsp_v3_*</code> keys for scoped calls. Open workers skip auth when no <code>API_KEY</code> is configured.</p>
-            <div class="row" id="unlock-row">
-                <div>
-                    <label for="doc-pw">Reveal key password</label>
-                    <input type="password" id="doc-pw" autocomplete="off" placeholder="Docs reveal password">
+        <details class="deploy-details" id="deploy-details">
+            <summary>Deployment details &amp; API key reveal</summary>
+            <div class="deploy-body" id="auth-panel">
+                <h2>This deployment</h2>
+                <p><strong>Base URL</strong>: <span class="mono" style="display:inline;padding:0.15rem 0.4rem;border-radius:4px;" id="base-display"></span></p>
+                <p>Use deployment <code>X-API-Key</code> for admin access, or per-instance <code>wsp_v3_*</code> keys for scoped calls. Open workers skip auth when no <code>API_KEY</code> is configured.</p>
+                <p>Inbound webhooks include <code>media_id</code> and <code>media.downloadUrl</code> when someone sends image, video, audio, or a document. Fetch the file with <code>GET {workerHost}{media.downloadUrl}</code>. List all stored media with <code>GET /api/instances/INSTANCE_ID/media</code>.</p>
+                <div class="row" id="unlock-row">
+                    <div>
+                        <label for="doc-pw">Reveal key password</label>
+                        <input type="password" id="doc-pw" autocomplete="off" placeholder="Docs reveal password">
+                    </div>
+                    <button type="button" id="btn-unlock">Reveal API key</button>
                 </div>
-                <button type="button" id="btn-unlock">Reveal API key</button>
-            </div>
-            <div id="unlock-msg"></div>
-            <div id="secret-block" style="display:none;">
-                <p style="margin-top:0.75rem"><strong>Deployment API key</strong></p>
-                <div class="mono" id="api-key-display"></div>
-                <div class="actions">
-                    <button type="button" class="secondary" id="btn-copy-key">Copy key</button>
-                    <button type="button" class="secondary" id="btn-copy-curl-list">Copy curl (list instances)</button>
-                    <button type="button" class="secondary" id="btn-copy-curl-send">Copy curl (send message)</button>
+                <div id="unlock-msg"></div>
+                <div id="secret-block" style="display:none;">
+                    <p style="margin-top:0.75rem"><strong>Deployment API key</strong></p>
+                    <div class="mono" id="api-key-display"></div>
+                    <div class="actions">
+                        <button type="button" class="secondary" id="btn-copy-key">Copy key</button>
+                        <button type="button" class="secondary" id="btn-copy-curl-list">Copy curl (list instances)</button>
+                        <button type="button" class="secondary" id="btn-copy-curl-send">Copy curl (send message)</button>
+                        <button type="button" class="secondary" id="btn-copy-curl-send-media">Copy curl (send image)</button>
+                    </div>
+                    <p class="mono" id="curl-list" style="margin-top:0.75rem"></p>
+                    <p class="mono" id="curl-send"></p>
+                    <p class="mono" id="curl-send-media"></p>
                 </div>
-                <p class="mono" id="curl-list" style="margin-top:0.75rem"></p>
-                <p class="mono" id="curl-send"></p>
             </div>
-        </div>
+        </details>
     </div>
     <div id="scalar-wrap">
-        <script id="api-reference" data-url="/api/openapi.yaml" data-configuration='{"theme":"kepler","darkMode":true}'></script>
+        <div id="scalar-api"></div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+    <script>
+        (function () {
+            function initScalar() {
+                if (!window.Scalar || typeof window.Scalar.createApiReference !== 'function') {
+                    return false;
+                }
+                window.Scalar.createApiReference('#scalar-api', {
+                    url: '/api/openapi.yaml',
+                    theme: 'kepler',
+                    darkMode: true,
+                    hiddenClients: true,
+                    defaultHttpClient: { targetKey: 'shell', clientKey: 'curl' },
+                });
+                return true;
+            }
+            if (!initScalar()) {
+                window.addEventListener('load', function () {
+                    if (!initScalar()) {
+                        var wrap = document.getElementById('scalar-wrap');
+                        if (wrap) {
+                            wrap.innerHTML = '<p class="err" style="padding:1.25rem">Failed to load API docs viewer. <a href="/api/openapi.yaml" style="color:var(--accent)">Download OpenAPI YAML</a></p>';
+                        }
+                    }
+                });
+            }
+        })();
+    </script>
     <script>
         (function () {
             const base = window.location.origin;
@@ -143,6 +202,7 @@
             const curlList = document.getElementById('curl-list');
             const curlSend = document.getElementById('curl-send');
             const unlockRow = document.getElementById('unlock-row');
+            const deployDetails = document.getElementById('deploy-details');
 
             let unlockedKey = '';
 
@@ -151,11 +211,11 @@
                     unlockRow.style.display = 'none';
                     if (!cfg.apiKeyConfigured) {
                         setMsg('Open deployment — no API key required.', false);
-                    } else {
-                        setMsg('Key reveal disabled. Set DOCS_REVEAL_PASSWORD or ADMIN_PASSWORD on the server.', false);
                     }
                 }
-            }).catch(() => {});
+            }).catch(function () {
+                unlockRow.style.display = 'none';
+            });
 
             function setMsg(text, isErr) {
                 msg.textContent = text || '';
@@ -182,7 +242,9 @@
                     const b = data.baseUrl || base;
                     curlList.textContent = 'curl -sS -H "X-API-Key: ' + (unlockedKey || 'YOUR_KEY') + '" "' + b + '/api/instances"';
                     curlSend.textContent = 'curl -sS -X POST "' + b + '/api/instances/INSTANCE_ID/send" \\\n  -H "X-API-Key: ' + (unlockedKey || 'YOUR_KEY') + '" -H "Content-Type: application/json" \\\n  -d \'{"to":"60123456789","message":"Hello"}\'';
+                    document.getElementById('curl-send-media').textContent = 'curl -sS -X POST "' + b + '/api/instances/INSTANCE_ID/send" \\\n  -H "X-API-Key: ' + (unlockedKey || 'YOUR_KEY') + '" -H "Content-Type: application/json" \\\n  -d \'{"to":"60123456789","image":{"url":"https://example.com/photo.jpg","caption":"Product shot"}}\'';
                     secret.style.display = 'block';
+                    deployDetails.open = true;
                     setMsg('Unlocked for this tab only.', false);
                 } catch (e) {
                     setMsg(e.message || 'Network error', true);
@@ -199,6 +261,7 @@
             document.getElementById('btn-copy-key').addEventListener('click', function () { copy(unlockedKey); });
             document.getElementById('btn-copy-curl-list').addEventListener('click', function () { copy(curlList.textContent); });
             document.getElementById('btn-copy-curl-send').addEventListener('click', function () { copy(curlSend.textContent); });
+            document.getElementById('btn-copy-curl-send-media').addEventListener('click', function () { copy(document.getElementById('curl-send-media').textContent); });
         })();
     </script>
 </body>
