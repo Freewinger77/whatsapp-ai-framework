@@ -58,7 +58,7 @@ npm run build
 echo "Uploading dashboard assets to storage account '${DASHBOARD_STORAGE_ACCOUNT}'..."
 az storage blob upload-batch \
   --account-name "$DASHBOARD_STORAGE_ACCOUNT" \
-  --auth-mode login \
+  --auth-mode key \
   --destination '$web' \
   --source dist \
   --overwrite true \

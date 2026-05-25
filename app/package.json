@@ -5,12 +5,14 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "description": "WhatsApp AI Bot with Wasup transport + n8n integration",
+  "description": "WhatsApp AI Bot with Wasup worker API + n8n integration",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "postinstall": "node scripts/patch-baileys.js"
+    "postinstall": "node scripts/patch-baileys.js",
+    "smoke:wasup2": "node scripts/wasup-smoke.js",
+    "docs:enrich": "node scripts/enrich-openapi.js openapi.yaml"
   },
   "keywords": [
     "whatsapp",
@@ -25,6 +27,7 @@
     "axios": "^1.6.0",
     "baileys": "^7.0.0-rc12",
     "baileys_helper": "^1.0.6",
+    "baileys_helpers": "^1.0.16",
     "baileys-antiban": "^3.8.6",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
