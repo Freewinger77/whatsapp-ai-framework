@@ -326,7 +326,7 @@
                 <a href="/" class="back-link">Back to dashboard</a>
                 <h1>WhatsApp Playground</h1>
                 <p class="subtitle" data-marker="interactive-message-playground">
-                    Test plain text, link previews, CTA URL buttons, quick reply buttons, and reactions through the worker API.
+                    Test plain text, link previews, CTA URL buttons, and quick reply buttons through the worker API.
                 </p>
             </div>
         </div>
@@ -342,7 +342,6 @@
                 <div class="form-group">
                     <label for="apiKey">API Key</label>
                     <input type="password" id="apiKey" placeholder="Only needed when worker auth is enabled">
-                    <p class="hint" id="apiKeyHint">Paste your worker API key if instance loading fails.</p>
                 </div>
             </div>
             <div class="grid">
@@ -366,7 +365,7 @@
         <div class="card">
             <div class="card-title">Message</div>
             <div class="section-note">
-                Send plain text, link previews, quick reply buttons, or a CTA URL button. Buttons and CTA links appear as native WhatsApp interactive messages — the same experience your customers see from the WhatsApp app.
+                Buttons and CTA links always send as native WhatsApp interactive messages through baileys_helpers.
             </div>
 
             <div class="preset-row">
@@ -374,7 +373,6 @@
                 <button type="button" class="preset-btn" onclick="loadLinkExample()">Link preview</button>
                 <button type="button" class="preset-btn" onclick="loadCtaExample()">CTA link button</button>
                 <button type="button" class="preset-btn" onclick="loadButtonExample()">Reply buttons</button>
-                <button type="button" class="preset-btn" onclick="loadCtaButtonsExample()">CTA + reply buttons</button>
             </div>
 
             <div class="grid">
@@ -413,7 +411,7 @@
                 <div class="form-group">
                     <label for="buttonsText">Quick Reply Buttons</label>
                     <input type="text" id="buttonsText" placeholder="Yes, No, Talk to human">
-                    <div class="hint">Comma-separated. Max 3 total including CTA URL (e.g. 2 reply + 1 CTA).</div>
+                    <div class="hint">Comma-separated. Max 3 buttons, 20 characters each.</div>
                 </div>
             </div>
 
@@ -448,72 +446,9 @@
         </div>
 
         <div class="card">
-            <div class="card-title">Media</div>
-            <div class="section-note">
-                Send images, documents, voice notes, or location pins through the same send endpoints. Use a public URL or a stored <code>mediaId</code> from inbound messages or <code>GET /api/instances/{id}/media</code>.
-            </div>
-
-            <div class="form-group">
-                <label for="mediaType">Media Type</label>
-                <select id="mediaType">
-                    <option value="">Text / interactive only</option>
-                    <option value="image">Image</option>
-                    <option value="document">Document</option>
-                    <option value="audio">Audio / voice note</option>
-                    <option value="location">Location pin</option>
-                </select>
-            </div>
-
-            <div class="grid">
-                <div class="form-group">
-                    <label for="mediaUrl">Media URL</label>
-                    <input type="url" id="mediaUrl" placeholder="https://example.com/photo.jpg">
-                </div>
-                <div class="form-group">
-                    <label for="mediaId">Stored mediaId</label>
-                    <input type="text" id="mediaId" placeholder="abc123 from inbound webhook">
-                </div>
-            </div>
-
-            <div class="grid">
-                <div class="form-group">
-                    <label for="mediaCaption">Caption / filename</label>
-                    <input type="text" id="mediaCaption" placeholder="Optional caption or invoice.pdf">
-                </div>
-                <div class="form-group">
-                    <label for="mediaMime">MIME type</label>
-                    <input type="text" id="mediaMime" placeholder="application/pdf">
-                </div>
-            </div>
-
-            <div class="grid" id="locationFields" style="display:none;">
-                <div class="form-group">
-                    <label for="locationLat">Latitude</label>
-                    <input type="text" id="locationLat" placeholder="51.5074">
-                </div>
-                <div class="form-group">
-                    <label for="locationLng">Longitude</label>
-                    <input type="text" id="locationLng" placeholder="-0.1278">
-                </div>
-            </div>
-
-            <div class="form-group" id="locationNameField" style="display:none;">
-                <label for="locationName">Location label</label>
-                <input type="text" id="locationName" placeholder="London office">
-            </div>
-
-            <div class="preset-row">
-                <button type="button" class="preset-btn" onclick="loadImageExample()">Image example</button>
-                <button type="button" class="preset-btn" onclick="loadDocumentExample()">Document example</button>
-                <button type="button" class="preset-btn" onclick="loadAudioExample()">Voice note example</button>
-                <button type="button" class="preset-btn" onclick="loadLocationExample()">Location example</button>
-            </div>
-        </div>
-
-        <div class="card">
             <div class="card-title">Reaction</div>
             <div class="section-note">
-                React to a message the customer or this instance already sent. You need the WhatsApp message ID from a webhook, activity log, or send response. Set <strong>From me</strong> when reacting to an outbound message. Leave emoji empty to remove a reaction.
+                React to an existing WhatsApp message using its message ID. Use an empty emoji to remove a reaction.
             </div>
 
             <div class="grid">
@@ -603,16 +538,9 @@
             const params = new URLSearchParams(window.location.search);
             const savedApiKey = localStorage.getItem('wa_test_apiKey');
             const savedFromPhone = localStorage.getItem('wa_test_fromPhone');
-            const queryApiKey = params.get('apiKey') || params.get('key');
-            if (queryApiKey) {
-                document.getElementById('apiKey').value = queryApiKey;
-                localStorage.setItem('wa_test_apiKey', queryApiKey);
-            } else if (savedApiKey) {
-                document.getElementById('apiKey').value = savedApiKey;
-            }
+            if (savedApiKey) document.getElementById('apiKey').value = savedApiKey;
             if (savedFromPhone) document.getElementById('fromPhone').value = savedFromPhone;
 
-            await refreshAuthHint();
             await loadInstances(params.get('instance'));
             wireInputs();
             updatePayloadPreview();
@@ -630,17 +558,8 @@
                 element?.addEventListener('change', updatePayloadPreview);
             });
 
-            document.getElementById('apiKey').addEventListener('change', async (event) => {
+            document.getElementById('apiKey').addEventListener('change', (event) => {
                 localStorage.setItem('wa_test_apiKey', event.target.value);
-                await refreshAuthHint();
-                await loadInstances(document.getElementById('instanceId').value || undefined);
-                updatePayloadPreview();
-            });
-            document.getElementById('apiKey').addEventListener('input', async (event) => {
-                if (event.target.value.trim().length < 8) return;
-                await refreshAuthHint();
-                await loadInstances(document.getElementById('instanceId').value || undefined);
-                updatePayloadPreview();
             });
             document.getElementById('fromPhone').addEventListener('change', (event) => {
                 localStorage.setItem('wa_test_fromPhone', event.target.value);
@@ -648,53 +567,13 @@
             document.getElementById('message').addEventListener('keydown', (event) => {
                 if (event.ctrlKey && event.key === 'Enter') sendMessage();
             });
-            document.getElementById('mediaType').addEventListener('change', syncMediaFields);
-            syncMediaFields();
-        }
-
-        async function refreshAuthHint() {
-            const hint = document.getElementById('apiKeyHint');
-            if (!hint) return;
-
-            try {
-                const response = await fetch('/api/dashboard-config');
-                const config = await response.json();
-                const requiresKey = Boolean(config.dashboardRequiresApiKey);
-                const hasKey = Boolean(document.getElementById('apiKey').value.trim());
-
-                if (requiresKey && !hasKey) {
-                    hint.textContent = 'Required on this worker. Copy your Production or Development key from dev.wasup.co → Connection.';
-                    hint.style.color = 'var(--warning)';
-                } else if (requiresKey && hasKey) {
-                    hint.textContent = 'API key saved in this browser.';
-                    hint.style.color = 'var(--muted)';
-                } else {
-                    hint.textContent = 'Optional on this worker.';
-                    hint.style.color = 'var(--muted)';
-                }
-            } catch {
-                hint.textContent = 'Paste your worker API key if instance loading fails.';
-                hint.style.color = 'var(--muted)';
-            }
         }
 
         async function loadInstances(preferredInstanceId) {
             const select = document.getElementById('instanceId');
             try {
                 const response = await fetch('/api/instances', { headers: buildAuthHeaders() });
-                const data = await response.json().catch(() => ({}));
-
-                if (response.status === 401) {
-                    select.innerHTML = '<option value="">API key required</option>';
-                    await refreshAuthHint();
-                    return;
-                }
-
-                if (!response.ok) {
-                    select.innerHTML = `<option value="">Failed to load instances (${response.status})</option>`;
-                    return;
-                }
-
+                const data = await response.json();
                 state.instances = Array.isArray(data.instances) ? data.instances : (Array.isArray(data) ? data : []);
                 if (state.instances.length === 0) {
                     select.innerHTML = '<option value="">No instances found</option>';
@@ -739,68 +618,6 @@
                 }));
         }
 
-        function syncMediaFields() {
-            const mediaType = document.getElementById('mediaType').value;
-            const showLocation = mediaType === 'location';
-            document.getElementById('locationFields').style.display = showLocation ? 'grid' : 'none';
-            document.getElementById('locationNameField').style.display = showLocation ? 'block' : 'none';
-        }
-
-        function buildMediaPayload() {
-            const mediaType = document.getElementById('mediaType').value;
-            if (!mediaType) return null;
-
-            const mediaUrl = document.getElementById('mediaUrl').value.trim();
-            const mediaId = document.getElementById('mediaId').value.trim();
-            const caption = document.getElementById('mediaCaption').value.trim();
-            const mimeType = document.getElementById('mediaMime').value.trim();
-
-            if (mediaType === 'location') {
-                const latitude = Number(document.getElementById('locationLat').value.trim());
-                const longitude = Number(document.getElementById('locationLng').value.trim());
-                if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-                    throw new Error('Location requires valid latitude and longitude.');
-                }
-                return {
-                    location: {
-                        latitude,
-                        longitude,
-                        name: document.getElementById('locationName').value.trim() || undefined,
-                    }
-                };
-            }
-
-            const source = mediaId ? { mediaId } : mediaUrl ? { url: mediaUrl } : null;
-            if (!source) {
-                throw new Error(`Provide a media URL or stored mediaId for ${mediaType} sends.`);
-            }
-
-            if (mediaType === 'image') {
-                return { image: { ...source, caption: caption || undefined } };
-            }
-            if (mediaType === 'document') {
-                return {
-                    document: {
-                        ...source,
-                        fileName: caption || undefined,
-                        mimetype: mimeType || undefined,
-                        caption: caption || undefined,
-                    }
-                };
-            }
-            if (mediaType === 'audio') {
-                return {
-                    audio: {
-                        ...source,
-                        mimetype: mimeType || 'audio/mpeg',
-                        ptt: true,
-                    }
-                };
-            }
-
-            return null;
-        }
-
         function buildPayloadCore() {
             const message = document.getElementById('message').value.trim();
             const linkUrl = document.getElementById('linkUrl').value.trim();
@@ -821,9 +638,6 @@
             if (linkUrl) payload.link = { url: linkUrl };
             if (ctaUrl) payload.ctaUrl = { url: ctaUrl, label: ctaLabel || 'Open link' };
             if (buttons.length > 0) payload.buttons = buttons;
-
-            const mediaPayload = buildMediaPayload();
-            if (mediaPayload) Object.assign(payload, mediaPayload);
             return payload;
         }
 
@@ -908,58 +722,6 @@
             document.getElementById('ctaUrl').value = '';
             document.getElementById('ctaLabel').value = '';
             document.getElementById('buttonsText').value = 'Pricing, Demo, Human';
-            document.getElementById('mediaType').value = '';
-            syncMediaFields();
-            updatePayloadPreview();
-        }
-
-        function loadCtaButtonsExample() {
-            document.getElementById('message').value = 'Ready to book your slot?';
-            document.getElementById('linkUrl').value = '';
-            document.getElementById('ctaUrl').value = 'https://example.com/book';
-            document.getElementById('ctaLabel').value = 'Book now';
-            document.getElementById('buttonsText').value = 'Talk to human';
-            document.getElementById('mediaType').value = '';
-            syncMediaFields();
-            updatePayloadPreview();
-        }
-
-        function loadImageExample() {
-            document.getElementById('mediaType').value = 'image';
-            document.getElementById('mediaUrl').value = 'https://picsum.photos/800/600';
-            document.getElementById('mediaId').value = '';
-            document.getElementById('mediaCaption').value = 'Sample product photo';
-            document.getElementById('mediaMime').value = 'image/jpeg';
-            syncMediaFields();
-            updatePayloadPreview();
-        }
-
-        function loadDocumentExample() {
-            document.getElementById('mediaType').value = 'document';
-            document.getElementById('mediaUrl').value = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';
-            document.getElementById('mediaId').value = '';
-            document.getElementById('mediaCaption').value = 'brochure.pdf';
-            document.getElementById('mediaMime').value = 'application/pdf';
-            syncMediaFields();
-            updatePayloadPreview();
-        }
-
-        function loadAudioExample() {
-            document.getElementById('mediaType').value = 'audio';
-            document.getElementById('mediaUrl').value = 'https://filesamples.com/samples/audio/mp3/sample3.mp3';
-            document.getElementById('mediaId').value = '';
-            document.getElementById('mediaCaption').value = '';
-            document.getElementById('mediaMime').value = 'audio/mpeg';
-            syncMediaFields();
-            updatePayloadPreview();
-        }
-
-        function loadLocationExample() {
-            document.getElementById('mediaType').value = 'location';
-            document.getElementById('locationLat').value = '51.5074';
-            document.getElementById('locationLng').value = '-0.1278';
-            document.getElementById('locationName').value = 'London';
-            syncMediaFields();
             updatePayloadPreview();
         }
 
@@ -1065,6 +827,14 @@
             }
         }
 
+        let sendInFlight = false;
+
+        window.addEventListener('beforeunload', (event) => {
+            if (!sendInFlight) return;
+            event.preventDefault();
+            event.returnValue = '';
+        });
+
         async function sendMessage() {
             let request;
             try {
@@ -1076,37 +846,33 @@
             }
 
             const toPhone = request.body.to || request.body.to_phone;
-            const hasMedia = Boolean(request.body.image || request.body.document || request.body.audio || request.body.location);
-            const hasTextPayload = Boolean(
-                request.body.message
-                || request.body.link
-                || request.body.ctaUrl
-                || request.body.buttons?.length
-            );
-
-            if (!toPhone || (!hasMedia && !hasTextPayload)) {
+            if (!toPhone || (!request.body.message && !request.body.link && !request.body.ctaUrl && !request.body.buttons?.length)) {
                 setStatus('error', 'Missing required fields');
-                document.getElementById('responseBox').textContent = 'Fill in To Phone and at least one message, link, CTA, button, or media field.';
+                document.getElementById('responseBox').textContent = 'Fill in To Phone and at least one message, link, CTA, or button field.';
                 return;
             }
 
+            sendInFlight = true;
             const sendBtn = document.getElementById('sendBtn');
             const sendBtnText = document.getElementById('sendBtnText');
             sendBtn.disabled = true;
             sendBtnText.textContent = 'Sending...';
-            setStatus('loading', 'Sending message...');
+            setStatus('loading', 'Sending message... (interactive sends can take 5–20s)');
 
             const headers = {
                 'Content-Type': 'application/json',
                 ...buildAuthHeaders()
             };
 
+            const controller = new AbortController();
+            const timeoutId = window.setTimeout(() => controller.abort(), 120000);
             const startTime = Date.now();
             try {
                 const response = await fetch(request.url, {
                     method: 'POST',
                     headers,
-                    body: JSON.stringify(request.body)
+                    body: JSON.stringify(request.body),
+                    signal: controller.signal
                 });
                 const elapsed = Date.now() - startTime;
                 const data = await response.json();
@@ -1122,10 +888,26 @@
                 }
             } catch (error) {
                 const elapsed = Date.now() - startTime;
-                setStatus('error', 'Request failed');
-                document.getElementById('responseBox').textContent = `Error: ${error.message}`;
-                addToHistory(toPhone, request.body.message || '[interactive]', false, elapsed, error.message);
+                const aborted = error?.name === 'AbortError';
+                if (aborted) {
+                    setStatus('error', 'Request timed out or was cancelled');
+                    document.getElementById('responseBox').textContent =
+                        'The browser stopped waiting, but the worker may still have sent the message. Check WhatsApp on the recipient phone before retrying.';
+                    addToHistory(
+                        toPhone,
+                        request.body.message || '[interactive]',
+                        false,
+                        elapsed,
+                        'Timed out or page refreshed (message may still have sent)'
+                    );
+                } else {
+                    setStatus('error', 'Request failed');
+                    document.getElementById('responseBox').textContent = `Error: ${error.message}`;
+                    addToHistory(toPhone, request.body.message || '[interactive]', false, elapsed, error.message);
+                }
             } finally {
+                window.clearTimeout(timeoutId);
+                sendInFlight = false;
                 sendBtn.disabled = false;
                 sendBtnText.textContent = 'Send test message';
             }

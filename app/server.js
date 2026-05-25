@@ -22,6 +22,7 @@ import { dirname } from 'path';
 import axios from 'axios';
 import QRCode from 'qrcode';
 import { initAzureStorage, uploadMedia, isStorageEnabled } from './src/utils/azure-storage.js';
+import { initMediaStorage, listMedia, resolveMediaBuffer } from './src/utils/media-storage.js';
 
 // ES Module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -2143,6 +2144,49 @@ app.post('/api/upload', async (req, res) => {
     }
 });
 
+/**
+ * GET /api/instances/:id/media
+ * List stored media for an instance (inbound + outbound saved on worker disk).
+ */
+app.get('/api/instances/:id/media', async (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) return res.status(404).json({ error: 'Instance not found' });
+
+        const mediaType = req.query.type || req.query.mediaType || undefined;
+        const limit = Number(req.query.limit || 50);
+        const media = await listMedia(req.params.id, {
+            mediaType: typeof mediaType === 'string' ? mediaType : undefined,
+            limit: Number.isFinite(limit) ? limit : 50,
+        });
+
+        res.json({ success: true, count: media.length, media });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/instances/:id/media/:mediaId
+ * Download one stored media file by id from an inbound webhook or media list.
+ */
+app.get('/api/instances/:id/media/:mediaId', async (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) return res.status(404).json({ error: 'Instance not found' });
+
+        const resolved = await resolveMediaBuffer(req.params.id, req.params.mediaId);
+        if (!resolved) return res.status(404).json({ error: 'Media not found' });
+
+        const fileName = resolved.entry.fileName || `${req.params.mediaId}.bin`;
+        res.setHeader('Content-Type', resolved.entry.mimeType || 'application/octet-stream');
+        res.setHeader('Content-Disposition', `inline; filename="${fileName.replace(/"/g, '')}"`);
+        res.send(resolved.buffer);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // ========================================
 // GENERAL API ENDPOINTS
 // ========================================
@@ -2591,7 +2635,8 @@ API Endpoints:
 Initializing...
     `);
     
-    // Initialize Azure Blob Storage (for media uploads)
+    // Initialize Azure Blob Storage (optional public URLs) + local media index
+    await initMediaStorage();
     await initAzureStorage();
 
     // Initialize instance manager

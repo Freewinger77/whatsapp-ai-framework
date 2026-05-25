@@ -20,7 +20,7 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason, downloadMediaMes
 import baileysHelper from 'baileys_helper';
 import { AntiBanManager, safeSendMessage, delay } from './anti-ban.js';
 import { sendInteractiveViaHelper } from './interactive-sender.js';
-import { uploadMedia, isStorageEnabled } from './azure-storage.js';
+import { storeMediaBuffer } from './media-storage.js';
 import {
     createProxyAgent,
     getDeploymentDefaultProxy,
@@ -424,12 +424,16 @@ class WhatsAppInstance {
         try {
             const raw = await fs.readFile(credsPath, 'utf8');
             const creds = JSON.parse(raw);
+            const hasMe = Boolean(creds?.me?.id || creds?.me?.lid);
+            // Baileys often keeps registered=false on fully paired lines; me.id is the reliable signal.
+            const registered = !!creds.registered || hasMe;
             return {
                 exists: true,
-                registered: !!creds.registered,
+                registered,
+                hasMe,
             };
         } catch {
-            return { exists: false, registered: false };
+            return { exists: false, registered: false, hasMe: false };
         }
     }
 
@@ -470,7 +474,7 @@ class WhatsAppInstance {
             : null;
         const qrExpired = typeof qrAgeMs === 'number' && qrAgeMs >= (QR_CODE_TTL_MS - 15_000);
         const inLinkingGrace = this._isPostScanGraceActive();
-        const staleUnregisteredAuth = authState.exists && !authState.registered && !inLinkingGrace;
+        const staleUnregisteredAuth = authState.exists && !authState.registered && !authState.hasMe && !inLinkingGrace;
         const staleConnectingSession = this.status === 'connecting'
             && !inLinkingGrace
             && (qrExpired || staleUnregisteredAuth || (!this.qrCode && !this.qrContent));
@@ -593,7 +597,7 @@ class WhatsAppInstance {
             try {
                 if (mode === 'qr-timeout') {
                     const authState = await this._readAuthRegistrationState();
-                    if (authState.exists && !authState.registered && !this._isPostScanGraceActive()) {
+                    if (authState.exists && !authState.registered && !authState.hasMe && !this._isPostScanGraceActive()) {
                         await this._clearLocalAuthFiles('Cleared stale unregistered auth during QR refresh');
                     }
                 }
@@ -1821,12 +1825,17 @@ class WhatsAppInstance {
             
             console.log(`[Instance ${this.id}] Saving contact before message: ${phoneNumber} as "${name}"`);
             
-            // Use addOrEditContact on the socket when available
-            await this.socket.addOrEditContact(jid, {
-                fullName: name,
-                firstName: name,
-                saveOnPrimaryAddressbook: true
-            });
+            // Use addOrEditContact on the socket when available (bounded wait — never block sends)
+            await Promise.race([
+                this.socket.addOrEditContact(jid, {
+                    fullName: name,
+                    firstName: name,
+                    saveOnPrimaryAddressbook: true
+                }),
+                new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('Contact save timed out')), 5000);
+                })
+            ]);
             
             // Mark as saved
             this.savedContacts.add(jid);
@@ -2041,15 +2050,17 @@ class WhatsAppInstance {
             
             this._log(`Received from ${phoneNumber}: ${(messageContent.text || '[media]').substring(0, 50)}...`, 'info');
             
-            // Download + upload media to Azure Blob Storage (non-blocking on failure)
-            let mediaUrl = null;
+            // Download + store media on worker disk (Azure public URL optional)
+            let mediaInfo = null;
             if (messageContent.hasMedia) {
-                const upload = await this._downloadAndUploadMedia(msg, messageContent);
-                if (upload) mediaUrl = upload.url;
+                mediaInfo = await this._downloadAndStoreMedia(msg, messageContent);
             }
+            const mediaUrl = mediaInfo?.publicUrl || null;
             
             this._logMessage('inbound', phoneNumber, this.connectedPhone || this.id, messageContent.text, msg.key.id, {
                 mediaUrl: mediaUrl || undefined,
+                mediaId: mediaInfo?.mediaId || undefined,
+                downloadUrl: mediaInfo?.downloadUrl || undefined,
                 mediaType: messageContent.hasMedia ? messageContent.messageType : undefined,
                 mimeType: messageContent.mimeType || undefined,
                 fileName: messageContent.fileName || undefined
@@ -2077,6 +2088,8 @@ class WhatsAppInstance {
                         isReply: messageContent.isReply,
                         quotedMessage: messageContent.quotedText,
                         mediaUrl,
+                        mediaId: mediaInfo?.mediaId || null,
+                        downloadUrl: mediaInfo?.downloadUrl || null,
                         mimeType: messageContent.mimeType,
                         fileName: messageContent.fileName,
                         timestamp: new Date().toISOString(),
@@ -2105,6 +2118,8 @@ class WhatsAppInstance {
                     isReply: messageContent.isReply,
                     quotedMessage: messageContent.quotedText,
                     mediaUrl,
+                    mediaId: mediaInfo?.mediaId || null,
+                    downloadUrl: mediaInfo?.downloadUrl || null,
                     mimeType: messageContent.mimeType,
                     fileName: messageContent.fileName,
                     timestamp: new Date().toISOString(),
@@ -2119,7 +2134,7 @@ class WhatsAppInstance {
             // Only forward if this instance has its own webhook configured
             if (this.webhookUrl) {
                 this._log(`Forwarding to webhook: ${this.webhookUrl.substring(0, 50)}...`, 'info');
-                await this._forwardToWebhook(msg, messageContent, from, phoneNumber, this.webhookUrl, mediaUrl, receivedAtMs);
+                await this._forwardToWebhook(msg, messageContent, from, phoneNumber, this.webhookUrl, mediaInfo, receivedAtMs);
             } else {
                 this._log('No instance webhook configured - message logged only', 'info');
             }
@@ -2138,7 +2153,7 @@ class WhatsAppInstance {
      * @param {string} phoneNumber - Sender phone number
      * @param {string} webhookUrl - Webhook URL to forward to
      */
-    async _forwardToWebhook(msg, messageContent, from, phoneNumber, webhookUrl, mediaUrl = null, receivedAtMs = Date.now()) {
+    async _forwardToWebhook(msg, messageContent, from, phoneNumber, webhookUrl, mediaInfo = null, receivedAtMs = Date.now()) {
         const axios = (await import('axios')).default;
         const phoneNotifsOn = this._preservesPhoneNotifications();
         const notificationMax = this._isNotificationMaxProfile();
@@ -2176,13 +2191,24 @@ class WhatsAppInstance {
                 to_phone: normalizePhone(this.connectedPhone),
                 message: messageContent.text,
                 media_type: mediaTypeMap[messageContent.messageType] || 'text',
-                media_url: mediaUrl || null,
+                media_url: mediaInfo?.publicUrl || null,
+                media_id: mediaInfo?.mediaId || null,
+                whatsapp_message_id: msg?.key?.id || null,
                 mime_type: messageContent.mimeType || null,
                 file_name: messageContent.fileName || null,
                 status: 'received',
                 webhook_id: this.id,
                 event: 'message',
-                quoted_message: messageContent.quotedText || null
+                quoted_message: messageContent.quotedText || null,
+                media: mediaInfo
+                    ? {
+                        id: mediaInfo.mediaId,
+                        downloadUrl: mediaInfo.downloadUrl,
+                        mimeType: mediaInfo.mimeType || messageContent.mimeType || null,
+                        fileName: mediaInfo.fileName || messageContent.fileName || null,
+                        publicUrl: mediaInfo.publicUrl || null,
+                    }
+                    : null,
             };
             
             console.log(`[Instance ${this.id}] Webhook payload:`, JSON.stringify(payload, null, 2));
@@ -2393,36 +2419,66 @@ class WhatsAppInstance {
     }
     
     /**
-     * Download media from a WhatsApp message and upload to Azure Blob Storage.
-     * Returns the public URL or null if storage is disabled / download fails.
+     * Download media from WhatsApp and persist on worker disk.
+     * Returns media_id + downloadUrl for webhooks; publicUrl when Azure is configured.
      */
-    async _downloadAndUploadMedia(msg, messageContent) {
-        if (!messageContent.hasMedia || !isStorageEnabled()) return null;
+    async _downloadAndStoreMedia(msg, messageContent) {
+        if (!messageContent.hasMedia) return null;
 
         try {
-            const buffer = await downloadMediaMessage(msg, 'buffer', {});
+            const buffer = await downloadMediaMessage(
+                msg,
+                'buffer',
+                {},
+                {
+                    logger: pino({ level: 'silent' }),
+                    reuploadRequest: this.socket?.updateMediaMessage,
+                }
+            );
             if (!buffer || buffer.length === 0) return null;
 
             let ext;
             try { ext = extensionForMediaMessage(msg.message); } catch (_) {}
             if (!ext) {
-                const mimeMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'video/mp4': 'mp4', 'audio/ogg; codecs=opus': 'ogg', 'audio/mpeg': 'mp3', 'application/pdf': 'pdf' };
-                ext = mimeMap[messageContent.mimeType] || messageContent.mimeType?.split('/')[1]?.split(';')[0] || 'bin';
+                const mimeMap = {
+                    'image/jpeg': 'jpg',
+                    'image/png': 'png',
+                    'image/webp': 'webp',
+                    'video/mp4': 'mp4',
+                    'audio/ogg; codecs=opus': 'ogg',
+                    'audio/ogg': 'ogg',
+                    'audio/mpeg': 'mp3',
+                    'audio/mp4': 'm4a',
+                    'application/pdf': 'pdf',
+                };
+                ext = mimeMap[messageContent.mimeType]
+                    || messageContent.mimeType?.split('/')[1]?.split(';')[0]
+                    || 'bin';
             }
 
-            const result = await uploadMedia(buffer, {
-                extension: ext,
+            const entry = await storeMediaBuffer(this.id, buffer, {
                 mimeType: messageContent.mimeType || 'application/octet-stream',
-                instanceId: this.id,
-                folder: messageContent.messageType
+                fileName: messageContent.fileName,
+                mediaType: messageContent.messageType,
+                direction: 'inbound',
+                sourceMessageId: msg.key?.id || null,
             });
 
-            if (result) {
-                this._log(`Media uploaded: ${messageContent.messageType} → ${result.url.substring(0, 80)}...`, 'success');
-            }
-            return result;
+            const downloadUrl = `/api/instances/${encodeURIComponent(this.id)}/media/${encodeURIComponent(entry.id)}`;
+            this._log(
+                `Media stored: ${messageContent.messageType} → ${entry.id} (${buffer.length} bytes)`,
+                'success'
+            );
+
+            return {
+                mediaId: entry.id,
+                downloadUrl,
+                publicUrl: entry.publicUrl || null,
+                mimeType: entry.mimeType || messageContent.mimeType || null,
+                fileName: entry.fileName || messageContent.fileName || null,
+            };
         } catch (err) {
-            this._log(`Media download/upload failed: ${err.message}`, 'error');
+            this._log(`Media download/store failed: ${err.message}`, 'error');
             return null;
         }
     }
@@ -3622,9 +3678,8 @@ class InstanceManager {
                     this.instances.set(instance.id, instance);
                     console.log(`[InstanceManager] Loaded instance: ${instance.id} (${instance.name})`);
                     
-                    // Auto-connect only when credentials are fully registered.
-                    // Partial unregistered creds from an abandoned QR attempt cause
-                    // "QR code out of date" until cleared — wipe them on startup instead.
+                    // Auto-connect when credentials represent a paired line (registered or me.id present).
+                    // Only wipe auth for true abandoned QR attempts (creds exist but no me.id).
                     const credsFile = path.join(instance.authFolder, 'creds.json');
                     if (fsSync.existsSync(credsFile)) {
                         const authState = await instance._readAuthRegistrationState();
@@ -3633,9 +3688,9 @@ class InstanceManager {
                             instance.connect().catch(err => {
                                 console.error(`[InstanceManager] Auto-reconnect failed for ${instance.id}:`, err.message);
                             });
-                        } else if (authState.exists) {
-                            console.log(`[InstanceManager] Clearing stale unregistered auth for ${instance.id} on startup`);
-                            await instance._clearLocalAuthFiles('Cleared stale unregistered auth on startup');
+                        } else if (authState.exists && !authState.hasMe) {
+                            console.log(`[InstanceManager] Clearing abandoned unpaired auth for ${instance.id} on startup`);
+                            await instance._clearLocalAuthFiles('Cleared abandoned unpaired auth on startup');
                         }
                     }
                 }
