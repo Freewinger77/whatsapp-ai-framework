@@ -62,7 +62,7 @@
 │  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
 │                              │                                   │
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │                    Baileys WhatsApp Client                   ││
+│  │                    WhatsApp Session Client                     ││
 │  │  - QR Authentication    - Message Handler                    ││
 │  │  - Connection Manager   - Presence Updates                   ││
 │  └─────────────────────────────────────────────────────────────┘│
@@ -118,8 +118,8 @@
 | 30-Second Timeout | Prevents hanging on slow n8n | ✅ |
 | Human Handoff Check | Respects `skip: true` from n8n | ✅ |
 | Multilingual Error Messages | EN/BM/Mandarin fallback replies | ✅ |
-| Link Preview Sending | Text messages can include previewable URLs via Baileys | ✅ |
-| Native Interactive Buttons | Quick replies and CTA URLs via `baileys_helpers` native interactive flow | ✅ |
+| Link Preview Sending | Text messages can include previewable URLs with automatic link cards | ✅ |
+| Native Interactive Buttons | Quick replies and CTA URLs via native WhatsApp interactive messages | ✅ |
 | Message Reactions | React to messages by message ID via `/api/react` endpoints | ✅ |
 
 **Message Payload to n8n:**
@@ -139,7 +139,7 @@ User sends WhatsApp message
         │
         ▼
 ┌─────────────────────────────┐
-│ Baileys receives message    │
+│ Worker receives message     │
 │ (messages.upsert event)     │
 └─────────────────────────────┘
         │
@@ -182,7 +182,7 @@ User sends WhatsApp message
         │
         ▼
 ┌─────────────────────────────┐
-│ Send reply via Baileys      │
+│ Send reply via WhatsApp     │
 │ + Record for rate limiting  │
 └─────────────────────────────┘
 ```

@@ -5,13 +5,14 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "description": "WhatsApp AI Bot with Baileys + n8n integration",
+  "description": "WhatsApp AI Bot with Wasup worker API + n8n integration",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
     "postinstall": "node scripts/patch-baileys.js",
-    "smoke:wasup2": "node scripts/wasup-smoke.js"
+    "smoke:wasup2": "node scripts/wasup-smoke.js",
+    "docs:enrich": "node scripts/enrich-openapi.js openapi.yaml"
   },
   "keywords": [
     "whatsapp",
@@ -34,5 +35,8 @@
     "ws": "^8.14.2",
     "https-proxy-agent": "^7.0.6",
     "socks-proxy-agent": "^8.0.5"
+  },
+  "optionalDependencies": {
+    "@azure/storage-blob": "^12.28.0"
   }
 }

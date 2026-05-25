@@ -43,11 +43,19 @@ curl -X POST http://localhost:3000/api/send \
   }'
 ```
 
-## Links, CTA URLs, and Buttons
+## Links, CTA URLs, and Quick Reply Buttons
 
-The send endpoints accept link and button-style payloads. Plain text stays backward compatible: existing `{ "to": "...", "message": "..." }` calls still work.
+The send endpoints accept link and button payloads on the same routes as plain text. Existing `{ "to": "...", "message": "..." }` calls keep working unchanged.
 
-Quick reply and CTA URL buttons are sent as **native WhatsApp interactive buttons** via `baileys_helpers`.
+### What each option does
+
+| Field | What the recipient sees | Best for |
+|-------|-------------------------|----------|
+| `link` + `linkPreview: true` | Message text with a rich URL preview card | Sharing articles, product pages, or any HTTPS link |
+| `ctaUrl` | One tappable button under your message that opens a URL | Booking, checkout, signup, or “Open dashboard” actions |
+| `buttons` | Up to three tap-to-reply chips | Menus, yes/no flows, routing to sales or support |
+
+Quick reply and CTA URL buttons are sent as **native WhatsApp interactive messages** — not plain text workarounds.
 
 ### Text With URL Preview
 
@@ -63,9 +71,11 @@ curl -X POST http://localhost:3000/api/instances/wa_abc123/send \
   }'
 ```
 
-The API appends the URL if it is not already in `message`, then lets Baileys generate the WhatsApp link preview. Set `"linkPreview": false` to send the URL without preview metadata.
+The API appends the URL if it is not already in `message`, then generates the WhatsApp link preview card. Set `"linkPreview": false` to send the URL as plain text without preview metadata.
 
 ### Native Quick Reply Buttons
+
+Recipients tap a chip to reply. Your webhook receives the button `id` you defined.
 
 ```bash
 curl -X POST http://localhost:3000/api/instances/wa_abc123/send/interactive \
@@ -84,6 +94,8 @@ curl -X POST http://localhost:3000/api/instances/wa_abc123/send/interactive \
 
 ### Native CTA URL Button
 
+Adds a single button below the message. `label` is the button text (max 25 characters). Tapping opens `url` in the browser.
+
 ```bash
 curl -X POST http://localhost:3000/api/instances/wa_abc123/send/interactive \
   -H "Content-Type: application/json" \
@@ -101,6 +113,16 @@ curl -X POST http://localhost:3000/api/instances/wa_abc123/send/interactive \
 ## Reactions
 
 React to an existing WhatsApp message by message ID. Use an empty emoji to remove a reaction.
+
+### Finding the message ID
+
+You need the WhatsApp message ID for the message you want to react to:
+
+- **Inbound webhook** — use `key.id` from the payload (set `fromMe: false`)
+- **Outbound send response** — use the message id returned when you sent the message (set `fromMe: true`)
+- **Activity logs** — copy the id from the instance log entry for that message
+
+Always pass `to` as the chat phone number (country code, no symbols).
 
 ### React via Specific Instance
 
@@ -130,7 +152,7 @@ curl -X POST http://localhost:3000/api/react \
   }'
 ```
 
-You can also pass a full Baileys `key` object instead of `messageId` + `fromMe`.
+You can also pass a full WhatsApp message `key` object from a webhook instead of separate `messageId` and `fromMe` fields.
 
 ## Phone Number Format
 

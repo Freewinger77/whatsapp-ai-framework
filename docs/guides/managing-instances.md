@@ -195,7 +195,7 @@ curl -X POST http://localhost:3000/api/instances/wa_abc123/disconnect \
 
 ### Automatic Reconnect
 
-Credentialed instances automatically retry recoverable disconnects without clearing auth. This includes common Baileys close/restart cases such as connection closed/replaced, timed out/lost, and restart required after QR scan. Logout or explicit auth invalidation still requires a new manual connection or auth reset.
+Credentialed instances automatically retry recoverable disconnects without clearing auth. This includes common connection closed/replaced, timed out/lost, and restart-required cases after QR scan. Logout or explicit auth invalidation still requires a new manual connection or auth reset.
 
 Reconnects are single-flight per instance and use bounded backoff by default:
 

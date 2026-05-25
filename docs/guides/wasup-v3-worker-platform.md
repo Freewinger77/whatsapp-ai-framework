@@ -34,14 +34,14 @@ flowchart LR
 |-------|------|
 | **Dashboard** (`apps/polymet-wasup`) | Clerk sign-in, org workspace, connection UI |
 | **Control plane** (`apps/control-plane`) | Billing, provisioning, worker registry, proxy import |
-| **Worker** (`app/`) | Baileys sessions, send/receive, anti-ban, proxy egress |
+| **Worker** (`app/`) | WhatsApp sessions, send/receive, anti-ban, proxy egress |
 | **OpenAPI + `/docs`** | Scalar UI for API exploration (password optional) |
 
 ## Worker features (this repo)
 
 ### Native interactive messages
 
-Buttons and lists are sent through Baileys native interactive helpers only — no legacy/fallback button modes.
+Buttons and lists are sent through native WhatsApp interactive messages only — no legacy text fallbacks for button UI.
 
 - Builder: `app/src/utils/message-builder.js`
 - API: `POST /api/instances/:id/send` with `interactive` payload
