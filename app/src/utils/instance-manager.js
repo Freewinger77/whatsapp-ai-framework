@@ -19,6 +19,7 @@ import pino from 'pino';
 import makeWASocket, { useMultiFileAuthState, DisconnectReason, downloadMediaMessage, extensionForMediaMessage, fetchLatestBaileysVersion, Browsers } from 'baileys';
 import baileysHelper from 'baileys_helper';
 import { AntiBanManager, safeSendMessage, delay } from './anti-ban.js';
+import { sendInteractiveViaHelper } from './interactive-sender.js';
 import { uploadMedia, isStorageEnabled } from './azure-storage.js';
 import {
     createProxyAgent,
@@ -1578,6 +1579,18 @@ class WhatsAppInstance {
         return { sent: true };
     }
 
+    async _sendNativeInteractive(jid, interactiveContent, behaviorOptions = {}) {
+        if (behaviorOptions.typingSimulation) {
+            try { await this.socket.sendPresenceUpdate('composing', jid); } catch (_) {}
+            await delay(1000 + Math.random() * 2000);
+            try { await this.socket.sendPresenceUpdate('paused', jid); } catch (_) {}
+        }
+
+        await sendInteractiveViaHelper(this.socket, jid, interactiveContent);
+        this.antiBanManager.recordMessage(jid);
+        return { sent: true, via: 'interactive-native' };
+    }
+
     /**
      * Send an emoji reaction to a message
      * @param {string} to - Phone number or JID of the chat
@@ -1639,12 +1652,19 @@ class WhatsAppInstance {
         // Build the outbound message object
         let messageObj;
         let logText;
+        let interactiveContent = null;
         if (typeof textOrParams === 'string') {
             messageObj = { text: textOrParams };
             logText = textOrParams;
         } else if (typeof textOrParams === 'object' && textOrParams !== null) {
-            messageObj = this._buildMessageObject(textOrParams);
-            logText = textOrParams.text || `[${textOrParams.messageType || 'rich'}]`;
+            if (textOrParams.__wasupInteractiveContent) {
+                interactiveContent = textOrParams.__wasupInteractiveContent;
+                messageObj = textOrParams;
+                logText = textOrParams.__wasupMessageText || textOrParams.text || '[interactive]';
+            } else {
+                messageObj = this._buildMessageObject(textOrParams);
+                logText = textOrParams.text || `[${textOrParams.messageType || 'rich'}]`;
+            }
         } else {
             messageObj = { text: String(textOrParams) };
             logText = String(textOrParams);
@@ -1663,8 +1683,11 @@ class WhatsAppInstance {
         
         let result;
 
+        // Native CTA / mixed interactive messages use baileys_helpers hydratedTemplate
+        if (interactiveContent) {
+            result = await this._sendNativeInteractive(jid, interactiveContent, behaviorOptions);
         // Interactive messages (buttons/lists) go through the interactive helper
-        if (messageObj._useHelper) {
+        } else if (messageObj._useHelper) {
             if (behaviorOptions.typingSimulation) {
                 try { await this.socket.sendPresenceUpdate('composing', jid); } catch (_) {}
                 await delay(1000 + Math.random() * 2000);

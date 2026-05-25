@@ -13,12 +13,34 @@ const SendMessageSchema = z
       id: z.string().min(1).max(64),
       text: z.string().min(1).max(80)
     })).max(3).optional(),
+    ctaUrl: z.union([
+      z.string().url(),
+      z.object({
+        url: z.string().url(),
+        label: z.string().max(25).optional()
+      })
+    ]).optional(),
+    link: z.union([
+      z.string().url(),
+      z.object({
+        url: z.string().url(),
+        label: z.string().max(120).optional()
+      })
+    ]).optional(),
+    linkPreview: z.boolean().optional(),
     footer: z.string().max(240).optional(),
     typingSimulation: z.boolean().optional(),
-    delayEnabled: z.boolean().optional()
+    delayEnabled: z.boolean().optional(),
+    skipContactSave: z.boolean().optional()
   })
-  .refine((value) => Boolean(value.message || value.text), {
-    message: 'message or text is required',
+  .refine((value) => Boolean(
+    value.message ||
+    value.text ||
+    value.ctaUrl ||
+    value.link ||
+    (value.buttons && value.buttons.length > 0)
+  ), {
+    message: 'message, text, link, ctaUrl, or buttons is required',
     path: ['message']
   });
 
@@ -61,7 +83,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       summary: 'Message sent from dashboard playground.',
       payload: {
         to: parsed.data.to,
-        hasButtons: Boolean(parsed.data.buttons?.length)
+        hasButtons: Boolean(parsed.data.buttons?.length),
+        hasCtaUrl: Boolean(parsed.data.ctaUrl),
+        hasLink: Boolean(parsed.data.link)
       }
     });
 

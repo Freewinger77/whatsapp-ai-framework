@@ -29,6 +29,12 @@ const __dirname = dirname(__filename);
 
 // Instance Manager
 import { InstanceManager } from './src/utils/instance-manager.js';
+import { buildWhatsAppMessage } from './src/utils/message-builder.js';
+import {
+    hasNativeInteractiveFields,
+    shouldUseMessageBuilder,
+    validateInteractiveSendBody
+} from './src/utils/interactive-payload.js';
 import {
     getDeploymentDefaultProxy,
     redactProxy,
@@ -595,56 +601,17 @@ app.get('/api/instances/:id/qr', async (req, res) => {
  */
 app.post('/api/instances/:id/send', async (req, res) => {
     try {
-        const {
-            to,
-            mediaUrl, mimeType, fileName, ptt,
-            footer, buttons, buttonText, title, sections,
-            latitude, longitude, locationName, locationAddress,
-            contactCard,
-            typingSimulation, delayEnabled, contactName, skipContactSave
-        } = req.body;
-        const message = req.body.message ?? req.body.text;
-        const messageType = resolveSendMessageType(req.body.messageType, req.body);
+        const response = await executeInstanceSend(req.params.id, req.body);
+        res.status(response.status).json(response.body);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
 
-        if (!to) {
-            return res.status(400).json({ error: 'Missing required field: to' });
-        }
-
-        // Build options for per-message behavior override
-        const options = {};
-        if (typingSimulation !== undefined) options.typingSimulation = typingSimulation;
-        if (delayEnabled !== undefined) options.delayEnabled = delayEnabled;
-        if (contactName !== undefined) options.contactName = contactName;
-        if (skipContactSave !== undefined) options.skipContactSave = skipContactSave;
-
-        // Determine if this is a rich message or plain text
-        const richType = messageType && messageType !== 'text';
-        let textOrParams;
-
-        if (richType) {
-            const normalizedInteractive = normalizeInteractivePayload(messageType, req.body, message);
-            textOrParams = {
-                messageType, text: message || '',
-                mediaUrl, mimeType, fileName, ptt,
-                footer,
-                buttons: normalizedInteractive.buttons || buttons,
-                buttonText, title,
-                sections: normalizedInteractive.sections || sections,
-                latitude, longitude, locationName, locationAddress,
-                contactCard
-            };
-        } else {
-            if (!message) return res.status(400).json({ error: 'Missing required field: message' });
-            textOrParams = message;
-        }
-
-        const result = await instanceManager.sendMessage(req.params.id, to, textOrParams, options);
-
-        res.json({
-            success: true,
-            messageType: messageType || 'text',
-            result
-        });
+app.post('/api/instances/:id/send/interactive', async (req, res) => {
+    try {
+        const response = await executeInstanceSend(req.params.id, req.body, { interactiveFocus: true });
+        res.status(response.status).json(response.body);
     } catch (error) {
         res.status(400).json({ error: error.message });
     }
@@ -715,6 +682,112 @@ function normalizePhone(phone) {
     return phone.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
 }
 
+function buildSendOptions(body = {}) {
+    const options = {};
+    if (body.typingSimulation !== undefined) options.typingSimulation = body.typingSimulation;
+    if (body.delayEnabled !== undefined) options.delayEnabled = body.delayEnabled;
+    if (body.contactName !== undefined) options.contactName = body.contactName;
+    if (body.skipContactSave !== undefined) options.skipContactSave = body.skipContactSave;
+    return options;
+}
+
+function buildOutboundPayload(body = {}, { interactiveFocus = false } = {}) {
+    const message = body.message ?? body.text;
+    const messageType = resolveSendMessageType(body.messageType, body);
+    const {
+        mediaUrl, mimeType, fileName, ptt,
+        footer, buttons, buttonText, title, sections,
+        latitude, longitude, locationName, locationAddress,
+        contactCard
+    } = body;
+
+    const explicitRichMedia = messageType && !['text', 'buttons', 'list'].includes(messageType);
+    const useMessageBuilder = interactiveFocus || shouldUseMessageBuilder(body, messageType);
+
+    if (useMessageBuilder) {
+        const validation = validateInteractiveSendBody(body, { interactiveFocus });
+        if (!validation.ok) {
+            return {
+                status: 400,
+                body: {
+                    error: validation.error,
+                    details: validation.details
+                }
+            };
+        }
+
+        const built = buildWhatsAppMessage(validation.payload);
+        return {
+            textOrParams: built.content,
+            messageType: built.delivery.mode,
+            delivery: built.delivery
+        };
+    }
+
+    const richType = messageType && messageType !== 'text';
+    if (richType) {
+        const normalizedInteractive = normalizeInteractivePayload(messageType, body, message);
+        return {
+            textOrParams: {
+                messageType,
+                text: message || '',
+                mediaUrl, mimeType, fileName, ptt,
+                footer,
+                buttons: normalizedInteractive.buttons || buttons,
+                buttonText, title,
+                sections: normalizedInteractive.sections || sections,
+                latitude, longitude, locationName, locationAddress,
+                contactCard
+            },
+            messageType
+        };
+    }
+
+    if (!message && !hasNativeInteractiveFields(body)) {
+        return {
+            status: 400,
+            body: { error: 'Missing required field: message' }
+        };
+    }
+
+    return {
+        textOrParams: message,
+        messageType: messageType || 'text'
+    };
+}
+
+async function executeInstanceSend(instanceId, body = {}, { interactiveFocus = false } = {}) {
+    const { to } = body;
+    if (!to) {
+        return {
+            status: 400,
+            body: { error: 'Missing required field: to' }
+        };
+    }
+
+    const payload = buildOutboundPayload(body, { interactiveFocus });
+    if (payload.status) {
+        return payload;
+    }
+
+    const result = await instanceManager.sendMessage(
+        instanceId,
+        to,
+        payload.textOrParams,
+        buildSendOptions(body)
+    );
+
+    return {
+        status: 200,
+        body: {
+            success: true,
+            messageType: payload.messageType || 'text',
+            delivery: payload.delivery,
+            result
+        }
+    };
+}
+
 function resolveSendMessageType(messageType, body = {}) {
     const explicitType = String(messageType || '').trim().toLowerCase();
     if (explicitType) return explicitType;
@@ -778,46 +851,21 @@ app.post('/api/send', async (req, res) => {
     try {
         const fromPhone = req.body.from_phone || req.body.from;
         const toPhone = req.body.to_phone || req.body.to;
-        const {
-            mediaUrl, mimeType, fileName, ptt,
-            footer, buttons, buttonText, title, sections,
-            latitude, longitude, locationName, locationAddress,
-            contactCard,
-            typingSimulation, delayEnabled, contactName, skipContactSave
-        } = req.body;
         const message = req.body.message ?? req.body.text;
         const messageType = resolveSendMessageType(req.body.messageType, req.body);
         
         if (!toPhone) {
             return res.status(400).json({ error: 'Missing required field: to_phone' });
         }
-        
-        // Build options for per-message behavior override
-        const options = {};
-        if (typingSimulation !== undefined) options.typingSimulation = typingSimulation;
-        if (delayEnabled !== undefined) options.delayEnabled = delayEnabled;
-        if (contactName !== undefined) options.contactName = contactName;
-        if (skipContactSave !== undefined) options.skipContactSave = skipContactSave;
 
-        // Determine rich vs plain
-        const richType = messageType && messageType !== 'text';
-        let textOrParams;
-        if (richType) {
-            const normalizedInteractive = normalizeInteractivePayload(messageType, req.body, message);
-            textOrParams = {
-                messageType, text: message || '',
-                mediaUrl, mimeType, fileName, ptt,
-                footer,
-                buttons: normalizedInteractive.buttons || buttons,
-                buttonText, title,
-                sections: normalizedInteractive.sections || sections,
-                latitude, longitude, locationName, locationAddress,
-                contactCard
-            };
-        } else {
-            if (!message) return res.status(400).json({ error: 'Missing required field: message' });
-            textOrParams = message;
+        const payload = buildOutboundPayload(req.body, {
+            interactiveFocus: shouldUseMessageBuilder(req.body, messageType)
+        });
+        if (payload.status) {
+            return res.status(payload.status).json(payload.body);
         }
+        const textOrParams = payload.textOrParams;
+        const options = buildSendOptions(req.body);
         
         let targetInstanceId = null;
         let matchedInstance = null;
@@ -876,8 +924,8 @@ app.post('/api/send', async (req, res) => {
             created_at: new Date().toISOString(),
             from_phone: normalizePhone(matchedInstance.connectedPhone),
             to_phone: normalizePhone(toPhone),
-            message: message || `[${messageType || 'text'}]`,
-            message_type: messageType || 'text',
+            message: message || payload.delivery?.mode || `[${messageType || 'text'}]`,
+            message_type: payload.messageType || messageType || 'text',
             status: status
         }]);
     } catch (error) {

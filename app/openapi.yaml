@@ -592,6 +592,38 @@ paths:
                     $ref: "#/components/schemas/SendResult"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /api/instances/{instanceId}/send/interactive:
+    parameters:
+      - $ref: "#/components/parameters/instanceId"
+    post:
+      tags:
+        - Messaging
+      summary: Send interactive-capable message via instance
+      description: "**Send links, CTA URL buttons, and quick replies.** Alias focused on interactive payloads. Supports one CTA URL button plus up to two quick-reply buttons."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InteractiveSendRequest"
+      responses:
+        "200":
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  messageType:
+                    type: string
+                    example: native_interactive
+                  result:
+                    $ref: "#/components/schemas/SendResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /api/send:
     post:
       tags:
@@ -2003,6 +2035,84 @@ components:
       description: Instance ID
       example: wa_lxyz123_abc45
   schemas:
+    SendLink:
+      oneOf:
+        - type: string
+          format: uri
+          example: https://example.com/booking
+        - type: object
+          required: [url]
+          properties:
+            url:
+              type: string
+              format: uri
+              example: https://example.com/booking
+            label:
+              type: string
+              example: Booking page
+    CtaUrl:
+      description: Native call-to-action URL button shown below the message body.
+      oneOf:
+        - type: string
+          format: uri
+          example: https://example.com/book
+        - type: object
+          required: [url]
+          properties:
+            url:
+              type: string
+              format: uri
+              example: https://example.com/book
+            label:
+              type: string
+              maxLength: 25
+              example: Book now
+    QuickReplyButtons:
+      type: array
+      maxItems: 3
+      items:
+        type: object
+        required: [id, text]
+        properties:
+          id:
+            type: string
+            maxLength: 256
+            example: pricing
+          text:
+            type: string
+            maxLength: 20
+            example: Pricing
+    InteractiveSendRequest:
+      type: object
+      required: [to]
+      properties:
+        to:
+          type: string
+          example: "60123456789"
+        message:
+          type: string
+          example: Choose an option.
+        text:
+          type: string
+          example: Choose an option.
+        link:
+          $ref: "#/components/schemas/SendLink"
+        ctaUrl:
+          $ref: "#/components/schemas/CtaUrl"
+        buttons:
+          $ref: "#/components/schemas/QuickReplyButtons"
+        linkPreview:
+          type: boolean
+          default: true
+        footer:
+          type: string
+          example: Wasup API
+        typingSimulation:
+          type: boolean
+        delayEnabled:
+          type: boolean
+        skipContactSave:
+          type: boolean
     SendMessageBody:
       type: object
       required:
@@ -2055,6 +2165,14 @@ components:
           type: string
           description: Footer text for button and list messages
           example: Powered by WhatsApp AI
+        link:
+          $ref: "#/components/schemas/SendLink"
+        ctaUrl:
+          $ref: "#/components/schemas/CtaUrl"
+        linkPreview:
+          type: boolean
+          default: true
+          description: When true with `link`, WhatsApp renders a rich URL preview card.
         buttons:
           type: array
           description: |
@@ -2590,6 +2708,13 @@ components:
         error:
           type: string
           example: Instance not found
+        details:
+          type: array
+          items:
+            type: string
+          example:
+            - link.url must use http or https
+            - Button 1 text must be 20 characters or fewer
   responses:
     BadRequest:
       description: Bad request
