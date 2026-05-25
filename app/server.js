@@ -56,6 +56,8 @@ const CONTROL_PLANE_URL = (
     'https://control-plane.wasup.co'
 ).replace(/\/+$/, '');
 const DEFAULT_WEBHOOK_URL = process.env.DEFAULT_WEBHOOK_URL || process.env.N8N_WEBHOOK_URL || '';
+const ALLOW_PUBLIC_DASHBOARD = process.env.ALLOW_PUBLIC_DASHBOARD === 'true';
+const WASUP_DASHBOARD_URL = (process.env.WASUP_DASHBOARD_URL || 'https://dev.wasup.co').replace(/\/+$/, '');
 const CUSTOMER_KEY_AUTH_CACHE_TTL_MS = 60_000;
 
 // ========================================
@@ -149,13 +151,27 @@ app.use((req, res, next) => {
 // API AUTHENTICATION MIDDLEWARE
 // ========================================
 
+function isPublicDashboardRead(req) {
+    if (!ALLOW_PUBLIC_DASHBOARD) return false;
+    if (req.method !== 'GET') return false;
+
+    const path = req.path || '';
+    return (
+        path === '/health' ||
+        path === '/dashboard-config' ||
+        path === '/instances' ||
+        /^\/instances\/[^/]+$/.test(path) ||
+        /^\/instances\/[^/]+\/(qr|connection|logs)$/.test(path)
+    );
+}
+
 /**
  * Authenticate API requests
  * Supports: API Key (X-API-Key header) or Bearer token (Authorization header)
  */
 async function authenticateAPI(req, res, next) {
     // If no API key is configured, skip auth (for local development)
-    if (!API_KEY) {
+    if (!API_KEY || isPublicDashboardRead(req)) {
         return next();
     }
 
@@ -257,6 +273,21 @@ async function validateCustomerApiKeyForHost(apiKey, hostname, requiredScope = '
 
 // Apply authentication to all API routes
 app.use('/api', authenticateAPI);
+
+/**
+ * GET /api/dashboard-config
+ * Playground/admin UI hints for auth and dashboard return links.
+ */
+app.get('/api/dashboard-config', (req, res) => {
+    const dashboardRequiresApiKey = Boolean(API_KEY) && !ALLOW_PUBLIC_DASHBOARD;
+    res.json({
+        success: true,
+        allowPublicDashboard: ALLOW_PUBLIC_DASHBOARD || !API_KEY,
+        dashboardRequiresApiKey,
+        dashboardUrl: WASUP_DASHBOARD_URL,
+        showDashboardReturnOverlay: Boolean(WASUP_DASHBOARD_URL),
+    });
+});
 
 // ========================================
 // INSTANCE MANAGEMENT API

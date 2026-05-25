@@ -342,6 +342,7 @@
                 <div class="form-group">
                     <label for="apiKey">API Key</label>
                     <input type="password" id="apiKey" placeholder="Only needed when worker auth is enabled">
+                    <p class="hint" id="apiKeyHint">Paste your worker API key if instance loading fails.</p>
                 </div>
             </div>
             <div class="grid">
@@ -602,9 +603,16 @@
             const params = new URLSearchParams(window.location.search);
             const savedApiKey = localStorage.getItem('wa_test_apiKey');
             const savedFromPhone = localStorage.getItem('wa_test_fromPhone');
-            if (savedApiKey) document.getElementById('apiKey').value = savedApiKey;
+            const queryApiKey = params.get('apiKey') || params.get('key');
+            if (queryApiKey) {
+                document.getElementById('apiKey').value = queryApiKey;
+                localStorage.setItem('wa_test_apiKey', queryApiKey);
+            } else if (savedApiKey) {
+                document.getElementById('apiKey').value = savedApiKey;
+            }
             if (savedFromPhone) document.getElementById('fromPhone').value = savedFromPhone;
 
+            await refreshAuthHint();
             await loadInstances(params.get('instance'));
             wireInputs();
             updatePayloadPreview();
@@ -622,8 +630,17 @@
                 element?.addEventListener('change', updatePayloadPreview);
             });
 
-            document.getElementById('apiKey').addEventListener('change', (event) => {
+            document.getElementById('apiKey').addEventListener('change', async (event) => {
                 localStorage.setItem('wa_test_apiKey', event.target.value);
+                await refreshAuthHint();
+                await loadInstances(document.getElementById('instanceId').value || undefined);
+                updatePayloadPreview();
+            });
+            document.getElementById('apiKey').addEventListener('input', async (event) => {
+                if (event.target.value.trim().length < 8) return;
+                await refreshAuthHint();
+                await loadInstances(document.getElementById('instanceId').value || undefined);
+                updatePayloadPreview();
             });
             document.getElementById('fromPhone').addEventListener('change', (event) => {
                 localStorage.setItem('wa_test_fromPhone', event.target.value);
@@ -635,11 +652,49 @@
             syncMediaFields();
         }
 
+        async function refreshAuthHint() {
+            const hint = document.getElementById('apiKeyHint');
+            if (!hint) return;
+
+            try {
+                const response = await fetch('/api/dashboard-config');
+                const config = await response.json();
+                const requiresKey = Boolean(config.dashboardRequiresApiKey);
+                const hasKey = Boolean(document.getElementById('apiKey').value.trim());
+
+                if (requiresKey && !hasKey) {
+                    hint.textContent = 'Required on this worker. Copy your Production or Development key from dev.wasup.co → Connection.';
+                    hint.style.color = 'var(--warning)';
+                } else if (requiresKey && hasKey) {
+                    hint.textContent = 'API key saved in this browser.';
+                    hint.style.color = 'var(--muted)';
+                } else {
+                    hint.textContent = 'Optional on this worker.';
+                    hint.style.color = 'var(--muted)';
+                }
+            } catch {
+                hint.textContent = 'Paste your worker API key if instance loading fails.';
+                hint.style.color = 'var(--muted)';
+            }
+        }
+
         async function loadInstances(preferredInstanceId) {
             const select = document.getElementById('instanceId');
             try {
                 const response = await fetch('/api/instances', { headers: buildAuthHeaders() });
-                const data = await response.json();
+                const data = await response.json().catch(() => ({}));
+
+                if (response.status === 401) {
+                    select.innerHTML = '<option value="">API key required</option>';
+                    await refreshAuthHint();
+                    return;
+                }
+
+                if (!response.ok) {
+                    select.innerHTML = `<option value="">Failed to load instances (${response.status})</option>`;
+                    return;
+                }
+
                 state.instances = Array.isArray(data.instances) ? data.instances : (Array.isArray(data) ? data : []);
                 if (state.instances.length === 0) {
                     select.innerHTML = '<option value="">No instances found</option>';
