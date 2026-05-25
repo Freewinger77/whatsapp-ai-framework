@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { getClerkUserEmail } from './auth';
 import { getServerEnv } from './env';
 import { getSupabaseAdmin } from './supabase-admin';
 
@@ -37,16 +38,6 @@ type AppNotificationEventType =
   | 'billing.restored'
   | 'billing.instance_deletion_warning'
   | 'billing.instances_deleted';
-
-type ClerkEmailAddress = {
-  id: string;
-  email_address: string;
-};
-
-type ClerkUserResponse = {
-  primary_email_address_id?: string | null;
-  email_addresses?: ClerkEmailAddress[];
-};
 
 export async function notifyOrgAdmins(input: OrgNotificationInput) {
   const recipients = await getOrgAdminEmails(input.orgId);
@@ -122,6 +113,77 @@ export async function recordAppNotification(input: {
   });
 }
 
+export async function notifyInstanceReady(input: {
+  orgId: string;
+  instanceId: string;
+  instanceName: string;
+  baseUrl?: string | null;
+}) {
+  const dashboardUrl = process.env.WASUP_DASHBOARD_URL || 'https://dev.wasup.co';
+  const instanceUrl = `${dashboardUrl.replace(/\/$/, '')}/#/instances/${input.instanceId}`;
+  const body = input.baseUrl
+    ? `${input.instanceName} is provisioned on your workspace (${input.baseUrl}). Open the dashboard to connect WhatsApp.`
+    : `${input.instanceName} is provisioned on your workspace. Open the dashboard to connect WhatsApp.`;
+
+  await recordAppNotification({
+    orgId: input.orgId,
+    eventType: 'instance.ready',
+    kind: 'instance',
+    severity: 'success',
+    title: 'Instance created',
+    body,
+    idempotencyKey: `in-app:instance-ready:${input.instanceId}`,
+    metadata: {
+      instanceId: input.instanceId,
+      instanceName: input.instanceName,
+      baseUrl: input.baseUrl ?? null
+    }
+  });
+
+  return notifyOrgAdmins({
+    orgId: input.orgId,
+    eventType: 'instance.ready',
+    subject: 'Your WhatsApp instance is ready',
+    text: `${body}\n\nOpen Wasup: ${instanceUrl}`,
+    html: `<p>${body}</p><p><a href="${instanceUrl}">Open your instance in Wasup</a></p>`,
+    idempotencyKey: `email:instance-ready:${input.instanceId}`,
+    metadata: {
+      instanceId: input.instanceId,
+      instanceName: input.instanceName,
+      baseUrl: input.baseUrl ?? null
+    }
+  });
+}
+
+export async function notifyDeploymentReady(input: {
+  orgId: string;
+  deploymentId: string;
+  baseUrl: string;
+}) {
+  const dashboardUrl = process.env.WASUP_DASHBOARD_URL || 'https://dev.wasup.co';
+
+  await recordAppNotification({
+    orgId: input.orgId,
+    eventType: 'deployment.ready',
+    kind: 'deployment',
+    severity: 'success',
+    title: 'Workspace ready',
+    body: `Your Wasup worker is ready at ${input.baseUrl}.`,
+    idempotencyKey: `in-app:deployment-ready:${input.deploymentId}`,
+    metadata: { deploymentId: input.deploymentId, baseUrl: input.baseUrl }
+  });
+
+  return notifyOrgAdmins({
+    orgId: input.orgId,
+    eventType: 'deployment.ready',
+    subject: 'Your Wasup workspace is ready',
+    text: `Your Wasup worker is ready at ${input.baseUrl}. You can now connect your WhatsApp instances.\n\nOpen Wasup: ${dashboardUrl}`,
+    html: `<p>Your Wasup worker is ready at <a href="${input.baseUrl}">${input.baseUrl}</a>.</p><p>You can now connect your WhatsApp instances.</p><p><a href="${dashboardUrl}">Open Wasup</a></p>`,
+    idempotencyKey: `email:deployment-ready:${input.deploymentId}`,
+    metadata: { deploymentId: input.deploymentId, baseUrl: input.baseUrl }
+  });
+}
+
 export async function recordDeploymentStatusNotification(input: {
   orgId: string;
   deploymentId: string;
@@ -155,35 +217,20 @@ async function getOrgAdminEmails(orgId: string) {
   const { data: members, error } = await supabase
     .from('organization_members')
     .select('clerk_user_id, role')
-    .eq('org_id', orgId)
-    .in('role', ['owner', 'admin']);
+    .eq('org_id', orgId);
 
   if (error) throw new Error(error.message);
 
+  const admins = (members ?? []).filter((member: { role: string }) => member.role === 'owner' || member.role === 'admin');
+  const recipients = admins.length ? admins : (members ?? []);
+
   const emails = new Set<string>();
-  for (const member of members ?? []) {
-    const email = await getClerkUserPrimaryEmail(member.clerk_user_id);
+  for (const member of recipients) {
+    const email = await getClerkUserEmail(member.clerk_user_id);
     if (email) emails.add(email);
   }
 
   return Array.from(emails);
-}
-
-async function getClerkUserPrimaryEmail(clerkUserId: string) {
-  if (!process.env.CLERK_SECRET_KEY || !clerkUserId) return null;
-
-  const response = await fetch(`https://api.clerk.com/v1/users/${encodeURIComponent(clerkUserId)}`, {
-    headers: {
-      Authorization: `Bearer ${process.env.CLERK_SECRET_KEY}`,
-      'Content-Type': 'application/json'
-    }
-  });
-
-  if (!response.ok) return null;
-
-  const user = (await response.json()) as ClerkUserResponse;
-  const primary = user.email_addresses?.find((email) => email.id === user.primary_email_address_id);
-  return primary?.email_address || user.email_addresses?.[0]?.email_address || null;
 }
 
 async function sendNotificationEmail(input: OrgNotificationInput & { recipient: string }) {

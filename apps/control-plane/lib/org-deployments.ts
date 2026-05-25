@@ -2,7 +2,7 @@ import { generateApiKey } from './api-keys';
 import { standardizeWorkerRuntime } from './azure-vm-provisioner';
 import { getServerEnv } from './env';
 import { checkWorkerSurfaceMarkers } from './worker-surface';
-import { notifyOrgAdmins, recordAppNotification, recordDeploymentStatusNotification } from './notifications';
+import { notifyDeploymentReady, notifyInstanceReady, recordAppNotification, recordDeploymentStatusNotification } from './notifications';
 import { upsertGoDaddyARecord } from './godaddy';
 import type { ProxyClaimResult } from './proxy-pool';
 import { getSupabaseAdmin } from './supabase-admin';
@@ -293,24 +293,10 @@ export async function markDeploymentPublicIp(input: {
             workerGitRef: env.WASUP_WORKER_GIT_REF
           })
         : Promise.resolve(null),
-      recordAppNotification({
+      notifyDeploymentReady({
         orgId: input.orgId,
-        eventType: 'deployment.ready',
-        kind: 'deployment',
-        severity: 'success',
-        title: 'Workspace ready',
-        body: `Your Wasup worker is ready at ${data.base_url}.`,
-        idempotencyKey: `in-app:deployment-ready:${data.id}`,
-        metadata: { deploymentId: data.id, baseUrl: data.base_url }
-      }),
-      notifyOrgAdmins({
-        orgId: input.orgId,
-        eventType: 'deployment.ready',
-        subject: 'Your Wasup workspace is ready',
-        text: `Your Wasup worker is ready at ${data.base_url}. You can now connect your queued WhatsApp instances.`,
-        html: `<p>Your Wasup worker is ready at <a href="${data.base_url}">${data.base_url}</a>.</p><p>You can now connect your queued WhatsApp instances.</p>`,
-        idempotencyKey: `deployment-ready:${data.id}`,
-        metadata: { deploymentId: data.id, baseUrl: data.base_url }
+        deploymentId: data.id,
+        baseUrl: data.base_url
       })
     ]);
     return { deployment: data, dns, workerReconcile };
@@ -589,19 +575,11 @@ export async function reconcileQueuedWorkerInstances(orgId: string, deployment: 
         payload: { deploymentId: deployment.id, worker: summarizeWorkerResult(worker) }
       });
       if (worker.attempted) {
-        await recordAppNotification({
+        await notifyInstanceReady({
           orgId,
-          eventType: 'instance.ready',
-          kind: 'instance',
-          severity: 'success',
-          title: 'Instance created',
-          body: `${instance.name} was created on your workspace worker.`,
-          idempotencyKey: `in-app:instance-ready:${instance.id}`,
-          metadata: {
-            instanceId: instance.id,
-            deploymentId: deployment.id,
-            instanceName: instance.name
-          }
+          instanceId: instance.id,
+          instanceName: instance.name,
+          baseUrl: deployment.base_url
         });
       }
       results.push({

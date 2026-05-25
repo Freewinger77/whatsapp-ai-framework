@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { releasePaidInstanceSlot } from '../../../../../lib/billing';
 import { isAuthError, requireWasupPrincipal } from '../../../../../lib/auth';
 import { ensureOrgDeployment } from '../../../../../lib/org-deployments';
-import { recordAppNotification, recordDeploymentStatusNotification } from '../../../../../lib/notifications';
+import { notifyInstanceReady, recordAppNotification, recordDeploymentStatusNotification } from '../../../../../lib/notifications';
 import { getOrgPlanAccess } from '../../../../../lib/plan-access';
 import { claimProxyForInstance, releaseProxyForInstance } from '../../../../../lib/proxy-pool';
 import { getSupabaseAdmin } from '../../../../../lib/supabase-admin';
@@ -293,19 +293,11 @@ export async function POST(req: Request) {
 
     if (!provisionedError && provisionedInstance) {
       responseInstance = provisionedInstance;
-      await recordAppNotification({
+      await notifyInstanceReady({
         orgId: targetOrgId,
-        eventType: 'instance.ready',
-        kind: 'instance',
-        severity: 'success',
-        title: 'Instance created',
-        body: `${provisionedInstance.name} was created on your workspace worker.`,
-        idempotencyKey: `in-app:instance-ready:${provisionedInstance.id}`,
-        metadata: {
-          instanceId: provisionedInstance.id,
-          instanceName: provisionedInstance.name,
-          deploymentId: deploymentResult.deployment.id
-        }
+        instanceId: provisionedInstance.id,
+        instanceName: provisionedInstance.name,
+        baseUrl: deploymentResult.deployment.base_url
       });
     }
   }

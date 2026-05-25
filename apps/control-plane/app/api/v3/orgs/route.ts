@@ -89,6 +89,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const { error: memberError } = await supabase
+    .from('organization_members')
+    .upsert(
+      {
+        org_id: org.id,
+        clerk_user_id: principal.actorId,
+        role: 'owner'
+      },
+      { onConflict: 'org_id,clerk_user_id' }
+    );
+
+  if (memberError) {
+    return NextResponse.json({ error: memberError.message }, { status: 500 });
+  }
+
   const apiKeys: Array<{ id: string; kind: 'live' | 'test'; publicId: string; key: string }> = [];
   if (body.createApiKey) {
     for (const kind of ['live', 'test'] as const) {
