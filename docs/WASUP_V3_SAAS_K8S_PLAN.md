@@ -8,8 +8,8 @@ This plan turns the current single-process, multi-instance WhatsApp app into a S
 - `app/src/utils/instance-manager.js` stores instance registry in `app/instances/instances.json`, stores Baileys auth under `app/instances/<instanceId>/auth`, and keeps each WhatsApp socket in the same Node process.
 - `app/src/utils/proxy.js` resolves proxy priority as instance override, pool assignment, deployment default, then direct connection.
 - `app/src/utils/proxy-pool.js` owns finite pool assignment derived from instance configs and supports runtime add/remove/reconcile through API.
-- `infra/azure/PROXY.md` documents the current eight-region App Service model and pool-enabled regions.
-- `infra/azure/battlespace/` is already a central command dashboard that polls regional deployments, pass-throughs some operations, and displays proxy/anti-ban state.
+- `deploy/azure/PROXY.md` documents the current eight-region App Service model and pool-enabled regions.
+- `deploy/azure/battlespace/` is already a central command dashboard that polls regional deployments, pass-throughs some operations, and displays proxy/anti-ban state.
 - Production VM deployment is PM2 fork mode with one Node process owning sockets. Do not use cluster mode for a single process because it duplicates WhatsApp sessions.
 
 ## Target Architecture
@@ -246,7 +246,7 @@ Never run the same WhatsApp auth credentials active in legacy and Kubernetes at 
 Safe repo changes for the first scaffold:
 
 - Add this design document: `docs/WASUP_V3_SAAS_K8S_PLAN.md`.
-- Add a placeholder Helm chart under `infra/k8s/wasup-worker/` for a future per-instance worker.
+- Add a placeholder Helm chart under `deploy/k8s/wasup-worker/` for a future per-instance worker.
 - Keep manifests non-deployable by default with placeholder image, secret names, and values.
 - Do not change `app/server.js`, `instance-manager.js`, production deploy scripts, or live VM settings until Phase 1.
 
@@ -255,8 +255,8 @@ Next implementation files likely needed:
 - `app/Dockerfile`: container image for the existing app.
 - `app/src/config/paths.js`: centralize `WASUP_DATA_DIR`.
 - `app/src/control-plane/`: Supabase models/client and v3 gateway later.
-- `infra/k8s/control-plane/`: dashboard/API deployment after architecture decisions.
-- `infra/k8s/external-secrets/`: provider-specific secret wiring.
+- `deploy/k8s/control-plane/`: dashboard/API deployment after architecture decisions.
+- `deploy/k8s/external-secrets/`: provider-specific secret wiring.
 - `docs/WASUP_V3_MIGRATION_RUNBOOK.md`: per-customer move checklist after test migration.
 
 ## Risks

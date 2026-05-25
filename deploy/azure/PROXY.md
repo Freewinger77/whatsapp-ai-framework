@@ -48,7 +48,7 @@ The 6th+ instance connects direct.
 ### Apply to UK West (pilot)
 
 ```bash
-cd infra/azure
+cd deploy/azure
 ./set-proxy-pool.sh --region uk-west             # uses proxies/uk-west.txt
 ```
 
@@ -131,7 +131,7 @@ region will use it unless they have their own override.
 ### Apply to UK West
 
 ```bash
-cd infra/azure
+cd deploy/azure
 ./set-proxy.sh --url "http://user:pass@proxy.example.com:8080"
 ```
 

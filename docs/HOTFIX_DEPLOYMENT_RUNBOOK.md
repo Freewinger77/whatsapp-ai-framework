@@ -4,7 +4,7 @@ Use these paths for small fixes so production changes do not require repeated ma
 
 ## Dashboard Frontend
 
-Deploy `apps/polymet-wasup` to the Azure Storage static site and optionally purge Front Door:
+Deploy `apps/dashboard` to the Azure Storage static site and optionally purge Front Door:
 
 ```bash
 DASHBOARD_STORAGE_ACCOUNT=<storage-account> \

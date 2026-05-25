@@ -2,6 +2,7 @@
 node_modules/
 package-lock.json
 !apps/control-plane/package-lock.json
+!apps/dashboard/package-lock.json
 
 # Environment Variables
 .env
@@ -38,6 +39,8 @@ dist/
 build/
 .next/
 out/
+.deploy/
+apps/control-plane/.deploy/
 .wrangler/
 *.tsbuildinfo
 
@@ -47,7 +50,7 @@ docs/BUSINESS_MONETIZATION_RESEARCH.md
 docs/ONBOARDING_MULTIREGION_SPEC.md
 
 # Proxy credentials (residential webshare lists, per-region) - LOCAL ONLY
-infra/azure/proxies/
-infra/azure/keys.env
-infra/azure/*.log
-infra/azure/.build/
+deploy/azure/proxies/
+deploy/azure/keys.env
+deploy/azure/*.log
+deploy/azure/.build/
