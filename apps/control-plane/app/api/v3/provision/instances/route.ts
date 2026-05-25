@@ -124,6 +124,12 @@ export async function POST(req: Request) {
 
   if (error) {
     if (reservation.mode === 'billing') await releasePaidInstanceSlot(targetOrgId);
+    if (error.code === '23505' && /instances_org_id_name/i.test(String(error.message || ''))) {
+      return NextResponse.json(
+        { error: 'An instance with this name already exists in your workspace. Choose a different name.' },
+        { status: 409 }
+      );
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 

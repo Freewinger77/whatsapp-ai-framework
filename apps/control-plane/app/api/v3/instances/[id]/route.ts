@@ -88,7 +88,15 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     `)
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    if (error.code === '23505' && /instances_org_id_name/i.test(String(error.message || ''))) {
+      return NextResponse.json(
+        { error: 'An instance with this name already exists in your workspace. Choose a different name.' },
+        { status: 409 }
+      );
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
   let worker: unknown = null;
   const workerBody: Record<string, unknown> = {};
