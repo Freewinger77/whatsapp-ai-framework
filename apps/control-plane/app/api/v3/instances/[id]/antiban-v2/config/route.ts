@@ -21,6 +21,7 @@ const UpdateAntibanV2Schema = z.object({
     .optional(),
   modules: z
     .record(
+      z.string(),
       z.object({
         enabled: z.boolean().optional(),
         warmupDays: z.number().int().positive().optional(),
