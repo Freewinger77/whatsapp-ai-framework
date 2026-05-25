@@ -87,7 +87,9 @@ export async function getOrgPlanAccess(orgId: string): Promise<OrgPlanAccess> {
     new Date(billingGraceEndsAt as string).getTime() > now;
 
   let tier: PlanTier = 'free';
-  if (billingLockedAt || org.status === 'billing_locked') {
+  if (org.status === 'platform_blocked') {
+    tier = 'locked';
+  } else if (billingLockedAt || org.status === 'billing_locked') {
     tier = 'locked';
   } else if (graceActive || (billingStatus && GRACE_BILLING_STATUSES.has(billingStatus))) {
     tier = 'grace';

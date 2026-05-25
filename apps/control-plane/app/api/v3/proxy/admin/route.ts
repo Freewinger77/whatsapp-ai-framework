@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { isAuthError, requireWasupPrincipal } from '../../../../../lib/auth';
 import { requirePlatformAdmin } from '../../../../../lib/platform-admin';
 import { parseProxyBulk } from '../../../../../lib/proxy-import';
+import { removeProxyFromPool } from '../../../../../lib/platform-admin-ops';
 import { getSupabaseAdmin } from '../../../../../lib/supabase-admin';
 
 const ImportProxySchema = z.object({
@@ -24,7 +25,9 @@ export async function GET(req: Request) {
   const regionCode = url.searchParams.get('regionCode');
   let query = (getSupabaseAdmin() as any)
     .from('proxy_allocations')
-    .select('id, label, region_code, host, port, proxy_type, source, status, assigned_at, released_at, last_verified_at, instance_id, org_id')
+    .select(
+      'id, label, region_code, host, port, proxy_type, source, status, assigned_at, released_at, last_verified_at, instance_id, org_id, instances(name), organizations(slug, name)'
+    )
     .order('created_at', { ascending: false });
 
   if (regionCode) query = query.eq('region_code', regionCode);
@@ -119,9 +122,55 @@ export async function POST(req: Request) {
   }, { status: 201 });
 }
 
+const DeleteProxySchema = z.object({
+  id: z.string().uuid(),
+  force: z.boolean().optional()
+});
+
+export async function DELETE(req: Request) {
+  const principal = await requireWasupPrincipal(req);
+  if (isAuthError(principal)) return principal;
+  const platformAdmin = await requirePlatformAdmin();
+  if (!platformAdmin.allowed) {
+    return NextResponse.json({ error: 'Platform admin required' }, { status: 403 });
+  }
+
+  const parsed = DeleteProxySchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Invalid payload', issues: parsed.error.flatten() }, { status: 400 });
+  }
+
+  try {
+    const result = await removeProxyFromPool(parsed.data.id, principal.actorId, parsed.data.force);
+    return NextResponse.json(result);
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Could not remove proxy' },
+      { status: 400 }
+    );
+  }
+}
+
 function redactProxy(proxy: any) {
+  const instance = Array.isArray(proxy.instances) ? proxy.instances[0] : proxy.instances;
+  const organization = Array.isArray(proxy.organizations) ? proxy.organizations[0] : proxy.organizations;
   return {
-    ...proxy,
+    id: proxy.id,
+    label: proxy.label,
+    region_code: proxy.region_code,
+    host: proxy.host,
+    port: proxy.port,
+    proxy_type: proxy.proxy_type,
+    source: proxy.source,
+    status: proxy.status,
+    assigned_at: proxy.assigned_at,
+    released_at: proxy.released_at,
+    last_verified_at: proxy.last_verified_at,
+    instance_id: proxy.instance_id,
+    org_id: proxy.org_id,
+    instance_name: instance?.name ?? null,
+    org_slug: organization?.slug ?? null,
+    org_name: organization?.name ?? null,
     credential: proxy.username_ref ? 'configured' : 'none'
   };
 }

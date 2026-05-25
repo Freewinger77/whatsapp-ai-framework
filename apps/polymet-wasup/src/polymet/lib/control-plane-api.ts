@@ -184,6 +184,9 @@ export type PlatformOrgRow = {
     publicIp: string | null;
     vmName: string | null;
     azureRegion: string | null;
+    azureResourceGroup: string | null;
+    vmSize: string | null;
+    vmCostUsd: number;
     lastError: string | null;
     requestedAt: string | null;
     provisionedAt: string | null;
@@ -212,6 +215,21 @@ export type PlatformInstanceRow = {
   createdAt: string;
 };
 
+export type PlatformProxyRow = {
+  id: string;
+  label: string | null;
+  regionCode: string;
+  host: string;
+  port: number;
+  status: string;
+  instanceId: string | null;
+  instanceName: string | null;
+  orgId: string | null;
+  orgSlug: string | null;
+  orgName: string | null;
+  assignedAt: string | null;
+};
+
 export type PlatformOverview = {
   generatedAt: string;
   summary: {
@@ -220,6 +238,7 @@ export type PlatformOverview = {
     trialingOrganizations: number;
     graceOrganizations: number;
     lockedOrganizations: number;
+    blockedOrganizations: number;
     freeOrganizations: number;
     totalInstances: number;
     connectedInstances: number;
@@ -228,9 +247,11 @@ export type PlatformOverview = {
     proxyTotal: number;
     proxyFree: number;
     proxyAssigned: number;
+    totalVmCostUsd: number;
   };
   organizations: PlatformOrgRow[];
   instances: PlatformInstanceRow[];
+  proxies: PlatformProxyRow[];
   proxyPool: Array<{
     regionCode: string;
     total: number;
@@ -462,24 +483,61 @@ export async function getPlatformOverview() {
   return api<PlatformOverview>("/api/v3/platform/overview", { cache: "no-store" });
 }
 
+export async function blockPlatformOrganization(orgId: string, reason?: string) {
+  return api<{ success: boolean; status: string }>(`/api/v3/platform/orgs/${encodeURIComponent(orgId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ action: "block", reason }),
+  });
+}
+
+export async function unblockPlatformOrganization(orgId: string) {
+  return api<{ success: boolean; status: string }>(`/api/v3/platform/orgs/${encodeURIComponent(orgId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ action: "unblock" }),
+  });
+}
+
+export async function deletePlatformOrganization(orgId: string) {
+  return api<{ success: boolean; instancesReleased: number }>(`/api/v3/platform/orgs/${encodeURIComponent(orgId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function deletePlatformOrganizationVm(orgId: string) {
+  return api<{ success: boolean }>(`/api/v3/platform/orgs/${encodeURIComponent(orgId)}?scope=vm`, {
+    method: "DELETE",
+  });
+}
+
+export type PlatformProxyPoolItem = {
+  id: string;
+  label: string | null;
+  region_code: string;
+  host: string;
+  port: number;
+  proxy_type: string;
+  source: string;
+  status: string;
+  assigned_at: string | null;
+  instance_id: string | null;
+  org_id: string | null;
+  instance_name: string | null;
+  org_slug: string | null;
+  org_name: string | null;
+  credential: "configured" | "none";
+};
+
 export async function listProxyPool(regionCode?: string) {
   const search = new URLSearchParams();
   if (regionCode) search.set("regionCode", regionCode);
-  return api<{
-    proxies: Array<{
-      id: string;
-      label: string | null;
-      region_code: string;
-      host: string;
-      port: number;
-      proxy_type: string;
-      source: string;
-      status: string;
-      assigned_at: string | null;
-      instance_id: string | null;
-      credential: "configured" | "none";
-    }>;
-  }>(`/api/v3/proxy/admin${search.size ? `?${search.toString()}` : ""}`);
+  return api<{ proxies: PlatformProxyPoolItem[] }>(`/api/v3/proxy/admin${search.size ? `?${search.toString()}` : ""}`);
+}
+
+export async function removeProxyFromPool(proxyId: string, force = false) {
+  return api<{ success: boolean }>("/api/v3/proxy/admin", {
+    method: "DELETE",
+    body: JSON.stringify({ id: proxyId, force }),
+  });
 }
 
 export async function importProxyPool(input: {

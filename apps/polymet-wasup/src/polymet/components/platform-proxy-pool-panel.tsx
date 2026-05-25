@@ -3,7 +3,7 @@ import { CheckIcon, UploadIcon } from "lucide-react";
 import { REGION_OPTIONS } from "@/polymet/data/dashboard-data";
 import { importProxyPool, listProxyPool, regionLabelToCode } from "@/polymet/lib/control-plane-api";
 
-export function PlatformProxyPoolPanel() {
+export function PlatformProxyPoolPanel({ onChanged }: { onChanged?: () => void }) {
   const [region, setRegion] = useState<(typeof REGION_OPTIONS)[number]>("Finland");
   const [proxyText, setProxyText] = useState("");
   const [proxies, setProxies] = useState<
@@ -16,6 +16,8 @@ export function PlatformProxyPoolPanel() {
       credential: string;
       instance_id: string | null;
       region_code: string;
+      instance_name: string | null;
+      org_slug: string | null;
     }>
   >([]);
   const [message, setMessage] = useState("");
@@ -50,6 +52,7 @@ export function PlatformProxyPoolPanel() {
       );
       setProxyText("");
       await refreshProxies();
+      onChanged?.();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not import proxies");
     } finally {
@@ -58,13 +61,14 @@ export function PlatformProxyPoolPanel() {
   };
 
   const freeCount = proxies.filter((proxy) => proxy.status === "free").length;
+  const assignedCount = proxies.filter((proxy) => proxy.status === "assigned").length;
 
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-border/60 bg-card px-4 sm:px-5">
         <div className="flex flex-col gap-3 border-b border-border/60 py-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="text-sm font-medium">Region</div>
+            <div className="text-sm font-medium">Import region</div>
             <p className="mt-1 text-xs text-muted-foreground">
               Imported proxies are only offered to instances in the matching hosting zone.
             </p>
@@ -108,9 +112,9 @@ export function PlatformProxyPoolPanel() {
         <div className="py-5">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
-              <div className="text-sm font-medium">{region} pool</div>
+              <div className="text-sm font-medium">{region} pool preview</div>
               <p className="text-xs text-muted-foreground">
-                {freeCount} free of {proxies.length} imported proxies in this region.
+                {assignedCount} in use · {freeCount} free · {proxies.length} in region
               </p>
             </div>
             <button
@@ -127,7 +131,7 @@ export function PlatformProxyPoolPanel() {
                 <tr>
                   <th className="px-3 py-2 font-medium">Host</th>
                   <th className="px-3 py-2 font-medium">Status</th>
-                  <th className="px-3 py-2 font-medium">Assignment</th>
+                  <th className="px-3 py-2 font-medium">Utilization</th>
                 </tr>
               </thead>
               <tbody>
@@ -138,7 +142,7 @@ export function PlatformProxyPoolPanel() {
                     </td>
                     <td className="px-3 py-2 capitalize">{proxy.status}</td>
                     <td className="px-3 py-2 text-muted-foreground">
-                      {proxy.instance_id ? `Instance ${proxy.instance_id.slice(0, 8)}…` : "Unassigned"}
+                      {proxy.instance_name ? `${proxy.instance_name} · ${proxy.org_slug || "org"}` : "Unassigned"}
                     </td>
                   </tr>
                 ))}

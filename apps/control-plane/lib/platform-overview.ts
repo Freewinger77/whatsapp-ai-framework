@@ -1,5 +1,6 @@
 import { getProInstanceLimit, type PlanTier } from './plan-access';
 import { getSupabaseAdmin } from './supabase-admin';
+import { estimateVmMonthlyUsd } from './vm-pricing';
 
 const PRO_BILLING_STATUSES = new Set(['active', 'trialing']);
 const GRACE_BILLING_STATUSES = new Set(['past_due', 'unpaid']);
@@ -33,6 +34,9 @@ export type PlatformOrgRow = {
     publicIp: string | null;
     vmName: string | null;
     azureRegion: string | null;
+    azureResourceGroup: string | null;
+    vmSize: string | null;
+    vmCostUsd: number;
     lastError: string | null;
     requestedAt: string | null;
     provisionedAt: string | null;
@@ -61,6 +65,21 @@ export type PlatformInstanceRow = {
   createdAt: string;
 };
 
+export type PlatformProxyRow = {
+  id: string;
+  label: string | null;
+  regionCode: string;
+  host: string;
+  port: number;
+  status: string;
+  instanceId: string | null;
+  instanceName: string | null;
+  orgId: string | null;
+  orgSlug: string | null;
+  orgName: string | null;
+  assignedAt: string | null;
+};
+
 export type PlatformOverview = {
   generatedAt: string;
   summary: {
@@ -69,6 +88,7 @@ export type PlatformOverview = {
     trialingOrganizations: number;
     graceOrganizations: number;
     lockedOrganizations: number;
+    blockedOrganizations: number;
     freeOrganizations: number;
     totalInstances: number;
     connectedInstances: number;
@@ -77,9 +97,11 @@ export type PlatformOverview = {
     proxyTotal: number;
     proxyFree: number;
     proxyAssigned: number;
+    totalVmCostUsd: number;
   };
   organizations: PlatformOrgRow[];
   instances: PlatformInstanceRow[];
+  proxies: PlatformProxyRow[];
   proxyPool: Array<{
     regionCode: string;
     total: number;
@@ -108,7 +130,9 @@ type DeploymentRow = {
   base_url: string | null;
   public_ip: string | null;
   vm_name: string | null;
+  vm_size: string | null;
   azure_region: string | null;
+  azure_resource_group: string | null;
   last_error: string | null;
   requested_at: string | null;
   provisioned_at: string | null;
@@ -136,7 +160,8 @@ export async function fetchPlatformOverview(): Promise<PlatformOverview> {
     { data: billingSummaries, error: billingError },
     { data: entitlements, error: entitlementError },
     { data: instances, error: instanceError },
-    { data: proxyPool, error: proxyError }
+    { data: proxyPool, error: proxyError },
+    { data: proxies, error: proxiesError }
   ] = await Promise.all([
     supabase
       .from('organizations')
@@ -146,7 +171,7 @@ export async function fetchPlatformOverview(): Promise<PlatformOverview> {
     supabase
       .from('org_deployments')
       .select(
-        'org_id, status, base_url, public_ip, vm_name, azure_region, last_error, requested_at, provisioned_at, dns_ready_at'
+        'org_id, status, base_url, public_ip, vm_name, vm_size, azure_region, azure_resource_group, last_error, requested_at, provisioned_at, dns_ready_at'
       )
       .eq('environment', 'production'),
     supabase.from('org_billing_summary').select('*'),
@@ -159,7 +184,14 @@ export async function fetchPlatformOverview(): Promise<PlatformOverview> {
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(1000),
-    supabase.from('proxy_pool_summary').select('*')
+    supabase.from('proxy_pool_summary').select('*'),
+    supabase
+      .from('proxy_allocations')
+      .select(
+        'id, label, region_code, host, port, status, assigned_at, instance_id, org_id, instances(name), organizations(slug, name)'
+      )
+      .order('created_at', { ascending: false })
+      .limit(1000)
   ]);
 
   if (orgError) throw new Error(orgError.message);
@@ -168,6 +200,7 @@ export async function fetchPlatformOverview(): Promise<PlatformOverview> {
   if (entitlementError) throw new Error(entitlementError.message);
   if (instanceError) throw new Error(instanceError.message);
   if (proxyError) throw new Error(proxyError.message);
+  if (proxiesError) throw new Error(proxiesError.message);
 
   const deploymentByOrg = new Map<string, DeploymentRow>();
   for (const deployment of (deployments ?? []) as DeploymentRow[]) {
@@ -245,7 +278,9 @@ export async function fetchPlatformOverview(): Promise<PlatformOverview> {
       new Date(billingGraceEndsAt as string).getTime() > now;
 
     let tier: PlanTier = 'free';
-    if (billingLockedAt || org.status === 'billing_locked') {
+    if (org.status === 'platform_blocked') {
+      tier = 'locked';
+    } else if (billingLockedAt || org.status === 'billing_locked') {
       tier = 'locked';
     } else if (graceActive || (billingStatus && GRACE_BILLING_STATUSES.has(billingStatus))) {
       tier = 'grace';
@@ -254,6 +289,11 @@ export async function fetchPlatformOverview(): Promise<PlatformOverview> {
     }
 
     const deployment = deploymentByOrg.get(org.id);
+    const vmCost = estimateVmMonthlyUsd({
+      vmSize: deployment?.vm_size,
+      osDiskGb: 64,
+      includePublicIp: Boolean(deployment?.public_ip)
+    });
 
     return {
       id: org.id,
@@ -285,6 +325,9 @@ export async function fetchPlatformOverview(): Promise<PlatformOverview> {
             publicIp: deployment.public_ip,
             vmName: deployment.vm_name,
             azureRegion: deployment.azure_region,
+            azureResourceGroup: deployment.azure_resource_group,
+            vmSize: deployment.vm_size,
+            vmCostUsd: vmCost.totalUsd,
             lastError: deployment.last_error,
             requestedAt: deployment.requested_at,
             provisionedAt: deployment.provisioned_at,
@@ -318,6 +361,25 @@ export async function fetchPlatformOverview(): Promise<PlatformOverview> {
     };
   });
 
+  const platformProxies: PlatformProxyRow[] = (proxies ?? []).map((proxy: Record<string, unknown>) => {
+    const instance = Array.isArray(proxy.instances) ? proxy.instances[0] : proxy.instances;
+    const organization = Array.isArray(proxy.organizations) ? proxy.organizations[0] : proxy.organizations;
+    return {
+      id: String(proxy.id),
+      label: (proxy.label as string | null) ?? null,
+      regionCode: String(proxy.region_code ?? ''),
+      host: String(proxy.host ?? ''),
+      port: Number(proxy.port ?? 0),
+      status: String(proxy.status ?? ''),
+      instanceId: (proxy.instance_id as string | null) ?? null,
+      instanceName: (instance as { name?: string } | null)?.name ?? null,
+      orgId: (proxy.org_id as string | null) ?? null,
+      orgSlug: (organization as { slug?: string } | null)?.slug ?? null,
+      orgName: (organization as { name?: string } | null)?.name ?? null,
+      assignedAt: (proxy.assigned_at as string | null) ?? null
+    };
+  });
+
   const proxyRows: PlatformOverview['proxyPool'] = (proxyPool ?? []).map((row: Record<string, unknown>) => ({
     regionCode: String(row.region_code ?? ''),
     total: Number(row.total ?? 0),
@@ -332,6 +394,7 @@ export async function fetchPlatformOverview(): Promise<PlatformOverview> {
     trialingOrganizations: platformOrganizations.filter((org) => org.billingStatus === 'trialing').length,
     graceOrganizations: platformOrganizations.filter((org) => org.tier === 'grace').length,
     lockedOrganizations: platformOrganizations.filter((org) => org.tier === 'locked').length,
+    blockedOrganizations: platformOrganizations.filter((org) => org.orgStatus === 'platform_blocked').length,
     freeOrganizations: platformOrganizations.filter((org) => org.tier === 'free').length,
     totalInstances: platformInstances.length,
     connectedInstances: platformInstances.filter((instance) => instance.status === 'connected').length,
@@ -339,7 +402,10 @@ export async function fetchPlatformOverview(): Promise<PlatformOverview> {
     failedDeployments: platformOrganizations.filter((org) => org.deployment?.status === 'failed').length,
     proxyTotal: proxyRows.reduce((sum: number, row) => sum + row.total, 0),
     proxyFree: proxyRows.reduce((sum: number, row) => sum + row.free, 0),
-    proxyAssigned: proxyRows.reduce((sum: number, row) => sum + row.assigned, 0)
+    proxyAssigned: proxyRows.reduce((sum: number, row) => sum + row.assigned, 0),
+    totalVmCostUsd: roundUsd(
+      platformOrganizations.reduce((sum, org) => sum + (org.deployment?.vmCostUsd ?? 0), 0)
+    )
   };
 
   return {
@@ -347,6 +413,11 @@ export async function fetchPlatformOverview(): Promise<PlatformOverview> {
     summary,
     organizations: platformOrganizations,
     instances: platformInstances,
+    proxies: platformProxies,
     proxyPool: proxyRows
   };
+}
+
+function roundUsd(value: number) {
+  return Math.round(value * 100) / 100;
 }
