@@ -20,6 +20,7 @@ import {
   MessageCircleIcon,
   PencilIcon,
   QrCodeIcon,
+  RefreshCwIcon,
   SaveIcon,
   SearchIcon,
   SlidersHorizontalIcon,
@@ -123,6 +124,7 @@ export function InstanceDetailPage() {
   const [deleteSheetOpen, setDeleteSheetOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [reconnecting, setReconnecting] = useState(false);
   const [instanceFeed, setInstanceFeed] = useState<LiveFeedItem[]>([]);
   const [instanceLogs, setInstanceLogs] = useState<ActivityLogItem[]>([]);
   const [activityError, setActivityError] = useState("");
@@ -312,6 +314,33 @@ export function InstanceDetailPage() {
     }
   };
 
+  const attemptReconnect = async () => {
+    if (!id || reconnecting || inst.status === "provisioning") return;
+
+    setReconnecting(true);
+    try {
+      await connectInstance(id).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/connection in progress/i.test(message)) return;
+        throw error;
+      });
+
+      const nextInstance = await getInstance(id);
+      setLiveInstance(nextInstance);
+      await refresh();
+
+      toast.success("Reconnect started", {
+        description: "The worker accepted the connect attempt. It may take a few seconds to become active.",
+      });
+    } catch (error) {
+      toast.error("Reconnect failed", {
+        description: error instanceof Error ? error.message : "Could not start reconnect.",
+      });
+    } finally {
+      setReconnecting(false);
+    }
+  };
+
   const setProfilePicture = () => {
     setPictureModalOpen(true);
   };
@@ -460,12 +489,26 @@ export function InstanceDetailPage() {
               Disconnect
             </button>
           ) : (
-            <button
-              onClick={() => setLinkOpen(true)}
-              className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted"
-            >
-              Connect
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setLinkOpen(true)}
+                className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted"
+              >
+                Connect
+              </button>
+              {inst.status !== "provisioning" && (
+                <button
+                  type="button"
+                  onClick={() => void attemptReconnect()}
+                  disabled={reconnecting}
+                  className="inline-flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Attempt reconnect"
+                  title="Attempt reconnect (same as worker dashboard reconnect)"
+                >
+                  <RefreshCwIcon className={cn("h-4 w-4", reconnecting && "animate-spin")} />
+                </button>
+              )}
+            </div>
           )}
           <button
             onClick={saveSettings}
