@@ -20,7 +20,23 @@ Org-scoped keys from the Wasup dashboard Connection page are recommended. Open d
 2. **Connect** and scan QR or enter a pairing code (\`POST .../connect\`, poll \`GET .../qr\`)
 3. **Set webhook** for inbound messages (\`PUT .../webhook\` or at create time)
 4. **Send** outbound messages (\`POST .../send\`)
+5. **Poll status** for delivery/read acks (\`GET .../messages/{messageId}/status\`)
 5. **Monitor** health and logs (\`GET /api/health\`, \`GET .../logs\`)
+
+## Reconnecting & re-pairing (read this to avoid pairing failures)
+To take a number from **any** state (disconnected, dropped, corrupt auth, or previously linked) to a **fresh pairing code**, always run this exact sequence:
+
+1. \`POST /api/instances/{id}/disconnect\` — close any live/half socket
+2. \`POST /api/instances/{id}/clear-auth\` — wipe credentials (forces a NEW code)
+3. wait ~2s, then \`POST /api/instances/{id}/connect\` with \`{ "phoneNumber": "447..." }\`
+4. \`GET /api/instances/{id}/connection\` — poll every 3–5s until \`status: connected\`
+
+**Rules that prevent the common failures:**
+- Call \`connect\` **once** per attempt. While waiting, poll \`GET .../connection\` only — never re-POST connect.
+- If \`connect\` returns \`reused: true\`, the previous code (<2 min) is still valid — show the same code, do not refresh.
+- **Skipping \`clear-auth\`** on a previously linked number makes \`connect\` resume the old session and return \`pairingCode: null\` — no code for the user.
+- \`400 "Connection Closed"\` (status 428) means stale/corrupt auth — \`clear-auth\` then \`connect\` fixes it; retry connect at most once after ~4s.
+- WhatsApp app showing **"something went wrong"** = the code was rotated by repeated \`connect\` calls. One connect, then let the user enter the code.
 
 ## Interactive messages
 Use the same send endpoints for plain text, link previews, CTA URL buttons, quick-reply buttons, media, locations, and reactions. See **Messaging** and **Webhook** sections for payload shapes.
@@ -31,7 +47,15 @@ When someone messages your linked number, Wasup POSTs JSON to your \`webhookUrl\
 export const TAG_DESCRIPTIONS = {
   Whitelabel: 'Single-call helpers that create, configure, and connect a number in one request — ideal for onboarding flows.',
   Instances: 'Create, read, update, and delete WhatsApp instances. An instance is one linked phone number plus its settings.',
-  Connection: 'Start or stop the live WhatsApp session, fetch QR/pairing codes, and check whether a number is linked.',
+  Connection: `Start or stop the live WhatsApp session, fetch QR/pairing codes, and check whether a number is linked.
+
+**Bulletproof re-pair flow (use this to ALWAYS reach a fresh pairing code):**
+1. \`POST .../disconnect\` — close any live or half-open socket
+2. \`POST .../clear-auth\` — wipe saved credentials (this is what forces a NEW code)
+3. wait ~2s, then \`POST .../connect\` with \`pairingPhone\` — generates the code
+4. \`GET .../connection\` — poll every 3–5s until \`status: connected\`
+
+Call \`connect\` **once** per attempt. While polling, only call \`GET .../connection\` — never re-POST connect in a loop. If \`connect\` returns \`reused: true\` the previous code (<2 min old) is still valid — show the same code, do not refresh. Skipping \`clear-auth\` on a previously linked number makes \`connect\` resume the old session and return \`pairingCode: null\` (no code for the user).`,
   Messaging: 'Send text, media, buttons, lists, and reactions to customers. Auto-select routes pick the first connected instance when you omit an instance id.',
   Reactions: 'Attach or remove emoji reactions on existing messages using the message id from webhooks or send responses.',
   Handoff: 'Pause automated replies for specific chats while a human agent takes over the conversation.',
@@ -59,17 +83,25 @@ export const ENDPOINT_DESCRIPTIONS = {
 
   'DELETE /api/instances/{instanceId}': `**Permanently remove an instance.** Stops the session, deletes local credentials, logs, and stored media for that id. This cannot be undone — create a new instance to link the same phone again.`,
 
-  'POST /api/instances/{instanceId}/connect': `**Start linking this instance to WhatsApp.** Opens a pairing session. By default returns QR mode — poll \`GET .../qr\` and show the code to the user. Pass \`pairingPhone\` to receive a numeric pairing code instead of QR. Safe to retry while status is \`connecting\`.`,
+  'POST /api/instances/{instanceId}/connect': `**Start linking this instance to WhatsApp.** Opens a pairing session. By default returns QR mode — poll \`GET .../qr\` and show the code to the user. Pass \`pairingPhone\` (or \`phoneNumber\`) to receive a numeric pairing code instead of QR.
 
-  'POST /api/instances/{instanceId}/disconnect': `**Close the live session locally.** Stops receiving and sending until you connect again. Saved credentials remain on disk so reconnect usually does not require a new QR. Pass \`revoke: true\` only when you intentionally want WhatsApp to invalidate the linked device everywhere.`,
+**Call this only ONCE per pairing attempt.** Do not call it again while waiting — poll \`GET .../connection\` instead. Re-calling rotates the code and triggers WhatsApp's "something went wrong".
 
-  'POST /api/instances/{instanceId}/clear-auth': `**Wipe saved pairing data.** Disconnects if needed and deletes credential files. The next connect always requires a fresh QR scan or pairing code. Use when a number was unlinked from the phone or credentials are corrupted.`,
+**Responses:**
+- New code → \`{ pairingCode, reused: null }\`
+- Code <2 min old, same phone → \`{ pairingCode, reused: true }\` (show the SAME code; do not refresh)
+- Number already linked / credentials still present → resumes the old session and returns \`pairingCode: null\`. To force a fresh code you must \`clear-auth\` first (see the **Bulletproof re-pair flow** in the Connection section).
+- \`400 "Connection Closed"\` (status 428) → corrupt/stale auth or a socket still tearing down. Fix: run \`clear-auth\` then \`connect\`; if it recurs, wait ~4s and retry connect once. Never rapid-fire connect.`,
+
+  'POST /api/instances/{instanceId}/disconnect': `**Close the live session locally.** Stops receiving and sending until you connect again. Saved credentials remain on disk so reconnect usually does not require a new QR. Pass \`revoke: true\` only when you intentionally want WhatsApp to invalidate the linked device everywhere. Idempotent — safe to call when already disconnected. Step 1 of the re-pair flow.`,
+
+  'POST /api/instances/{instanceId}/clear-auth': `**Wipe saved pairing data.** Disconnects if needed and deletes credential files, then the next \`connect\` ALWAYS issues a fresh QR/pairing code. This is the step that prevents the \`pairingCode: null\` and \`428 Connection Closed\` failures on a previously linked or corrupted number. Idempotent. Step 2 of the re-pair flow — run it before \`connect\` whenever you want the user to (re)link, regardless of current status.`,
 
   'POST /api/instances/{instanceId}/pair': `**Connect using a pairing code instead of QR.** Requires the phone number in the body. Returns a short code the user enters under WhatsApp → Linked devices. Automatically starts the connection if not already connecting.`,
 
   'GET /api/instances/{instanceId}/qr': `**Get the current QR image or pairing code.** Poll while status is \`connecting\`. Append \`?format=image\` for a raw PNG suitable for mobile apps. Returns connected phone when status is \`connected\`. Returns 204 when no code is ready yet — call \`/connect\` first.`,
 
-  'GET /api/instances/{instanceId}/connection': `**Lightweight connection poll.** Returns only status, phone, uptime, and pairing/QR hints — faster than fetching the full instance object. Ideal for frontends that refresh every few seconds during onboarding.`,
+  'GET /api/instances/{instanceId}/connection': `**Lightweight connection poll — use THIS while waiting to link.** Returns only status (\`disconnected\` | \`connecting\` | \`connected\`), phone, uptime, and the current \`pairingCode\` — faster than fetching the full instance object. Poll every 3–5s after \`connect\`; stop when \`status: connected\`. Never call \`POST .../connect\` inside the poll loop. Note: a \`connecting\` instance whose code is not entered will drop back to \`disconnected\` after ~2 min (the code expired) — re-run the re-pair flow to mint a new one.`,
 
   'POST /api/instances/{instanceId}/send': `**Send an outbound WhatsApp message from this instance.** Accepts plain text, link previews, CTA URL buttons, quick replies, images, documents, audio, video, and location pins in one payload. Requires \`to\` (customer phone, country code, no +) and content fields. Respects anti-ban delays; blocked sends return a reason and suggested wait time.`,
 
@@ -82,6 +114,8 @@ export const ENDPOINT_DESCRIPTIONS = {
   'POST /api/send': `**Send without specifying an instance id.** Wasup picks a connected instance automatically — usually matching \`from_phone\` when provided, otherwise the first connected instance. Same body as instance send. Fails with a clear error if no instance is connected.`,
 
   'GET /api/instances/{instanceId}/messages': `**Search recent message history stored on the worker.** Filter by phone, direction, or text search. Useful for support consoles; primary automation should still rely on webhooks for real-time inbound events.`,
+
+  'GET /api/instances/{instanceId}/messages/{messageId}/status': `**Poll outbound delivery/read status for a message you sent.** Use the \`message_id\` from \`POST .../send\` or \`/api/send\`. Returns \`pending\`, \`sent\`, \`delivered\`, \`read\`, or \`played\` while the instance stays connected. 404 if the id is unknown or the worker restarted since send.`,
 
   'POST /api/instances/{instanceId}/react': `**Add or remove a reaction emoji on a message.** Provide \`to\`, \`messageId\` from a webhook or send response, and \`emoji\` (empty string removes the reaction). Set \`fromMe: true\` when reacting to a message this instance sent.`,
 
@@ -211,13 +245,15 @@ export const CONTROL_PLANE_ENDPOINTS = {
 
   'DELETE /api/v3/instances/{id}': `**Delete instance** — removes worker state, releases proxy slot, and frees billing seat.`,
 
-  'POST /api/v3/instances/{id}/connect': `**Tell the worker to start pairing** for this instance. Optional \`pairingPhone\` for code-based linking.`,
+  'POST /api/v3/instances/{id}/connect': `**Tell the worker to start pairing** for this instance. Optional \`pairingPhone\` for code-based linking. Call once per attempt, then poll \`GET .../qr\`. To force a fresh code on an already-linked or stuck number, call \`POST .../clear-auth\` first (proxies to the worker re-pair flow).`,
 
-  'GET /api/v3/instances/{id}/qr': `**Poll QR / pairing / connected state** from the worker through the control plane (no direct worker URL needed in the dashboard).`,
+  'GET /api/v3/instances/{id}/qr': `**Poll QR / pairing / connected state** from the worker through the control plane (no direct worker URL needed in the dashboard). Poll every 3–5s; do not re-call \`connect\` while polling. A pairing code expires after ~2 min if unused.`,
 
-  'POST /api/v3/instances/{id}/clear-auth': `**Clear worker credentials** so the user must scan QR again.`,
+  'POST /api/v3/instances/{id}/clear-auth': `**Clear worker credentials** so the next \`connect\` always issues a fresh QR/pairing code. Use this before \`connect\` to reliably re-pair a number that was previously linked, dropped, or shows \`pairingCode: null\` / \`Connection Closed\`.`,
 
-  'POST /api/v3/instances/{id}/send': `**Send a WhatsApp message** via control plane proxy to the org worker. Same payload as worker \`/send\`.`,
+  'POST /api/v3/instances/{id}/send': `**Send a WhatsApp message** via control plane proxy to the org worker. Same payload as worker \`/send\`. Returns worker response including \`message_id\` when available.`,
+
+  'GET /api/v3/instances/{id}/messages/{messageId}/status': `**Poll outbound message delivery/read status** via control plane proxy to the org worker. Same as worker \`GET .../messages/{messageId}/status\`. Requires \`instances:read\`.`,
 
   'GET /api/v3/instances/{id}/profile': `**Read linked WhatsApp profile** (name, about, picture) from the worker.`,
 

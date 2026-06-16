@@ -19,7 +19,23 @@ info:
     2. **Connect** and scan QR or enter a pairing code (`POST .../connect`, poll `GET .../qr`)
     3. **Set webhook** for inbound messages (`PUT .../webhook` or at create time)
     4. **Send** outbound messages (`POST .../send`)
+    5. **Poll status** for delivery/read acks (`GET .../messages/{messageId}/status`)
     5. **Monitor** health and logs (`GET /api/health`, `GET .../logs`)
+
+    ## Reconnecting & re-pairing (read this to avoid pairing failures)
+    To take a number from **any** state (disconnected, dropped, corrupt auth, or previously linked) to a **fresh pairing code**, always run this exact sequence:
+
+    1. `POST /api/instances/{id}/disconnect` — close any live/half socket
+    2. `POST /api/instances/{id}/clear-auth` — wipe credentials (forces a NEW code)
+    3. wait ~2s, then `POST /api/instances/{id}/connect` with `{ "phoneNumber": "447..." }`
+    4. `GET /api/instances/{id}/connection` — poll every 3–5s until `status: connected`
+
+    **Rules that prevent the common failures:**
+    - Call `connect` **once** per attempt. While waiting, poll `GET .../connection` only — never re-POST connect.
+    - If `connect` returns `reused: true`, the previous code (<2 min) is still valid — show the same code, do not refresh.
+    - **Skipping `clear-auth`** on a previously linked number makes `connect` resume the old session and return `pairingCode: null` — no code for the user.
+    - `400 "Connection Closed"` (status 428) means stale/corrupt auth — `clear-auth` then `connect` fixes it; retry connect at most once after ~4s.
+    - WhatsApp app showing **"something went wrong"** = the code was rotated by repeated `connect` calls. One connect, then let the user enter the code.
 
     ## Interactive messages
     Use the same send endpoints for plain text, link previews, CTA URL buttons, quick-reply buttons, media, locations, and reactions. See **Messaging** and **Webhook** sections for payload shapes.
@@ -40,7 +56,16 @@ tags:
   - name: Instances
     description: Create, read, update, and delete WhatsApp instances. An instance is one linked phone number plus its settings.
   - name: Connection
-    description: Start or stop the live WhatsApp session, fetch QR/pairing codes, and check whether a number is linked.
+    description: |-
+      Start or stop the live WhatsApp session, fetch QR/pairing codes, and check whether a number is linked.
+
+      **Bulletproof re-pair flow (use this to ALWAYS reach a fresh pairing code):**
+      1. `POST .../disconnect` — close any live or half-open socket
+      2. `POST .../clear-auth` — wipe saved credentials (this is what forces a NEW code)
+      3. wait ~2s, then `POST .../connect` with `pairingPhone` — generates the code
+      4. `GET .../connection` — poll every 3–5s until `status: connected`
+
+      Call `connect` **once** per attempt. While polling, only call `GET .../connection` — never re-POST connect in a loop. If `connect` returns `reused: true` the previous code (<2 min old) is still valid — show the same code, do not refresh. Skipping `clear-auth` on a previously linked number makes `connect` resume the old session and return `pairingCode: null` (no code for the user).
   - name: Messaging
     description: Send text, media, buttons, lists, and reactions to customers. Auto-select routes pick the first connected instance when you omit an instance id.
   - name: Reactions
@@ -317,7 +342,16 @@ paths:
       tags:
         - Connection
       summary: Connect instance
-      description: "**Start linking this instance to WhatsApp.** Opens a pairing session. By default returns QR mode — poll `GET .../qr` and show the code to the user. Pass `pairingPhone` to receive a numeric pairing code instead of QR. Safe to retry while status is `connecting`."
+      description: |-
+        **Start linking this instance to WhatsApp.** Opens a pairing session. By default returns QR mode — poll `GET .../qr` and show the code to the user. Pass `pairingPhone` (or `phoneNumber`) to receive a numeric pairing code instead of QR.
+
+        **Call this only ONCE per pairing attempt.** Do not call it again while waiting — poll `GET .../connection` instead. Re-calling rotates the code and triggers WhatsApp's "something went wrong".
+
+        **Responses:**
+        - New code → `{ pairingCode, reused: null }`
+        - Code <2 min old, same phone → `{ pairingCode, reused: true }` (show the SAME code; do not refresh)
+        - Number already linked / credentials still present → resumes the old session and returns `pairingCode: null`. To force a fresh code you must `clear-auth` first (see the **Bulletproof re-pair flow** in the Connection section).
+        - `400 "Connection Closed"` (status 428) → corrupt/stale auth or a socket still tearing down. Fix: run `clear-auth` then `connect`; if it recurs, wait ~4s and retry connect once. Never rapid-fire connect.
       requestBody:
         required: false
         content:
@@ -359,7 +393,7 @@ paths:
       tags:
         - Connection
       summary: Disconnect instance
-      description: "**Close the live session locally.** Stops receiving and sending until you connect again. Saved credentials remain on disk so reconnect usually does not require a new QR. Pass `revoke: true` only when you intentionally want WhatsApp to invalidate the linked device everywhere."
+      description: "**Close the live session locally.** Stops receiving and sending until you connect again. Saved credentials remain on disk so reconnect usually does not require a new QR. Pass `revoke: true` only when you intentionally want WhatsApp to invalidate the linked device everywhere. Idempotent — safe to call when already disconnected. Step 1 of the re-pair flow."
       requestBody:
         required: false
         content:
@@ -396,7 +430,7 @@ paths:
       tags:
         - Connection
       summary: Clear auth
-      description: "**Wipe saved pairing data.** Disconnects if needed and deletes credential files. The next connect always requires a fresh QR scan or pairing code. Use when a number was unlinked from the phone or credentials are corrupted."
+      description: "**Wipe saved pairing data.** Disconnects if needed and deletes credential files, then the next `connect` ALWAYS issues a fresh QR/pairing code. This is the step that prevents the `pairingCode: null` and `428 Connection Closed` failures on a previously linked or corrupted number. Idempotent. Step 2 of the re-pair flow — run it before `connect` whenever you want the user to (re)link, regardless of current status."
       responses:
         "200":
           description: Auth cleared
@@ -525,7 +559,7 @@ paths:
         - Whitelabel
         - Connection
       summary: Poll connection status
-      description: "**Lightweight connection poll.** Returns only status, phone, uptime, and pairing/QR hints — faster than fetching the full instance object. Ideal for frontends that refresh every few seconds during onboarding."
+      description: "**Lightweight connection poll — use THIS while waiting to link.** Returns only status (`disconnected` | `connecting` | `connected`), phone, uptime, and the current `pairingCode` — faster than fetching the full instance object. Poll every 3–5s after `connect`; stop when `status: connected`. Never call `POST .../connect` inside the poll loop. Note: a `connecting` instance whose code is not entered will drop back to `disconnected` after ~2 min (the code expired) — re-run the re-pair flow to mint a new one."
       responses:
         "200":
           description: Connection status
@@ -599,7 +633,7 @@ paths:
       tags:
         - Messaging
       summary: Send interactive-capable message via instance
-      description: "**Send links, CTA URL buttons, and quick replies.** Alias focused on interactive payloads. Supports one CTA URL button plus up to two quick-reply buttons."
+      description: "**Same as `/send` with documentation focused on interactive payloads.** Use for button-heavy examples. Supports combining one CTA URL button with up to two quick-reply buttons (three interactive actions total)."
       requestBody:
         required: true
         content:
@@ -2041,7 +2075,8 @@ components:
           format: uri
           example: https://example.com/booking
         - type: object
-          required: [url]
+          required:
+            - url
           properties:
             url:
               type: string
@@ -2057,7 +2092,8 @@ components:
           format: uri
           example: https://example.com/book
         - type: object
-          required: [url]
+          required:
+            - url
           properties:
             url:
               type: string
@@ -2072,7 +2108,9 @@ components:
       maxItems: 3
       items:
         type: object
-        required: [id, text]
+        required:
+          - id
+          - text
         properties:
           id:
             type: string
@@ -2084,7 +2122,8 @@ components:
             example: Pricing
     InteractiveSendRequest:
       type: object
-      required: [to]
+      required:
+        - to
       properties:
         to:
           type: string

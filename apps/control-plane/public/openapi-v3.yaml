@@ -183,8 +183,8 @@ paths:
     post:
       tags:
         - Instances
-      summary: Tell the worker to start pairing** for this instance. Optional `pairingPhone` for code-based linking.
-      description: "**Tell the worker to start pairing** for this instance. Optional `pairingPhone` for code-based linking."
+      summary: Tell the worker to start pairing** for this instance. Optional `pairingPhone` for code-based linking. Call once per atte
+      description: "**Tell the worker to start pairing** for this instance. Optional `pairingPhone` for code-based linking. Call once per attempt, then poll `GET .../qr`. To force a fresh code on an already-linked or stuck number, call `POST .../clear-auth` first (proxies to the worker re-pair flow)."
       responses:
         "200":
           description: Success
@@ -195,7 +195,7 @@ paths:
       tags:
         - Instances
       summary: Poll QR / pairing / connected state** from the worker through the control plane (no direct worker URL needed in the dash
-      description: "**Poll QR / pairing / connected state** from the worker through the control plane (no direct worker URL needed in the dashboard)."
+      description: "**Poll QR / pairing / connected state** from the worker through the control plane (no direct worker URL needed in the dashboard). Poll every 3–5s; do not re-call `connect` while polling. A pairing code expires after ~2 min if unused."
       responses:
         "200":
           description: Success
@@ -205,8 +205,8 @@ paths:
     post:
       tags:
         - Instances
-      summary: Clear worker credentials** so the user must scan QR again.
-      description: "**Clear worker credentials** so the user must scan QR again."
+      summary: Clear worker credentials** so the next `connect` always issues a fresh QR/pairing code. Use this before `connect` to rel
+      description: "**Clear worker credentials** so the next `connect` always issues a fresh QR/pairing code. Use this before `connect` to reliably re-pair a number that was previously linked, dropped, or shows `pairingCode: null` / `Connection Closed`."
       responses:
         "200":
           description: Success
@@ -216,8 +216,19 @@ paths:
     post:
       tags:
         - Instances
-      summary: Send a WhatsApp message** via control plane proxy to the org worker. Same payload as worker `/send`.
-      description: "**Send a WhatsApp message** via control plane proxy to the org worker. Same payload as worker `/send`."
+      summary: Send a WhatsApp message** via control plane proxy to the org worker. Same payload as worker `/send`. Returns worker resp
+      description: "**Send a WhatsApp message** via control plane proxy to the org worker. Same payload as worker `/send`. Returns worker response including `message_id` when available."
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized — missing or invalid Clerk session / API key
+  /api/v3/instances/{id}/messages/{messageId}/status:
+    get:
+      tags:
+        - Identity
+      summary: Poll outbound message delivery/read status** via control plane proxy to the org worker. Same as worker `GET .../messages
+      description: "**Poll outbound message delivery/read status** via control plane proxy to the org worker. Same as worker `GET .../messages/{messageId}/status`. Requires `instances:read`."
       responses:
         "200":
           description: Success
