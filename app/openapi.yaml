@@ -2495,7 +2495,33 @@ components:
           format: date-time
         from_phone:
           type: string
+          description: |
+            Legacy sender field. For **direct messages**, this is the customer's phone.
+            For **group messages**, this is the **group id** (same as `group_id`) — use
+            `sender_phone` for the member who sent the message.
           example: "447835156367"
+        is_group:
+          type: boolean
+          description: True when the message came from a WhatsApp group (`...@g.us`).
+          example: false
+        group_id:
+          type: string
+          nullable: true
+          description: WhatsApp group id when `is_group` is true.
+          example: "120363302926299309"
+        sender_phone:
+          type: string
+          nullable: true
+          description: Phone number of the person who sent the message (group member or DM contact).
+          example: "447404306348"
+        from_jid:
+          type: string
+          nullable: true
+          description: Raw chat JID — group id `@g.us` for groups, contact `@s.whatsapp.net` for DMs.
+        sender_jid:
+          type: string
+          nullable: true
+          description: Raw sender JID (`participant` for groups).
         to_phone:
           type: string
           example: "358942721757"

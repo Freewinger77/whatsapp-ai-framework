@@ -42,7 +42,9 @@ To take a number from **any** state (disconnected, dropped, corrupt auth, or pre
 Use the same send endpoints for plain text, link previews, CTA URL buttons, quick-reply buttons, media, locations, and reactions. See **Messaging** and **Webhook** sections for payload shapes.
 
 ## Inbound webhooks
-When someone messages your linked number, Wasup POSTs JSON to your \`webhookUrl\`. Media messages include \`media_id\` and \`media.downloadUrl\` so you can fetch the file with \`GET /api/instances/{id}/media/{mediaId}\`.`;
+When someone messages your linked number, Wasup POSTs JSON to your \`webhookUrl\`. Media messages include \`media_id\` and \`media.downloadUrl\` so you can fetch the file with \`GET /api/instances/{id}/media/{mediaId}\`.
+
+**Group messages:** \`from_phone\` remains the **group id** (legacy). Use \`is_group\`, \`group_id\`, and \`sender_phone\` for the member who sent the message. \`from_jid\` / \`sender_jid\` carry raw WhatsApp JIDs when you need them.`;
 
 export const TAG_DESCRIPTIONS = {
   Whitelabel: 'Single-call helpers that create, configure, and connect a number in one request — ideal for onboarding flows.',
@@ -161,7 +163,7 @@ export const ENDPOINT_DESCRIPTIONS = {
 
   'POST /api/instances/{instanceId}/webhook/test': `**Send a sample inbound payload** to the configured webhook URL so you can verify your receiver without waiting for a real message.`,
 
-  'GET /docs/inbound-webhook': `**Documentation-only reference** for the JSON body Wasup POSTs to your webhook when a customer messages you. Includes text, media, location, \`media_id\`, and \`whatsapp_message_id\` fields. Not a callable HTTP route on the worker.`,
+  'GET /docs/inbound-webhook': `**Documentation-only reference** for the JSON body Wasup POSTs to your webhook when a customer messages you. Includes text, media, location, \`media_id\`, and \`whatsapp_message_id\` fields. Group chats also include \`is_group\`, \`group_id\`, \`sender_phone\`, \`from_jid\`, and \`sender_jid\`. Not a callable HTTP route on the worker.`,
 
   'GET /api/instances/{instanceId}/logs': `**Fetch recent activity log lines** — connects, disconnects, sends, receives, and errors. Use the \`limit\` query param (max 200) for pagination.`,
 

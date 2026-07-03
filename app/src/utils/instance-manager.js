@@ -21,6 +21,7 @@ import baileysHelper from 'baileys_helper';
 import { AntiBanManager, safeSendMessage, delay } from './anti-ban.js';
 import { sendInteractiveViaHelper } from './interactive-sender.js';
 import { storeMediaBuffer } from './media-storage.js';
+import { isGroupJid, resolveSenderJid } from './message-sender-context.js';
 import {
     createProxyAgent,
     getDeploymentDefaultProxy,
@@ -2050,8 +2051,23 @@ class WhatsAppInstance {
             
             // Handle LID (Local Identifier) to PN (Phone Number) mapping
             let phoneNumber = await this._resolvePhoneNumber(msg, from);
+            const isGroup = isGroupJid(from);
+            const senderJid = resolveSenderJid(msg);
+            let senderPhone = senderJid
+                ? await this._resolvePhoneNumber(msg, senderJid)
+                : null;
+            const groupId = isGroup ? normalizePhone(from.replace('@g.us', '')) : null;
+            const senderContext = {
+                isGroup,
+                groupId,
+                senderPhone: senderPhone ? normalizePhone(senderPhone) : null,
+                senderJid,
+            };
+            const logFrom = isGroup && senderContext.senderPhone
+                ? `${senderContext.senderPhone} (group ${groupId})`
+                : phoneNumber;
             
-            this._log(`Received from ${phoneNumber}: ${(messageContent.text || '[media]').substring(0, 50)}...`, 'info');
+            this._log(`Received from ${logFrom}: ${(messageContent.text || '[media]').substring(0, 50)}...`, 'info');
             
             // Download + store media on worker disk (Azure public URL optional)
             let mediaInfo = null;
@@ -2086,6 +2102,10 @@ class WhatsAppInstance {
                         instanceId: this.id,
                         from: phoneNumber,
                         fromJid: from,
+                        isGroup,
+                        groupId,
+                        senderPhone: senderContext.senderPhone,
+                        senderJid,
                         message: messageContent.text,
                         messageType: messageContent.messageType,
                         isReply: messageContent.isReply,
@@ -2116,6 +2136,10 @@ class WhatsAppInstance {
                     instanceId: this.id,
                     from: phoneNumber,
                     fromJid: from,
+                    isGroup,
+                    groupId,
+                    senderPhone: senderContext.senderPhone,
+                    senderJid,
                     message: messageContent.text,
                     messageType: messageContent.messageType,
                     isReply: messageContent.isReply,
@@ -2137,7 +2161,7 @@ class WhatsAppInstance {
             // Only forward if this instance has its own webhook configured
             if (this.webhookUrl) {
                 this._log(`Forwarding to webhook: ${this.webhookUrl.substring(0, 50)}...`, 'info');
-                await this._forwardToWebhook(msg, messageContent, from, phoneNumber, this.webhookUrl, mediaInfo, receivedAtMs);
+                await this._forwardToWebhook(msg, messageContent, from, phoneNumber, this.webhookUrl, mediaInfo, receivedAtMs, senderContext);
             } else {
                 this._log('No instance webhook configured - message logged only', 'info');
             }
@@ -2156,7 +2180,7 @@ class WhatsAppInstance {
      * @param {string} phoneNumber - Sender phone number
      * @param {string} webhookUrl - Webhook URL to forward to
      */
-    async _forwardToWebhook(msg, messageContent, from, phoneNumber, webhookUrl, mediaInfo = null, receivedAtMs = Date.now()) {
+    async _forwardToWebhook(msg, messageContent, from, phoneNumber, webhookUrl, mediaInfo = null, receivedAtMs = Date.now(), senderContext = {}) {
         const axios = (await import('axios')).default;
         const phoneNotifsOn = this._preservesPhoneNotifications();
         const notificationMax = this._isNotificationMaxProfile();
@@ -2191,6 +2215,11 @@ class WhatsAppInstance {
                 message_id: generateUUID(),
                 created_at: new Date().toISOString(),
                 from_phone: normalizePhone(phoneNumber),
+                is_group: !!senderContext.isGroup,
+                group_id: senderContext.groupId || null,
+                sender_phone: senderContext.senderPhone || null,
+                from_jid: from || null,
+                sender_jid: senderContext.senderJid || null,
                 to_phone: normalizePhone(this.connectedPhone),
                 message: messageContent.text,
                 media_type: mediaTypeMap[messageContent.messageType] || 'text',
