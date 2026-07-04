@@ -95,6 +95,10 @@ const STALE_PROTOCOL_PAIRING_RETRY_LIMIT = 2;
 const PAIRING_RECONNECT_DELAY_MS = 1500;
 const POST_SCAN_LINK_GRACE_MS = 90 * 1000;
 const CONNECT_REPLACED_RETRY_DELAY_MS = 10_000;
+const CONFLICT_RECONNECT_MAX_ATTEMPTS = Math.max(
+    1,
+    Number.parseInt(process.env.WA_CONFLICT_RECONNECT_MAX_ATTEMPTS || '8', 10) || 8,
+);
 const QR_CODE_TTL_MS = 110_000;
 
 async function getCurrentBaileysVersion() {
@@ -313,6 +317,8 @@ class WhatsAppInstance {
         this.qrRefreshRestartCount = 0;
         this.staleProtocolResetCount = 0;
         this.pairingRestartTimer = null;
+        this.conflictReconnectTimer = null;
+        this.conflictReconnectAttempts = 0;
         this.activeConnectGeneration = 0;
         this.connectInFlight = false;
         this.qrScanReceivedAt = null;
@@ -421,6 +427,67 @@ class WhatsAppInstance {
             clearTimeout(this.pairingRestartTimer);
             this.pairingRestartTimer = null;
         }
+    }
+
+    _cancelConflictReconnectTimer() {
+        if (this.conflictReconnectTimer) {
+            clearTimeout(this.conflictReconnectTimer);
+            this.conflictReconnectTimer = null;
+        }
+    }
+
+    _scheduleConflictReconnect({ statusCode, detail, delayMs = CONNECT_REPLACED_RETRY_DELAY_MS } = {}) {
+        this._cancelConflictReconnectTimer();
+        if (this.conflictReconnectAttempts >= CONFLICT_RECONNECT_MAX_ATTEMPTS) {
+            this.connectionIssue = {
+                message: `WhatsApp replaced this socket repeatedly (${statusCode || 428}). Auto-reconnect stopped after ${this.conflictReconnectAttempts} attempts — press Reconnect; auth is preserved.`,
+                category: 'connection_replaced_exhausted',
+                requiresAuthClear: false,
+                at: new Date().toISOString(),
+                statusCode: statusCode || null,
+                detail: detail || null,
+            };
+            this._log(this.connectionIssue.message, 'error');
+            this._emitStatusChange();
+            return;
+        }
+
+        this.conflictReconnectAttempts += 1;
+        const attempt = this.conflictReconnectAttempts;
+        const waitSec = Math.round(delayMs / 1000);
+        this.connectionIssue = {
+            message: `WhatsApp replaced this socket (${statusCode || 428}). Auto-reconnect ${attempt}/${CONFLICT_RECONNECT_MAX_ATTEMPTS} in ${waitSec}s…`,
+            category: 'connection_replaced',
+            requiresAuthClear: false,
+            at: new Date().toISOString(),
+            statusCode: statusCode || null,
+            detail: detail || null,
+            retryAfterMs: delayMs,
+            conflictReconnectAttempt: attempt,
+            conflictReconnectMaxAttempts: CONFLICT_RECONNECT_MAX_ATTEMPTS,
+        };
+        this._log(
+            `Connection replaced/conflict (${statusCode}: ${detail || 'Connection Terminated'}); scheduling auto-reconnect ${attempt}/${CONFLICT_RECONNECT_MAX_ATTEMPTS} in ${waitSec}s`,
+            'warning',
+        );
+        this._emitStatusChange();
+
+        const generation = this.activeConnectGeneration;
+        this.conflictReconnectTimer = setTimeout(() => {
+            this.conflictReconnectTimer = null;
+            if (generation !== this.activeConnectGeneration) return;
+            if (this.status === 'connected') return;
+            this.connect().catch((err) => {
+                this.connectionIssue = {
+                    message: `Conflict auto-reconnect failed: ${err.message}`,
+                    category: 'reconnect_failed',
+                    requiresAuthClear: false,
+                    at: new Date().toISOString(),
+                };
+                this._log(`Conflict auto-reconnect failed: ${err.message}`, 'error');
+                this._emitStatusChange();
+            });
+        }, delayMs);
     }
 
     async _readAuthRegistrationState() {
@@ -645,6 +712,7 @@ class WhatsAppInstance {
         this.connectInFlight = true;
 
         this._cancelPairingRestartTimer();
+        this._cancelConflictReconnectTimer();
         if (!isPairingRecovery) {
             this.qrRefreshRestartCount = 0;
             this.staleProtocolResetCount = 0;
@@ -1021,17 +1089,11 @@ class WhatsAppInstance {
                             this._emitStatusChange();
                         }
                     } else if (isConflict) {
-                        this.connectionIssue = {
-                            message: 'WhatsApp replaced this socket with another active connection. Auth is preserved; disconnect the other worker/session, then reconnect.',
-                            category: 'connection_replaced',
-                            requiresAuthClear: false,
-                            at: new Date().toISOString(),
+                        this._scheduleConflictReconnect({
                             statusCode,
                             detail: updateSummary.error || reconnectPlan.message,
-                            retryAfterMs: CONNECT_REPLACED_RETRY_DELAY_MS,
-                        };
-                        this._log(`Connection replaced/conflict (${statusCode}: ${updateSummary.error || reconnectPlan.message}); auth preserved`, 'warning');
-                        this._emitStatusChange();
+                            delayMs: CONNECT_REPLACED_RETRY_DELAY_MS,
+                        });
                     } else if (shouldReconnect) {
                         const backoffMs = Math.max(2000, reconnectPlan.backoffMs || 5000);
                         this._log(`Connection lost (${reconnectPlan.category}: ${reconnectPlan.message}) — reconnecting in ${Math.round(backoffMs / 1000)}s`, 'warning');
@@ -1064,6 +1126,8 @@ class WhatsAppInstance {
 
                 if (connection === 'open') {
                     console.log(`[Instance ${this.id}] Connected!`);
+                    this.conflictReconnectAttempts = 0;
+                    this._cancelConflictReconnectTimer();
                     await enableAntibanAfterRegistration();
                     this.status = 'connected';
                     this.qrCode = null;
@@ -1190,6 +1254,7 @@ class WhatsAppInstance {
     async disconnect(options = {}) {
         const revokeSession = !!options.revokeSession;
         this._cancelPairingRestartTimer();
+        this._cancelConflictReconnectTimer();
         this.activeConnectGeneration += 1;
         // Stop presence cycling
         this._stopPresenceCycling();
