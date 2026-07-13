@@ -43,6 +43,62 @@ curl -X POST http://localhost:3000/api/send \
   }'
 ```
 
+## Message delivery status
+
+After sending, use the returned **message id** to poll WhatsApp ack state (`pending` → `sent` → `delivered` → `read` → `played`). Status is tracked in memory on the worker while the instance stays connected.
+
+### Send response fields
+
+Instance send:
+
+```json
+{
+  "success": true,
+  "message_id": "3EB0C4FA43ECB5A27C8F47",
+  "message_status": "pending",
+  "result": {
+    "sent": true,
+    "key": { "id": "3EB0C4FA43ECB5A27C8F47", "fromMe": true }
+  }
+}
+```
+
+Global `/api/send` returns an array with `message_id` and initial `status` (`pending`, `failed`, or `rate_limited`).
+
+### Poll status
+
+```bash
+curl http://localhost:3000/api/instances/wa_abc123/messages/3EB0C4FA43ECB5A27C8F47/status \
+  -H "X-API-Key: your-api-key"
+```
+
+Example response:
+
+```json
+{
+  "success": true,
+  "instanceId": "wa_abc123",
+  "message_id": "3EB0C4FA43ECB5A27C8F47",
+  "status": "delivered",
+  "status_at": "2026-05-31T18:09:37.602Z",
+  "from_phone": "447916389699",
+  "to_phone": "60123456789",
+  "updates": [
+    { "status": "pending", "at": "2026-05-31T18:09:37.181Z" },
+    { "status": "delivered", "at": "2026-05-31T18:09:37.602Z" }
+  ]
+}
+```
+
+Via **dev.wasup.co** (control plane proxy):
+
+```bash
+curl https://control-plane.wasup.co/api/v3/instances/wa_abc123/messages/3EB0C4FA43ECB5A27C8F47/status \
+  -H "Authorization: Bearer sk-prod_..."
+```
+
+Try it interactively on any worker at `/test` (Playground) — successful sends auto-fill the message id and poll status.
+
 ## Links, CTA URLs, and Quick Reply Buttons
 
 The send endpoints accept link and button payloads on the same routes as plain text. Existing `{ "to": "...", "message": "..." }` calls keep working unchanged.

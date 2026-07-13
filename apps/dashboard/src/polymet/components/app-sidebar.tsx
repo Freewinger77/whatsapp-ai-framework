@@ -1,6 +1,6 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { useClerk, useOrganization, useUser } from "@clerk/clerk-react";
+import { useClerk, useOrganization, useOrganizationList, useUser } from "@clerk/clerk-react";
 import { Link, useLocation } from "react-router-dom";
 import {
   HardDriveIcon,
@@ -17,12 +17,16 @@ import {
   UsersRoundIcon,
   XIcon,
   ExternalLinkIcon,
+  Building2Icon,
+  CheckIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { instanceGradient } from "@/polymet/data/instance-colors";
 import { useSidebar } from "@/polymet/hooks/use-sidebar";
 import { useWorkspaceState } from "@/polymet/hooks/use-workspace-state";
-import { inviteOrganizationMember } from "@/polymet/lib/control-plane-api";
+import { getConnection, inviteOrganizationMember } from "@/polymet/lib/control-plane-api";
+import { buildDashboardUrl } from "@/polymet/lib/dashboard-url";
+import { storeOneTimeApiKeys } from "@/polymet/lib/one-time-api-keys";
 import { ProBadge } from "@/polymet/components/pro-badge";
 import { isPlatformAdminEmail } from "@/polymet/lib/platform-admin";
 import { cn } from "@/lib/utils";
@@ -76,14 +80,43 @@ export function AppSidebar() {
   const { user } = useUser();
   const { organization } = useOrganization();
   const { signOut } = useClerk();
+  const { isLoaded: orgListLoaded, setActive, userMemberships } = useOrganizationList({
+    userMemberships: {
+      pageSize: 50,
+    },
+  });
   const { instances, provisioningActive, workerLinks, plan } = useWorkspaceState();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [teamModalTab, setTeamModalTab] = useState<TeamModalTab | null>(null);
+  const [switchingOrgId, setSwitchingOrgId] = useState<string | null>(null);
+
+  const workspaceMemberships = userMemberships.data ?? [];
+  const canSwitchWorkspace = workspaceMemberships.length > 1;
+
+  useEffect(() => {
+    if (!userMenuOpen || !orgListLoaded) return;
+    void userMemberships.revalidate?.();
+  }, [orgListLoaded, userMenuOpen]);
+
+  const switchWorkspace = async (organizationId: string) => {
+    if (!setActive || organizationId === organization?.id || switchingOrgId) return;
+
+    setSwitchingOrgId(organizationId);
+    try {
+      await setActive({ organization: organizationId });
+      const connection = await getConnection();
+      storeOneTimeApiKeys(connection.organization.id, connection.oneTimeApiKeys);
+      window.location.assign(buildDashboardUrl("/"));
+    } catch (error) {
+      toast.error("Could not switch workspace", {
+        description: error instanceof Error ? error.message : "Please try again.",
+      });
+      setSwitchingOrgId(null);
+    }
+  };
 
   const isActive = (to: string) =>
     to === "/" ? pathname === "/" : pathname.startsWith(to);
-
-  const onInstances = pathname.startsWith("/instances");
 
   const displayName = user?.fullName || user?.primaryEmailAddress?.emailAddress || "Wasup user";
   const email = user?.primaryEmailAddress?.emailAddress || "";
@@ -103,14 +136,15 @@ export function AppSidebar() {
           : "w-60 translate-x-0 px-4 py-6 opacity-100"
       )}
     >
-      <div className={cn("pb-8", collapsed ? "px-0 text-center" : "px-2")}>
+      <div className={cn("shrink-0 pb-8", collapsed ? "px-0 text-center" : "px-2")}>
         <Link to="/" className="inline-flex items-center gap-2 font-mono text-sm tracking-tight text-foreground" aria-label="Wasup home">
           <span>{collapsed ? "<>" : "<wasup.co/>"}</span>
           {!collapsed && plan?.tier === "pro" && <ProBadge />}
         </Link>
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto">
+      <nav className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="shrink-0 space-y-1">
         {NAV.map((item) => {
           const Icon = item.icon;
           const navKey = item.type === "internal" ? item.to : item.externalKey;
@@ -157,60 +191,69 @@ export function AppSidebar() {
           const locked = provisioningActive && item.to !== "/connection";
 
           return (
-            <div key={navKey}>
-              <Link
-                to={item.to}
-                onClick={(event) => {
-                  if (locked) event.preventDefault();
-                }}
-                aria-label={collapsed ? item.label : undefined}
-                aria-disabled={locked}
-                className={cn(
-                  "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-200",
-                  collapsed && "justify-center gap-0 px-0",
-                  active
-                    ? "bg-muted text-foreground font-medium"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60 hover:translate-x-0.5",
-                  locked && "pointer-events-none opacity-45",
-                )}
-              >
-                <Icon
-                  className="h-4 w-4 transition-transform duration-200 group-hover:scale-110"
-                  fill="none"
-                  strokeWidth={2}
-                />
-                {!collapsed && <span>{item.label}</span>}
-              </Link>
-
-              {item.to === "/instances" && onInstances && !collapsed && (
-                <div className="mt-1 ml-3 space-y-0.5 overflow-hidden border-l border-border/60 pl-3 animate-fade-up">
-                  {instances.map((inst) => {
-                    const instActive = pathname === `/instances/${inst.id}`;
-                    return (
-                      <Link
-                        key={inst.id}
-                        to={`/instances/${inst.id}`}
-                        className={cn(
-                          "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
-                          instActive
-                            ? "bg-muted text-foreground font-medium"
-                            : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-                        )}
-                      >
-                        <span
-                          className="h-2.5 w-2.5 rounded-full"
-                          style={{ background: instanceGradient(inst.id) }}
-                        />
-                        <span className="truncate">{inst.name}</span>
-                      </Link>
-                    );
-                  })}
-                </div>
+            <Link
+              key={navKey}
+              to={item.to}
+              onClick={(event) => {
+                if (locked) event.preventDefault();
+              }}
+              aria-label={collapsed ? item.label : undefined}
+              aria-disabled={locked}
+              className={cn(
+                "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-all duration-200",
+                collapsed && "justify-center gap-0 px-0",
+                active
+                  ? "bg-muted text-foreground font-medium"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/60 hover:translate-x-0.5",
+                locked && "pointer-events-none opacity-45",
               )}
-            </div>
+            >
+              <Icon
+                className="h-4 w-4 transition-transform duration-200 group-hover:scale-110"
+                fill="none"
+                strokeWidth={2}
+              />
+              {!collapsed && <span>{item.label}</span>}
+            </Link>
           );
         })}
+        </div>
 
+        {!collapsed && instances.length > 0 && (
+          <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border/60 pt-3">
+            <div className="shrink-0 px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Instances
+            </div>
+            <div
+              className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain px-2 pb-1 [scrollbar-gutter:stable]"
+              aria-label="Instance list"
+            >
+              {instances.map((inst) => {
+                const instActive = pathname === `/instances/${inst.id}`;
+                return (
+                  <Link
+                    key={inst.id}
+                    to={`/instances/${inst.id}`}
+                    className={cn(
+                      "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+                      instActive
+                        ? "bg-muted text-foreground font-medium"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/60",
+                    )}
+                  >
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ background: instanceGradient(inst.id) }}
+                    />
+                    <span className="truncate">{inst.name}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-auto shrink-0 space-y-1 border-t border-border/60 pt-3">
         {isPlatformAdmin && (
           <Link
             to="/admin"
@@ -260,9 +303,10 @@ export function AppSidebar() {
           />
           {!collapsed && <span>Settings</span>}
         </Link>
+        </div>
       </nav>
 
-      <div className={cn("relative border-t border-border/60 pt-4", collapsed ? "flex justify-center" : "")}>
+      <div className={cn("relative shrink-0 border-t border-border/60 pt-4", collapsed ? "flex justify-center" : "")}>
         <DropdownMenu open={userMenuOpen} onOpenChange={setUserMenuOpen}>
           <DropdownMenuTrigger asChild>
             <button
@@ -306,6 +350,44 @@ export function AppSidebar() {
                 </div>
               </div>
             </div>
+            {canSwitchWorkspace && (
+              <>
+                <div className="border-b border-border/60 px-4 py-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Workspaces
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    {workspaceMemberships.map((membership) => {
+                      const active = membership.organization.id === organization?.id;
+                      const switching = switchingOrgId === membership.organization.id;
+                      return (
+                        <button
+                          key={membership.id}
+                          type="button"
+                          disabled={Boolean(switchingOrgId)}
+                          onClick={() => void switchWorkspace(membership.organization.id)}
+                          className={cn(
+                            "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors",
+                            active
+                              ? "bg-muted text-foreground"
+                              : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                            switchingOrgId && !switching && "opacity-50",
+                          )}
+                        >
+                          <Building2Icon className="h-4 w-4 shrink-0" />
+                          <span className="min-w-0 flex-1 truncate">{membership.organization.name}</span>
+                          {switching ? (
+                            <span className="text-xs text-muted-foreground">Switching…</span>
+                          ) : active ? (
+                            <CheckIcon className="h-4 w-4 shrink-0 text-emerald-600" />
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            )}
             <div className="p-2">
               <DropdownMenuItem
                 onSelect={() => openTeamModal("invite")}

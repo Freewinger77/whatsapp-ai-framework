@@ -7,8 +7,8 @@ if (!stripeSecretKey) {
 }
 
 const stripe = new Stripe(stripeSecretKey);
-const currency = process.env.STRIPE_CURRENCY || 'usd';
-const instanceAmount = Number(process.env.STRIPE_INSTANCE_AMOUNT || 19900);
+const currency = process.env.STRIPE_CURRENCY || 'gbp';
+const instanceAmount = Number(process.env.STRIPE_INSTANCE_AMOUNT || 7900);
 const creditPackAmount = Number(process.env.STRIPE_MESSAGE_CREDIT_PACK_AMOUNT || 1000);
 const creditPackSize = Number(process.env.STRIPE_MESSAGE_CREDIT_PACK_SIZE || 1000);
 const promoCode = process.env.STRIPE_PROMOTION_CODE || 'wasup100';

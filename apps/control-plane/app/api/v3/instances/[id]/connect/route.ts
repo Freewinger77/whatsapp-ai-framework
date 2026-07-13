@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { isAuthError, requireWasupPrincipal } from '../../../../../../lib/auth';
 import { getSupabaseAdmin } from '../../../../../../lib/supabase-admin';
 import { connectWorkerInstance } from '../../../../../../lib/worker-client';
+import { loadWorkerTarget, workerRequestInput } from '../../../../../../lib/worker-target';
 import { mapWorkerInstanceStatus, workerPhoneFromResult, workerStatusFromResult } from '../../../../../../lib/worker-instance-state';
 
 const ConnectSchema = z.object({
@@ -30,15 +31,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   try {
-    const worker = await connectWorkerInstance(
-      {
-        endpoint: target.endpoint,
-        publicIp: target.deployment?.public_ip ?? null,
-        sharedSecret: process.env.WASUP_WORKER_SHARED_SECRET,
-        instanceId: id
-      },
-      parsed.data
-    );
+    const worker = await connectWorkerInstance(workerRequestInput(target, target.instance), parsed.data);
 
     await updateInstanceFromWorkerStatus(
       supabase,
@@ -55,31 +48,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     await updateInstanceFromWorkerStatus(supabase, id, principal.orgId, target.instance.metadata, null, target.instance.status, message);
     return NextResponse.json({ error: message }, { status: 502 });
   }
-}
-
-async function loadWorkerTarget(supabase: any, orgId: string, instanceId: string) {
-  const { data: instance } = await supabase
-    .from('instances')
-    .select('id, org_id, status, worker_endpoint, metadata')
-    .eq('org_id', orgId)
-    .eq('id', instanceId)
-    .is('deleted_at', null)
-    .maybeSingle();
-
-  if (!instance) return { instance: null, deployment: null, endpoint: null };
-
-  const { data: deployment } = await supabase
-    .from('org_deployments')
-    .select('id, base_url, public_ip, status')
-    .eq('org_id', orgId)
-    .eq('environment', 'production')
-    .maybeSingle();
-
-  return {
-    instance,
-    deployment,
-    endpoint: instance.worker_endpoint || deployment?.base_url || null
-  };
 }
 
 async function updateInstanceFromWorkerStatus(

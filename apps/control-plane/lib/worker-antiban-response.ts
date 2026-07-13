@@ -2,6 +2,18 @@ export type WorkerAntibanV2Status = {
   enabled?: boolean;
   running?: boolean;
   preset?: string;
+  overrides?: {
+    maxPerHour?: number;
+    maxPerDay?: number;
+    messagesPerHour?: number;
+    messagesPerDay?: number;
+  };
+  effectiveLimits?: {
+    maxPerMinute?: number;
+    maxPerHour?: number;
+    maxPerDay?: number;
+  };
+  modules?: Record<string, { enabled?: boolean; day1Limit?: number }>;
   health?: { risk?: string; isPaused?: boolean; recommendation?: string } | null;
   warmup?: {
     phase?: string;
@@ -25,7 +37,7 @@ export type WorkerAntibanV2Status = {
     };
   } | null;
   config?: {
-    overrides?: { maxPerHour?: number; maxPerDay?: number };
+    overrides?: { maxPerHour?: number; maxPerDay?: number; messagesPerHour?: number; messagesPerDay?: number };
     modules?: Record<string, { enabled?: boolean; day1Limit?: number }>;
   };
 };
@@ -47,10 +59,22 @@ export function unwrapWorkerAntibanV2(body: unknown): WorkerAntibanV2Status | nu
 
 export function rateLimitHour(status: WorkerAntibanV2Status | null) {
   const limits = status?.rateLimiter?.limits;
-  return limits?.maxPerHour ?? limits?.perHour ?? status?.config?.overrides?.maxPerHour;
+  return limits?.maxPerHour
+    ?? limits?.perHour
+    ?? status?.effectiveLimits?.maxPerHour
+    ?? status?.overrides?.maxPerHour
+    ?? status?.overrides?.messagesPerHour
+    ?? status?.config?.overrides?.maxPerHour
+    ?? status?.config?.overrides?.messagesPerHour;
 }
 
 export function rateLimitDay(status: WorkerAntibanV2Status | null) {
   const limits = status?.rateLimiter?.limits;
-  return limits?.maxPerDay ?? limits?.perDay ?? status?.config?.overrides?.maxPerDay;
+  return limits?.maxPerDay
+    ?? limits?.perDay
+    ?? status?.effectiveLimits?.maxPerDay
+    ?? status?.overrides?.maxPerDay
+    ?? status?.overrides?.messagesPerDay
+    ?? status?.config?.overrides?.maxPerDay
+    ?? status?.config?.overrides?.messagesPerDay;
 }

@@ -303,6 +303,8 @@ class WhatsAppInstance {
         this.antibanV2 = config.antibanV2 || null;
         // Runtime context (built per-connect, destroyed on disconnect)
         this.antibanCtx = null;
+        /** When false, config is saved but wrapped socket must not intercept sends. */
+        this._antibanV2Enforcing = config.antibanV2?.enabled !== false;
         // AbortController for stealth presence ramp (cancelled on disconnect)
         this.presenceRampAbort = null;
         
@@ -790,8 +792,11 @@ class WhatsAppInstance {
             // 2) Build the v2 context for already-registered sessions only.
             // Registration is the most protocol-sensitive phase; use the transport
             // defaults until WhatsApp accepts the new linked device, then wrap.
+            // When anti-ban is toggled OFF, skip the pipeline entirely.
             let fingerprint = null;
-            if (!isInitialRegistration) {
+            const antibanEnforcementOn = this.antibanV2?.enabled !== false;
+            this._antibanV2Enforcing = antibanEnforcementOn;
+            if (!isInitialRegistration && antibanEnforcementOn) {
                 fingerprint = await pickOrLoadFingerprint(path.join(INSTANCES_FOLDER, this.id));
                 try {
                     this.antibanCtx = await buildAntibanContext({
@@ -807,7 +812,11 @@ class WhatsAppInstance {
                 }
             } else {
                 this.antibanCtx = null;
-                this._log('Using registration-safe socket profile until device is linked', 'info');
+                if (isInitialRegistration) {
+                    this._log('Using registration-safe socket profile until device is linked', 'info');
+                } else if (!antibanEnforcementOn) {
+                    this._log('Anti-ban v2 disabled — connecting without send limits', 'info');
+                }
             }
 
             // 3) Build the raw socket; apply the sticky fingerprint only after registration
@@ -850,7 +859,7 @@ class WhatsAppInstance {
             this.rawSocket = rawSocket;
 
             // 4) Wrap with anti-ban v2 (sendMessage now intercepted with full pipeline)
-            if (this.antibanCtx?.wrap) {
+            if (this.antibanCtx?.wrap && this._antibanV2Enforcing) {
                 try {
                     this.socket = this.antibanCtx.wrap(rawSocket);
                     this._log(`Socket wrapped with anti-ban v2 (browser: ${fingerprint.browser.join('/')})`, 'success');
@@ -907,6 +916,7 @@ class WhatsAppInstance {
 
             const enableAntibanAfterRegistration = async () => {
                 if (!isInitialRegistration || this.antibanCtx || !this.rawSocket) return;
+                if (this.antibanV2?.enabled === false) return;
 
                 try {
                     const postLinkFingerprint = await pickOrLoadFingerprint(path.join(INSTANCES_FOLDER, this.id));
@@ -917,7 +927,10 @@ class WhatsAppInstance {
                         onLog: (msg, level) => this._log(`[v2] ${msg}`, level),
                         onRiskChange: (change) => this._onRiskChange(change),
                     });
-                    this.socket = this.antibanCtx.wrap(this.rawSocket);
+                    if (this.antibanCtx?.wrap) {
+                        this.socket = this.antibanCtx.wrap(this.rawSocket);
+                        this._antibanV2Enforcing = true;
+                    }
                     this._log(`Anti-ban v2 enabled after link (fingerprint ready: ${postLinkFingerprint.browser.join('/')})`, 'success');
                 } catch (err) {
                     this._log(`Failed to enable anti-ban v2 after link: ${err.message}`, 'warning');
@@ -1708,13 +1721,15 @@ class WhatsAppInstance {
         // Normalize phone number - remove +, spaces, dashes, etc.
         const normalizedTo = to.includes('@') ? to : to.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
         
-        // Format JID if needed
-        const jid = normalizedTo.includes('@') ? normalizedTo : `${normalizedTo}@s.whatsapp.net`;
+        // Prefer LID JID when we have a PN↔LID mapping (Baileys v7 / WA multi-device).
+        const jid = await this._resolveOutboundJid(normalizedTo);
         
-        // Check rate limits
-        const canSend = this.antiBanManager.canSendMessage(jid);
-        if (!canSend.allowed) {
-            throw new Error(`Rate limited: ${canSend.reason}`);
+        // Check rate limits (skip when anti-ban v2 is explicitly turned off)
+        if (this._isAntibanV2Enforcing()) {
+            const canSend = this.antiBanManager.canSendMessage(jid);
+            if (!canSend.allowed) {
+                throw new Error(`Rate limited: ${canSend.reason}`);
+            }
         }
         
         // Anti-ban: Save contact before sending (if not already saved)
@@ -1767,7 +1782,7 @@ class WhatsAppInstance {
                 try { await this.socket.sendPresenceUpdate('paused', jid); } catch (_) {}
             }
             result = await this._sendWithHelper(jid, messageObj._params, messageObj._type);
-        } else if (this.antibanCtx) {
+        } else if (this._isAntibanV2Enforcing()) {
             // Anti-ban v2 path: the wrapped socket already runs the full pipeline
             // (rate limiting, warmup, presence choreographer, JID canonicalization,
             // post-reconnect throttle, etc.). We just call sendMessage directly.
@@ -1819,15 +1834,91 @@ class WhatsAppInstance {
      */
     async _loadLidCache() {
         try {
+            const merged = new Map();
+
+            const ingestPair = (lid, pn) => {
+                const cleanLid = String(lid || '').replace('@lid', '').replace('@s.whatsapp.net', '').trim();
+                const cleanPn = String(pn || '').replace('@lid', '').replace('@s.whatsapp.net', '').trim();
+                if (!cleanLid || !cleanPn || cleanLid === cleanPn) return;
+                if (!/^\d+$/.test(cleanLid) || !/^\d+$/.test(cleanPn)) return;
+                merged.set(cleanLid, cleanPn);
+            };
+
             if (fsSync.existsSync(this.lidCacheFile)) {
-                const data = await fs.readFile(this.lidCacheFile, 'utf8');
-                const entries = JSON.parse(data);
-                this.lidCache = new Map(Object.entries(entries));
-                console.log(`[Instance ${this.id}] Loaded ${this.lidCache.size} LID mappings from cache`);
+                const entries = JSON.parse(await fs.readFile(this.lidCacheFile, 'utf8'));
+                for (const [lid, pn] of Object.entries(entries || {})) {
+                    ingestPair(lid, pn);
+                }
+            }
+
+            if (fsSync.existsSync(this.authFolder)) {
+                for (const name of fsSync.readdirSync(this.authFolder)) {
+                    if (!name.startsWith('lid-mapping-') || !name.endsWith('.json')) continue;
+                    const stem = name.slice('lid-mapping-'.length, -'.json'.length);
+                    try {
+                        const raw = JSON.parse(fsSync.readFileSync(path.join(this.authFolder, name), 'utf8'));
+                        if (name.includes('_reverse')) {
+                            ingestPair(stem, raw);
+                        } else {
+                            ingestPair(raw, stem);
+                        }
+                    } catch (_) { /* skip malformed mapping files */ }
+                }
+            }
+
+            this.lidCache = merged;
+            if (merged.size > 0) {
+                console.log(`[Instance ${this.id}] Loaded ${merged.size} LID mappings from cache`);
             }
         } catch (e) {
             console.log(`[Instance ${this.id}] Could not load LID cache:`, e.message);
         }
+    }
+
+    /**
+     * Resolve the best outbound JID for sendMessage.
+     * When a PN→LID mapping exists, prefer @lid — PN-only sends can ACK without
+     * delivering on newer WhatsApp builds.
+     * @param {string} to - Phone number or JID
+     * @returns {Promise<string>}
+     */
+    async _resolveOutboundJid(to) {
+        if (to.includes('@g.us')) return to;
+        if (to.includes('@lid')) return to;
+        if (to.includes('@s.whatsapp.net')) return to;
+
+        const pn = to.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
+
+        for (const [lid, cachedPn] of this.lidCache.entries()) {
+            if (cachedPn === pn) {
+                return `${lid}@lid`;
+            }
+        }
+
+        const mappingFile = path.join(this.authFolder, `lid-mapping-${pn}.json`);
+        if (fsSync.existsSync(mappingFile)) {
+            try {
+                const lid = JSON.parse(fsSync.readFileSync(mappingFile, 'utf8'));
+                const cleanLid = String(lid || '').replace('@lid', '').replace('@s.whatsapp.net', '').trim();
+                if (cleanLid && cleanLid !== pn) {
+                    await this._storeLidMapping(cleanLid, pn);
+                    return `${cleanLid}@lid`;
+                }
+            } catch (_) { /* fall through to PN */ }
+        }
+
+        if (this.socket?.signalRepository?.lidMapping?.getLIDForPN) {
+            try {
+                const lid = await this.socket.signalRepository.lidMapping.getLIDForPN(pn);
+                const cleanLid = String(lid || '').replace('@lid', '').replace('@s.whatsapp.net', '').trim();
+                if (cleanLid && cleanLid !== pn) {
+                    await this._storeLidMapping(cleanLid, pn);
+                    return `${cleanLid}@lid`;
+                }
+            } catch (_) { /* fall through to PN */ }
+        }
+
+        return `${pn}@s.whatsapp.net`;
     }
     
     /**
@@ -2257,7 +2348,7 @@ class WhatsAppInstance {
         try {
             // While the webhook runs, show typing only on the v2 path — legacy
             // safeSendMessage already runs its own typing/read pipeline after the reply.
-            if (!phoneNotifsOn && typingOn && this.antibanCtx) {
+            if (!phoneNotifsOn && typingOn && this._isAntibanV2Enforcing()) {
                 try {
                     await this.socket.sendPresenceUpdate('composing', from);
                 } catch (e) {}
@@ -2355,7 +2446,7 @@ class WhatsAppInstance {
                 }
 
                 let result;
-                if (this.antibanCtx && !phoneNotifsOn) {
+                if (this._isAntibanV2Enforcing() && !phoneNotifsOn) {
                     // v2 path: wrapped socket runs the full pipeline
                     try {
                         if (typingOn) {
@@ -2375,7 +2466,7 @@ class WhatsAppInstance {
                             : { sent: false, reason: m };
                         if (!isAntibanTransportGuardMessage(m)) throw err;
                     }
-                } else if (this.antibanCtx && phoneNotifsOn) {
+                } else if (this._isAntibanV2Enforcing() && phoneNotifsOn) {
                     // Notification profiles bypass the wrapped v2 sender for replies
                     // so no hidden typing/presence choreographer runs before the phone
                     // has had its notification window.
@@ -2709,6 +2800,58 @@ class WhatsAppInstance {
     }
 
     /**
+     * True when the live wrapped socket should intercept outbound sends.
+     */
+    _isAntibanV2Enforcing() {
+        return !!(this.antibanCtx && this.antibanV2?.enabled !== false && this._antibanV2Enforcing !== false);
+    }
+
+    /**
+     * Swap between raw and wrapped socket when anti-ban is toggled live.
+     */
+    async _syncAntibanV2SocketState(v2config) {
+        const enforce = v2config?.enabled !== false;
+        this._antibanV2Enforcing = enforce;
+
+        if (!enforce) {
+            if (this.rawSocket && this.socket !== this.rawSocket) {
+                this.socket = this.rawSocket;
+                this._log('Anti-ban v2 OFF — sends bypass rate limits (raw socket)', 'success');
+            }
+            return;
+        }
+
+        if (this.status !== 'connected' || !this.rawSocket) {
+            this._log('Anti-ban v2 enabled in config (applies on reconnect)', 'info');
+            return;
+        }
+
+        if (!this.antibanCtx) {
+            try {
+                this.antibanCtx = await buildAntibanContext({
+                    instanceId: this.id,
+                    instanceFolder: path.join(INSTANCES_FOLDER, this.id),
+                    v2config: this.antibanV2,
+                    onLog: (msg, level) => this._log(`[v2] ${msg}`, level),
+                    onRiskChange: (change) => this._onRiskChange(change),
+                });
+            } catch (err) {
+                this._log(`Failed to build anti-ban v2 context: ${err.message}`, 'error');
+                return;
+            }
+        }
+
+        if (this.antibanCtx?.wrap && this.socket === this.rawSocket) {
+            try {
+                this.socket = this.antibanCtx.wrap(this.rawSocket);
+                this._log('Anti-ban v2 ON — socket wrapped', 'success');
+            } catch (err) {
+                this._log(`Anti-ban v2 wrap failed: ${err.message}`, 'error');
+            }
+        }
+    }
+
+    /**
      * Compact v2 status block surfaced in instance status responses.
      * Returns null if v2 isn't running on this instance.
      */
@@ -2719,6 +2862,7 @@ class WhatsAppInstance {
             // Configured but not currently running (instance disconnected)
             return {
                 enabled: !!this.antibanV2.enabled,
+                enforcing: false,
                 running: false,
                 preset: this.antibanV2.preset,
                 modules: Object.fromEntries(
@@ -2730,7 +2874,8 @@ class WhatsAppInstance {
         try { stats = ctx.antiban.getStats(); } catch (_) {}
         return {
             enabled: !!this.antibanV2.enabled,
-            running: true,
+            enforcing: this._isAntibanV2Enforcing(),
+            running: !!ctx && this._isAntibanV2Enforcing(),
             preset: this.antibanV2.preset,
             modules: Object.fromEntries(
                 Object.entries(this.antibanV2.modules || {}).map(([k, v]) => [k, v?.enabled !== false])
@@ -2814,6 +2959,8 @@ class WhatsAppInstance {
             next.preset = legacyPresetToV2(updates.preset);
         }
         this.antibanV2 = next;
+
+        await this._syncAntibanV2SocketState(next);
 
         // Keep legacy anti-ban settings in sync for dashboard preset buttons / health display.
         if (updates.preset || updates.overrides) {

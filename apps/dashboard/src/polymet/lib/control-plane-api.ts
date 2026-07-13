@@ -430,6 +430,20 @@ export async function clearInstanceAuth(id: string) {
   });
 }
 
+export async function createInstancePairingLink(id: string, input: { expiresInDays?: number } = {}) {
+  return api<{
+    success: boolean;
+    instanceId: string;
+    instanceName: string;
+    url: string;
+    token: string;
+    expiresAt: string;
+  }>(`/api/v3/instances/${id}/pairing-link`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function sendInstanceMessage(
   id: string,
   input: {
@@ -617,6 +631,18 @@ export type AntibanV2Status = {
   enabled?: boolean;
   running?: boolean;
   preset?: string;
+  overrides?: {
+    maxPerHour?: number;
+    maxPerDay?: number;
+    messagesPerHour?: number;
+    messagesPerDay?: number;
+  };
+  effectiveLimits?: {
+    maxPerMinute?: number;
+    maxPerHour?: number;
+    maxPerDay?: number;
+  };
+  modules?: Record<string, { enabled?: boolean; day1Limit?: number }>;
   health?: { risk?: string; isPaused?: boolean; recommendation?: string } | null;
   warmup?: {
     phase?: string;
@@ -638,7 +664,7 @@ export type AntibanV2Status = {
     };
   } | null;
   config?: {
-    overrides?: { maxPerHour?: number; maxPerDay?: number };
+    overrides?: { maxPerHour?: number; maxPerDay?: number; messagesPerHour?: number; messagesPerDay?: number };
     modules?: Record<string, { enabled?: boolean; day1Limit?: number }>;
   };
 };
@@ -652,16 +678,24 @@ function normalizeAntibanV2Status(raw: unknown): AntibanV2Status | null {
   return raw as AntibanV2Status;
 }
 
-function readRateLimitHour(status: AntibanV2Status | null) {
+export function resolveAntibanLimitHour(status: AntibanV2Status | null) {
   return status?.rateLimiter?.limits?.maxPerHour
     ?? status?.rateLimiter?.limits?.perHour
-    ?? status?.config?.overrides?.maxPerHour;
+    ?? status?.effectiveLimits?.maxPerHour
+    ?? status?.overrides?.maxPerHour
+    ?? status?.overrides?.messagesPerHour
+    ?? status?.config?.overrides?.maxPerHour
+    ?? status?.config?.overrides?.messagesPerHour;
 }
 
-function readRateLimitDay(status: AntibanV2Status | null) {
+export function resolveAntibanLimitDay(status: AntibanV2Status | null) {
   return status?.rateLimiter?.limits?.maxPerDay
     ?? status?.rateLimiter?.limits?.perDay
-    ?? status?.config?.overrides?.maxPerDay;
+    ?? status?.effectiveLimits?.maxPerDay
+    ?? status?.overrides?.maxPerDay
+    ?? status?.overrides?.messagesPerDay
+    ?? status?.config?.overrides?.maxPerDay
+    ?? status?.config?.overrides?.messagesPerDay;
 }
 
 export async function getInstanceAntibanV2(instanceId: string) {
@@ -675,6 +709,7 @@ export async function getInstanceAntibanV2(instanceId: string) {
 export async function updateInstanceAntibanV2(
   instanceId: string,
   body: {
+    enabled?: boolean;
     preset?: "conservative" | "moderate" | "aggressive" | "balanced";
     overrides?: { maxPerHour?: number; maxPerDay?: number };
     modules?: { warmup?: { enabled?: boolean; day1Limit?: number } };

@@ -18,6 +18,7 @@ import {
 import { storeOneTimeApiKeys } from "@/polymet/lib/one-time-api-keys";
 import { WasupAuthForm } from "@/polymet/components/wasup-auth-form";
 import { WasupSsoCallback } from "@/polymet/components/wasup-sso-callback";
+import PublicPairPage from "@/polymet/pages/public-pair-page";
 import WasupPrototype from "@/polymet/prototypes/wasup-prototype";
 
 type InvitationAuthMode = "sign-in" | "sign-up";
@@ -45,6 +46,11 @@ export default function WasupPrototypeRender() {
 }
 
 function AuthGateway() {
+  const hashRoute = getHashRouteFromWindow();
+  if (hashRoute.startsWith("/pair/")) {
+    return <PublicPairPage />;
+  }
+
   const { isLoaded, isSignedIn, userId } = useAuth();
   const { session, isLoaded: sessionLoaded } = useSession();
   const clerk = useClerk();
@@ -484,7 +490,9 @@ function ThemedOrganizationSetup() {
             <form onSubmit={submitCreate} className="space-y-4 rounded-2xl border border-white/10 bg-white/[0.035] p-4">
               {hasExistingWorkspace ? (
                 <div className="rounded-xl border border-[#00e676]/20 bg-[#00e676]/10 px-3 py-3 text-sm text-white/75">
-                  You already have a Wasup workspace on this account. Open it below — each account gets one workspace.
+                  {memberships.length > 1
+                    ? "You belong to multiple workspaces. Open one below, or switch later from the sidebar account menu."
+                    : "You already have a Wasup workspace on this account. Open it below."}
                 </div>
               ) : (
               <>

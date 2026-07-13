@@ -15,9 +15,22 @@ export async function register() {
     void callInternal('/api/internal/azure/reconcile');
   };
 
+  // Adopt worker-created instances into the control plane and clean up dead
+  // worker orphans. The sync endpoint imports any worker instance missing from
+  // the CP and deletes disconnected legacy (wa_*) orphans, while explicitly
+  // protecting connected/connecting instances and UUID instances. Without this,
+  // raw /api/onboard instances never register in the CP and pile up as orphans.
+  const runWorkerInstanceSweep = () => {
+    void callInternal('/api/internal/instances/sync');
+  };
+
   // Fast path for dns_pending / provisioning — avoids 15+ minute UI stalls.
   setTimeout(runDnsPendingSweep, 15_000);
   setInterval(runDnsPendingSweep, 60_000);
+
+  // Adopt/clean worker orphans quickly so a new onboard is tracked within ~2 min.
+  setTimeout(runWorkerInstanceSweep, 30_000);
+  setInterval(runWorkerInstanceSweep, 2 * 60_000);
 
   setTimeout(runFullSweep, 60_000);
   setInterval(runFullSweep, 15 * 60_000);

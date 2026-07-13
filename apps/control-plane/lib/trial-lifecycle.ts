@@ -1,4 +1,5 @@
 import { deprovisionOrgDeployment } from './org-deployments';
+import { getProMonthlyPriceLabel } from './billing-pricing';
 import { getServerEnv } from './env';
 import { notifyOrgAdmins } from './notifications';
 import { getSupabaseAdmin } from './supabase-admin';
@@ -111,8 +112,8 @@ async function sendDueTrialWarnings(org: TrialOrg, trialEndsAt: Date, now: Date,
       orgId: org.id,
       eventType: 'trial.warning',
       subject: days === 0 ? 'Your Wasup free trial ends today' : `Your Wasup free trial ends in ${days} day${days === 1 ? '' : 's'}`,
-      text: `Your 14-day Wasup trial for ${org.name} ends ${days === 0 ? 'today' : `in ${days} day${days === 1 ? '' : 's'}`}. Upgrade to keep your instances connected for $39 per instance.`,
-      html: `<p>Your 14-day Wasup trial for <strong>${org.name}</strong> ends ${days === 0 ? 'today' : `in ${days} day${days === 1 ? '' : 's'}`}.</p><p>Upgrade to keep your instances connected for $39 per instance.</p>`,
+      text: `Your Wasup trial for ${org.name} ends ${days === 0 ? 'today' : `in ${days} day${days === 1 ? '' : 's'}`}. Upgrade to keep your instances connected for ${getProMonthlyPriceLabel()}/month.`,
+      html: `<p>Your Wasup trial for <strong>${org.name}</strong> ends ${days === 0 ? 'today' : `in ${days} day${days === 1 ? '' : 's'}`}.</p><p>Upgrade to keep your instances connected for ${getProMonthlyPriceLabel()}/month.</p>`,
       idempotencyKey: `trial-warning:${org.id}:${days}`,
       metadata: { orgSlug: org.slug, trialEndsAt: org.trial_ends_at, daysRemaining: days }
     });

@@ -6,6 +6,8 @@ const isProtectedRoute = createRouteMatcher([
   '/api/v3(.*)'
 ]);
 
+const isPublicPairingRoute = createRouteMatcher(['/api/v3/public/pair(.*)']);
+
 const allowedCorsOrigins = new Set([
   'https://wasuppolymetapp.z16.web.core.windows.net',
   'https://dev.wasup.co',
@@ -23,7 +25,7 @@ export default clerkMiddleware(async (auth, req) => {
     });
   }
 
-  if (isProtectedRoute(req) && !isApiKeyApiRequest(req)) {
+  if (isProtectedRoute(req) && !isApiKeyApiRequest(req) && !isPublicPairingRoute(req)) {
     await auth.protect();
   }
 
@@ -49,7 +51,7 @@ function getCorsHeaders(req: Request) {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept, X-Requested-With, X-API-Key',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept, X-Requested-With, X-API-Key, X-Pairing-Token',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin'
   });

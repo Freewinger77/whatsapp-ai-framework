@@ -5,20 +5,16 @@
 
 import axios from 'axios';
 
-const CONTROL_PLANE_URL = String(process.env.WASUP_CONTROL_PLANE_URL || '').trim().replace(/\/+$/, '');
-const WORKER_SECRET = process.env.WASUP_WORKER_SHARED_SECRET || '';
+const CONTROL_PLANE_URL = String(process.env.WASUP_CONTROL_PLANE_URL || process.env.CONTROL_PLANE_URL || '')
+    .trim()
+    .replace(/\/+$/, '');
+const WORKER_SECRET = process.env.WASUP_WORKER_SHARED_SECRET || process.env.API_KEY || '';
 const ORG_ID = process.env.WASUP_ORG_ID || null;
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 let queue = Promise.resolve();
 
 export function isControlPlaneReportingEnabled() {
     return Boolean(CONTROL_PLANE_URL && WORKER_SECRET && ORG_ID);
-}
-
-function isControlPlaneInstanceId(instanceId) {
-    return UUID_RE.test(String(instanceId || ''));
 }
 
 function enqueue(task) {
@@ -31,7 +27,7 @@ function enqueue(task) {
 
 async function postEvent(payload) {
     if (!isControlPlaneReportingEnabled()) return;
-    if (payload.instanceId && !isControlPlaneInstanceId(payload.instanceId)) return;
+    if (!payload.workerInstanceId && !payload.instanceId) return;
 
     await axios.post(`${CONTROL_PLANE_URL}/api/internal/events`, payload, {
         headers: {
@@ -69,12 +65,19 @@ function inferEventType(message, level) {
     return 'worker.log';
 }
 
+function basePayload(instanceId, extra = {}) {
+    return {
+        orgId: ORG_ID,
+        workerInstanceId: instanceId,
+        ...extra,
+    };
+}
+
 export function reportActivityLog(instanceId, entry) {
     if (!entry?.message) return;
     enqueue(() => postEvent({
         kind: 'log',
-        orgId: ORG_ID,
-        instanceId,
+        ...basePayload(instanceId),
         eventType: inferEventType(entry.message, entry.level),
         severity: mapLogSeverity(entry.level),
         summary: entry.message.slice(0, 2000),
@@ -95,8 +98,7 @@ export function reportMessageEvent(instanceId, {
 }) {
     enqueue(() => postEvent({
         kind: 'message',
-        orgId: ORG_ID,
-        instanceId,
+        ...basePayload(instanceId),
         externalMessageId: externalMessageId || undefined,
         direction,
         phone: phone || undefined,
@@ -114,8 +116,7 @@ export function reportConnectionStatus(instanceId, status) {
 
     enqueue(() => postEvent({
         kind: 'log',
-        orgId: ORG_ID,
-        instanceId,
+        ...basePayload(instanceId),
         eventType: status.status === 'connected' ? 'connection.open' : `connection.${status.status}`,
         severity: status.status === 'error' ? 'error' : 'info',
         summary,

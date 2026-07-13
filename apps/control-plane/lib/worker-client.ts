@@ -146,6 +146,52 @@ export async function sendWorkerInstanceMessage(input: WorkerRequestInput, body:
   return parseWorkerResponse(response, 'Worker send failed');
 }
 
+export async function getWorkerMessageStatus(input: WorkerRequestInput, messageId: string) {
+  const response = await requestWorker(
+    input,
+    `/api/instances/${encodeURIComponent(input.instanceId)}/messages/${encodeURIComponent(messageId)}/status`
+  );
+  return parseWorkerResponse(response, 'Worker message status fetch failed');
+}
+
+export async function listWorkerInstances(
+  input: Pick<WorkerRequestInput, 'endpoint' | 'publicIp' | 'sharedSecret'>
+) {
+  const response = await requestWorker(input, '/api/instances');
+  const body = await safeJson(response);
+  if (!response.ok) {
+    throw new Error(`Worker instance list failed (${response.status}): ${JSON.stringify(body)}`);
+  }
+
+  const instances = Array.isArray(body?.instances)
+    ? body.instances
+    : Array.isArray(body?.result?.instances)
+      ? body.result.instances
+      : [];
+
+  return {
+    count: typeof body?.count === 'number' ? body.count : instances.length,
+    instances: instances as Array<{
+      id: string;
+      name?: string;
+      status?: string;
+      webhookUrl?: string | null;
+      connectedPhone?: string | null;
+      phone?: string | null;
+    }>
+  };
+}
+
+export async function migrateWorkerInstanceId(
+  input: WorkerRequestInput & { newId: string }
+) {
+  const response = await requestWorker(input, `/api/instances/${encodeURIComponent(input.instanceId)}/migrate-id`, {
+    method: 'POST',
+    body: { newId: input.newId }
+  });
+  return parseWorkerResponse(response, 'Worker instance migrate-id failed');
+}
+
 export async function getWorkerInstance(input: WorkerRequestInput) {
   const response = await requestWorker(input, `/api/instances/${encodeURIComponent(input.instanceId)}`);
   const body = await safeJson(response);

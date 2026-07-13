@@ -41,7 +41,21 @@ import {
     redactProxy,
     createProxyAgent,
     parseProxyConfig,
+    parseFlexibleProxyInput,
+    buildProxyAttachArg,
 } from './src/utils/proxy.js';
+import { normalizeMessageStatus } from './src/utils/message-status.js';
+import {
+    isControlPlaneReportingEnabled,
+    reportActivityLog,
+    reportConnectionStatus,
+    reportMessageEvent,
+} from './src/utils/control-plane-reporter.js';
+import {
+    isControlPlaneRegistryEnabled,
+    registerWorkerInstance,
+    syncWorkerInstanceCatalog,
+} from './src/utils/control-plane-registry.js';
 
 // ========================================
 // CONFIGURATION
@@ -89,15 +103,23 @@ app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 
 app.get('/test', (req, res) => res.sendFile(path.join(__dirname, 'public', 'test.html')));
 app.get('/docs', (req, res) => res.sendFile(path.join(__dirname, 'public', 'docs.html')));
 app.get('/playground', (req, res) => res.redirect(301, '/test'));
-// Cache the OpenAPI yaml file in memory so we don't re-read on every request.
+// Cache the OpenAPI yaml file in memory, but re-read when the file changes on
+// disk (mtime-aware). This lets a static `scp` of openapi.yaml refresh /docs
+// WITHOUT a process restart — important because restarting drops WhatsApp sockets.
 let _openapiCache = null;
+let _openapiCacheMtimeMs = 0;
 function loadOpenapiYaml() {
-    if (_openapiCache !== null) return _openapiCache;
+    const file = path.join(__dirname, 'openapi.yaml');
     try {
-        _openapiCache = fsSync.readFileSync(path.join(__dirname, 'openapi.yaml'), 'utf8');
+        const mtimeMs = fsSync.statSync(file).mtimeMs;
+        if (_openapiCache !== null && mtimeMs === _openapiCacheMtimeMs) {
+            return _openapiCache;
+        }
+        _openapiCache = fsSync.readFileSync(file, 'utf8');
+        _openapiCacheMtimeMs = mtimeMs;
     } catch (err) {
         console.error('[OpenAPI] Failed to read openapi.yaml:', err.message);
-        _openapiCache = '';
+        if (_openapiCache === null) _openapiCache = '';
     }
     return _openapiCache;
 }
@@ -365,6 +387,26 @@ app.get('/api/instances/:id', (req, res) => {
 });
 
 /**
+ * POST /api/instances/:id/migrate-id
+ * Rename instance ID while preserving auth/session state.
+ * Body: { newId: "51981fe4-..." }
+ */
+app.post('/api/instances/:id/migrate-id', async (req, res) => {
+    try {
+        const { newId } = req.body || {};
+        const instance = await instanceManager.migrateInstanceId(req.params.id, newId);
+        registerWorkerInstance(instance, { controlPlaneInstanceId: newId });
+        broadcastToAll({
+            type: 'instance_migrated',
+            data: { from: req.params.id, to: newId, instance }
+        });
+        res.json({ success: true, instance, previousId: req.params.id, newId });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
  * PUT /api/instances/:id
  * Update instance settings
  * Body: { name?, webhookUrl?, webhookSigningSecret?, behaviorSettings?, antiBanSettings?, handoffSettings? }
@@ -402,7 +444,21 @@ app.put('/api/instances/:id', async (req, res) => {
  */
 app.delete('/api/instances/:id', async (req, res) => {
     try {
-        const result = await instanceManager.deleteInstance(req.params.id);
+        const id = req.params.id;
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+        const credential = getCredentialFromRequest(req);
+        const isInternal =
+            (WORKER_SHARED_SECRET && credential === WORKER_SHARED_SECRET) ||
+            (API_KEY && credential === API_KEY);
+        if (process.env.WASUP_ORG_ID && isUuid && !isInternal) {
+            console.warn(`[API] Blocked DELETE for protected org instance ${id}`);
+            return res.status(403).json({
+                error: 'Forbidden',
+                message: 'Protected instance cannot be deleted via this API key. Manage it from the Wasup control plane.',
+            });
+        }
+        console.log(`[API] DELETE instance ${id} (internal=${!!isInternal})`);
+        const result = await instanceManager.deleteInstance(id);
 
         broadcastToAll({
             type: 'instance_deleted',
@@ -432,8 +488,23 @@ app.post('/api/instances/:id/connect', async (req, res) => {
     console.log(`[API] Connect request for instance: ${req.params.id}`);
     try {
         const options = {};
-        if (req.body.pairingPhone) {
-            options.pairingPhone = req.body.pairingPhone;
+        const pairingPhone = req.body.pairingPhone || req.body.phoneNumber || req.body.phone;
+        if (pairingPhone) {
+            const cleanPhone = String(pairingPhone).replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
+            const inst = instanceManager.getInstance(req.params.id);
+            if (inst?.pairingCode && inst.pairingPhoneTarget === cleanPhone && inst.pairingCodeIssuedAt) {
+                const ageMs = Date.now() - new Date(inst.pairingCodeIssuedAt).getTime();
+                if (ageMs >= 0 && ageMs < 120000) {
+                    return res.json({
+                        success: true,
+                        reused: true,
+                        pairingCode: inst.pairingCode,
+                        message: `Pairing code still active: ${inst.pairingCode}. Enter it in WhatsApp now — do not refresh.`,
+                        instance: inst.getStatus(),
+                    });
+                }
+            }
+            options.pairingPhone = cleanPhone;
         }
         
         const instance = await instanceManager.connectInstance(req.params.id, options);
@@ -815,6 +886,8 @@ async function executeInstanceSend(instanceId, body = {}, { interactiveFocus = f
             success: true,
             messageType: payload.messageType || 'text',
             delivery: payload.delivery,
+            message_id: result.key?.id || null,
+            message_status: result.key?.id ? (result.status != null ? normalizeMessageStatus(result.status) || 'pending' : 'pending') : null,
             result
         }
     };
@@ -945,12 +1018,6 @@ app.post('/api/send', async (req, res) => {
         
         const result = await instanceManager.sendMessage(targetInstanceId, toPhone, textOrParams, options);
         
-        // Determine status based on actual result
-        let status = 'sent';
-        if (!result.sent) {
-            status = result.reason?.includes('Rate') ? 'rate_limited' : 'failed';
-        }
-        
         res.json([{
             message_id: result.key?.id || crypto.randomUUID(),
             created_at: new Date().toISOString(),
@@ -958,7 +1025,9 @@ app.post('/api/send', async (req, res) => {
             to_phone: normalizePhone(toPhone),
             message: message || payload.delivery?.mode || `[${messageType || 'text'}]`,
             message_type: payload.messageType || messageType || 'text',
-            status: status
+            status: !result.sent
+                ? (result.reason?.includes('Rate') ? 'rate_limited' : 'failed')
+                : (normalizeMessageStatus(result.status) || 'pending')
         }]);
     } catch (error) {
         // Check if error indicates a ban or connection issue
@@ -1561,10 +1630,14 @@ app.put('/api/instances/:id/proxy', async (req, res) => {
         let proxyArg;
         if (body.enabled === false) {
             proxyArg = { enabled: false };
-        } else if (body.url || body.host) {
-            proxyArg = { enabled: true, ...body };
+        } else if (body.url || body.shorthand || body.host) {
+            proxyArg = buildProxyAttachArg(body);
+        } else if (Object.keys(body).length === 0) {
+            proxyArg = null;
         } else {
-            proxyArg = null; // clear override
+            return res.status(400).json({
+                error: 'Missing proxy. Provide url, shorthand (host:port:user:pass), or {host,port,username,password}.',
+            });
         }
 
         const result = await instanceManager.setInstanceProxy(req.params.id, proxyArg);
@@ -1595,7 +1668,16 @@ app.put('/api/instances/:id/proxy', async (req, res) => {
  */
 app.post('/api/instances/:id/proxy/verify', async (req, res) => {
     try {
-        const target = req.body?.target;
+        const body = req.body || {};
+        const target = body.target;
+        if (body.url || body.shorthand || body.host) {
+            const cfg = parseFlexibleProxyInput(body.shorthand || body.url || body);
+            if (!cfg) {
+                return res.status(400).json({ error: 'Invalid proxy config for verification.' });
+            }
+            const result = await instanceManager.verifyProxyConfig(cfg, target);
+            return res.json({ success: true, dryRun: true, ...result });
+        }
         const result = await instanceManager.verifyInstanceProxy(req.params.id, target);
         res.json({ success: true, ...result });
     } catch (error) {
@@ -1770,6 +1852,8 @@ app.post('/api/onboard', async (req, res) => {
             }
         }
         
+        registerWorkerInstance(status, { controlPlaneInstanceId: instance.id });
+
         res.status(201).json({
             success: true,
             instanceId: instance.id,
@@ -1809,6 +1893,43 @@ app.get('/api/instances/:id/connection', (req, res) => {
             uptime,
             pairingCode: status.pairingCode || null,
             qrCode: status.qrCode || null
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/instances/:id/messages/:messageId/status
+ * Poll outbound delivery/read status for a message sent by this instance.
+ */
+app.get('/api/instances/:id/messages/:messageId/status', (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+
+        const tracked = instance.getMessageStatus(req.params.messageId);
+        if (!tracked) {
+            return res.status(404).json({
+                error: 'Message status not found',
+                hint: 'Status is tracked for outbound messages sent after this worker version was deployed, or while the instance is still connected.'
+            });
+        }
+
+        res.set('Cache-Control', 'no-store');
+        res.json({
+            success: true,
+            instanceId: req.params.id,
+            message_id: tracked.messageId,
+            status: tracked.status,
+            status_at: tracked.statusAt,
+            sent_at: tracked.sentAt,
+            from_phone: tracked.fromPhone,
+            to_phone: tracked.toPhone,
+            preview: tracked.preview,
+            updates: tracked.updates
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -2495,11 +2616,12 @@ wss.on('connection', (ws, req) => {
     
     // Initial payload: hide instance metadata on the socket until authenticated
     const instances = instanceManager.getAllInstances();
+    const hideInstancesUntilAuth = Boolean(API_KEY) && !ALLOW_PUBLIC_DASHBOARD;
     ws.send(JSON.stringify({
         type: 'init',
         data: {
-            instances: API_KEY ? [] : instances,
-            requiresAuth: !!API_KEY,
+            instances: hideInstancesUntilAuth ? [] : instances,
+            requiresAuth: hideInstancesUntilAuth,
         },
     }));
     
@@ -2664,6 +2786,9 @@ Initializing...
     // Set up event handlers
     instanceManager.onStatusChange = (instanceId, status) => {
         console.log(`[Event] Status change for ${instanceId}: ${status.status}, hasQR: ${!!status.qrCode}`);
+        if (isControlPlaneReportingEnabled()) {
+            reportConnectionStatus(instanceId, status);
+        }
         broadcastToInstance(instanceId, {
             type: 'instance_status',
             data: status
@@ -2671,6 +2796,16 @@ Initializing...
     };
     
     instanceManager.onMessage = (data) => {
+        if (isControlPlaneReportingEnabled()) {
+            reportMessageEvent(data.instanceId, {
+                direction: data.direction || (data.fromMe ? 'outbound' : 'inbound'),
+                phone: data.phone || data.from,
+                body: data.body || data.text || data.message,
+                externalMessageId: data.messageId || data.id,
+                status: data.status,
+                metadata: data.metadata || {},
+            });
+        }
         broadcastToInstance(data.instanceId, {
             type: 'message',
             data
@@ -2678,12 +2813,24 @@ Initializing...
     };
     
     instanceManager.onLog = (instanceId, entry) => {
+        if (isControlPlaneReportingEnabled()) {
+            reportActivityLog(instanceId, entry);
+        }
         broadcastToInstance(instanceId, {
             type: 'log',
             instanceId,
             data: entry
         });
     };
+
+    instanceManager.onInstanceCreated = (status, config) => {
+        registerWorkerInstance(status, { controlPlaneInstanceId: config?.id || null });
+    };
+
+    if (isControlPlaneRegistryEnabled()) {
+        console.log('[Server] Control plane instance registry enabled — worker creates will sync to dev.wasup');
+        syncWorkerInstanceCatalog(instanceManager.getAllInstances());
+    }
     
     console.log(`[Server] Ready! ${instanceManager.getAllInstances().length} instances loaded.`);
 

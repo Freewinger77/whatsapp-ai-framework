@@ -57,7 +57,7 @@ case "$MODE" in
     fi
     for path in "$@"; do
       case "$path" in
-        app/server.js|app/src/*.js|app/src/**/*.js|app/package.json|app/package-lock.json|deploy/ecosystem.config.cjs) ;;
+        app/server.js|app/src/*.js|app/src/**/*.js|app/src/utils/control-plane-registry.js|app/package.json|app/package-lock.json|deploy/ecosystem.config.cjs) ;;
         *) echo "Refusing path outside server hotfix allowlist: $path" >&2; exit 1 ;;
       esac
       ssh "$VM_USER@$VM_HOST" "mkdir -p '$REMOTE_DIR/$(dirname "$path")'"

@@ -7,6 +7,7 @@ import { recordAppNotification } from '../../../../../lib/notifications';
 import { getSupabaseAdmin } from '../../../../../lib/supabase-admin';
 import { attachMessagesToday, countMessagesTodayByInstance } from '../../../../../lib/instance-message-stats';
 import { deleteWorkerInstance, updateWorkerInstance } from '../../../../../lib/worker-client';
+import { loadWorkerTarget, workerRequestInput } from '../../../../../lib/worker-target';
 import {
   shouldLiveSyncInstanceFromWorker,
   syncInstanceFromWorker
@@ -106,12 +107,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
   if (Object.keys(workerBody).length && target.endpoint && process.env.WASUP_WORKER_SHARED_SECRET) {
     try {
-      worker = await updateWorkerInstance({
-        endpoint: target.endpoint,
-        publicIp: target.deployment?.public_ip ?? null,
-        sharedSecret: process.env.WASUP_WORKER_SHARED_SECRET,
-        instanceId: id
-      }, workerBody);
+      worker = await updateWorkerInstance(workerRequestInput(target, target.instance), workerBody);
     } catch (workerError) {
       return NextResponse.json(
         {
@@ -151,12 +147,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
   if (target.endpoint && workerSecret && hasProvisionedWorkerState) {
     try {
-      worker = await deleteWorkerInstance({
-        endpoint: target.endpoint,
-        publicIp: target.deployment?.public_ip ?? null,
-        sharedSecret: workerSecret,
-        instanceId: id
-      });
+      worker = await deleteWorkerInstance(workerRequestInput(target, target.instance));
     } catch (workerError) {
       const message = workerError instanceof Error ? workerError.message : String(workerError);
       await recordDeletionFailure(supabase, {
@@ -254,31 +245,6 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   });
 
   return NextResponse.json({ success: true, worker });
-}
-
-async function loadWorkerTarget(supabase: any, orgId: string, instanceId: string) {
-  const { data: instance } = await supabase
-    .from('instances')
-    .select('id, org_id, name, status, provisioning_state, worker_endpoint, metadata')
-    .eq('org_id', orgId)
-    .eq('id', instanceId)
-    .is('deleted_at', null)
-    .maybeSingle();
-
-  if (!instance) return { instance: null, deployment: null, endpoint: null };
-
-  const { data: deployment } = await supabase
-    .from('org_deployments')
-    .select('id, base_url, public_ip, status')
-    .eq('org_id', orgId)
-    .eq('environment', 'production')
-    .maybeSingle();
-
-  return {
-    instance,
-    deployment,
-    endpoint: instance.worker_endpoint || deployment?.base_url || null
-  };
 }
 
 async function syncTransientInstanceFromWorker(supabase: any, orgId: string, instance: any) {

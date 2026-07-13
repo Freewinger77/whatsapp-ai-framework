@@ -1,3 +1,7 @@
+export function getStripeCurrency() {
+  return (process.env.STRIPE_CURRENCY || 'gbp').trim().toLowerCase();
+}
+
 export function getStripeTrialDays() {
   return Number(process.env.WASUP_STRIPE_TRIAL_DAYS || 28);
 }
@@ -7,12 +11,19 @@ export function getBillingInstanceDeletionDays() {
 }
 
 export function getProMonthlyPriceCents() {
-  return Number(process.env.STRIPE_INSTANCE_AMOUNT || 19900);
+  return Number(process.env.STRIPE_INSTANCE_AMOUNT || 7900);
 }
 
 export function getProMonthlyPriceLabel() {
-  const dollars = getProMonthlyPriceCents() / 100;
-  return dollars % 1 === 0 ? `$${dollars.toFixed(0)}` : `$${dollars.toFixed(2)}`;
+  const amount = getProMonthlyPriceCents() / 100;
+  const formatted = amount % 1 === 0 ? amount.toFixed(0) : amount.toFixed(2);
+  const currency = getStripeCurrency();
+
+  if (currency === 'gbp') return `£${formatted}`;
+  if (currency === 'eur') return `€${formatted}`;
+  if (currency === 'usd') return `$${formatted}`;
+
+  return `${formatted.toUpperCase()} ${currency.toUpperCase()}`;
 }
 
 export function getProBillingMarketingLabel() {

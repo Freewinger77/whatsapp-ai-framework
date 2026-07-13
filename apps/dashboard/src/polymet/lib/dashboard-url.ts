@@ -7,6 +7,7 @@ const HASH_ROUTED_PATHS = new Set([
   "/sso-callback",
   "/connection",
   "/accept-invitation",
+  "/pair",
   "/instances",
   "/playground",
   "/deep-dive",
@@ -222,6 +223,7 @@ function getHashSearchParams() {
 
 function isHashRoutedPath(pathname: string) {
   if (HASH_ROUTED_PATHS.has(pathname)) return true;
+  if (pathname.startsWith("/pair/")) return true;
   return pathname.startsWith("/instances/");
 }
 

@@ -3,6 +3,7 @@ import { isAuthError, requireWasupPrincipal } from '../../../../lib/auth';
 import { getSupabaseAdmin } from '../../../../lib/supabase-admin';
 import { attachMessagesToday, countMessagesTodayByInstance } from '../../../../lib/instance-message-stats';
 import { syncInstanceFromWorker } from '../../../../lib/sync-instance-worker-status';
+import { syncOrgWorkerInstances } from '../../../../lib/worker-instance-sync';
 
 export async function GET(req: Request) {
   const principal = await requireWasupPrincipal(req, {
@@ -11,7 +12,10 @@ export async function GET(req: Request) {
   });
   if (isAuthError(principal)) return principal;
 
-  const { data, error } = await (getSupabaseAdmin() as any)
+  const supabase = getSupabaseAdmin() as any;
+  await syncOrgWorkerInstancesForPrincipal(supabase, principal.orgId);
+
+  const { data, error } = await supabase
     .from('instances')
     .select(`
       *,
@@ -70,4 +74,24 @@ async function syncConnectedPhonesFromWorker(supabase: any, orgId: string, insta
   }
 
   return instances.map((instance) => updatedById.get(instance.id) ?? instance);
+}
+
+async function syncOrgWorkerInstancesForPrincipal(supabase: any, orgId: string) {
+  const { data: deployment } = await supabase
+    .from('org_deployments')
+    .select('id, org_id, status, base_url, public_ip, vm_name, azure_resource_group, azure_region')
+    .eq('org_id', orgId)
+    .eq('environment', 'production')
+    .maybeSingle();
+
+  if (!deployment || deployment.status !== 'ready' || !process.env.WASUP_WORKER_SHARED_SECRET) return;
+
+  try {
+    await syncOrgWorkerInstances(supabase, orgId, deployment, {
+      cleanupOrphanWorkers: true,
+      importOrphanWorkers: true
+    });
+  } catch {
+    // Listing instances should stay available even if sync fails transiently.
+  }
 }

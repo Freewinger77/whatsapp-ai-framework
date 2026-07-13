@@ -83,15 +83,76 @@ export function legacyToV2Config(legacy = {}) {
 }
 
 /**
- * Build a flat config object accepted by `new AntiBan(...)` from our v2 shape.
+ * Build legacy nested config for wrapSocket/AntiBan from our v2 shape.
+ * Module flags in v2config.modules are actually enforced (flat-only config ignored them).
  */
-function buildAntiBanInput(v2config) {
+export function buildLegacyAntibanInput(v2config) {
     if (!v2config || !v2config.enabled) return undefined;
+
+    const preset = v2config.preset || 'moderate';
+    const overrides = v2config.overrides || {};
+    const modules = { ...DEFAULT_V2_MODULES, ...(v2config.modules || {}) };
+    const base = V2_PRESET_LIMITS[preset] || V2_PRESET_LIMITS.moderate;
+    const modOn = (name) => modules[name]?.enabled !== false;
+
     return {
-        preset: v2config.preset || 'moderate',
-        ...(v2config.overrides || {}),
-        logging: false, // we route through our own _log
+        logging: false,
+        rateLimiter: {
+            maxPerMinute: overrides.maxPerMinute ?? base.maxPerMinute,
+            maxPerHour: overrides.maxPerHour ?? overrides.messagesPerHour ?? base.maxPerHour,
+            maxPerDay: overrides.maxPerDay ?? overrides.messagesPerDay ?? base.maxPerDay,
+            ...(overrides.minDelayMs != null ? { minDelayMs: overrides.minDelayMs } : {}),
+            ...(overrides.maxDelayMs != null ? { maxDelayMs: overrides.maxDelayMs } : {}),
+        },
+        warmUp: {
+            warmUpDays: modules.warmup?.warmupDays ?? 7,
+            day1Limit: modules.warmup?.day1Limit ?? 20,
+            growthFactor: modules.warmup?.growthFactor ?? 1.8,
+        },
+        replyRatio: {
+            enabled: modOn('replyRatio'),
+            minRatio: modules.replyRatio?.minRatio ?? 0.10,
+            minMessagesBeforeEnforce: modules.replyRatio?.minMessagesBeforeEnforce ?? 5,
+            cooldownHoursOnViolation: modules.replyRatio?.cooldownHoursOnViolation ?? 24,
+        },
+        contactGraph: {
+            enabled: modOn('contactGraph'),
+            requireHandshakeBeforeGroupSend: modules.contactGraph?.requireHandshakeBeforeGroupSend !== false,
+            handshakeMinDelayMs: modules.contactGraph?.handshakeMinDelayMs ?? 3600000,
+            groupLurkPeriodMs: modules.contactGraph?.groupLurkPeriodMs ?? 43200000,
+            maxStrangerMessagesPerDay: modules.contactGraph?.maxStrangerMessagesPerDay ?? 5,
+        },
+        reconnectThrottle: {
+            enabled: modOn('reconnectThrottle'),
+            rampDurationMs: modules.reconnectThrottle?.rampDurationMs ?? 60_000,
+            initialRateMultiplier: modules.reconnectThrottle?.initialRateMultiplier ?? 0.1,
+            rampSteps: modules.reconnectThrottle?.rampSteps ?? 6,
+        },
+        presence: {
+            enabled: modOn('presence'),
+            enableCircadianRhythm: modules.presence?.enableCircadianRhythm !== false,
+            circadianProfile: modules.presence?.circadianProfile || 'default',
+            timezone: modules.presence?.timezone || 'Europe/London',
+            enableTypingModel: modules.presence?.enableTypingModel !== false,
+            typingWPM: modules.presence?.typingWPM ?? 45,
+            typingWPMStdDev: modules.presence?.typingWPMStdDev ?? 15,
+        },
+        retryTracker: {
+            enabled: modOn('retryTracker'),
+            maxRetries: modules.retryTracker?.maxRetries ?? 5,
+            spiralThreshold: modules.retryTracker?.spiralThreshold ?? 3,
+        },
+        sessionStability: {
+            enabled: modOn('sessionStability'),
+            badMacThreshold: modules.sessionStability?.badMacThreshold ?? 3,
+            badMacWindowMs: modules.sessionStability?.badMacWindowMs ?? 60_000,
+        },
     };
+}
+
+/** @deprecated alias — use buildLegacyAntibanInput */
+function buildAntiBanInput(v2config) {
+    return buildLegacyAntibanInput(v2config);
 }
 
 // ----------------------------------------------------------------------------
@@ -156,6 +217,11 @@ export async function pickOrLoadFingerprint(instanceFolder) {
  */
 export async function buildAntibanContext(opts) {
     const { instanceId, instanceFolder, v2config, onLog = () => {}, onRiskChange = () => {} } = opts;
+
+    if (v2config?.enabled === false) {
+        onLog('Anti-ban v2 disabled — pipeline not built', 'info');
+        return null;
+    }
 
     const stateDir = antibanStatePath(instanceFolder);
     await fs.mkdir(stateDir, { recursive: true });
@@ -375,11 +441,49 @@ export function legacyPresetToV2(preset) {
     return LEGACY_PRESET_MAP[preset] || preset || 'moderate';
 }
 
+/** Resolve the limits that are actually in effect (saved config + live rate limiter). */
+export function resolveEffectiveAntibanLimits(v2config, liveRateLimiterConfig = null) {
+    if (!v2config) return null;
+    const preset = v2config.preset || 'moderate';
+    const base = V2_PRESET_LIMITS[preset] || V2_PRESET_LIMITS.moderate;
+    const overrides = v2config.overrides || {};
+    const live = liveRateLimiterConfig && typeof liveRateLimiterConfig === 'object'
+        ? liveRateLimiterConfig
+        : {};
+    return {
+        maxPerMinute: live.maxPerMinute ?? overrides.maxPerMinute ?? base.maxPerMinute,
+        maxPerHour: live.maxPerHour ?? overrides.maxPerHour ?? overrides.messagesPerHour ?? base.maxPerHour,
+        maxPerDay: live.maxPerDay ?? overrides.maxPerDay ?? overrides.messagesPerDay ?? base.maxPerDay,
+    };
+}
+
+/** Normalize baileys-antiban limit keys for API/dashboard consumers. */
+export function normalizeRateLimiterLimits(rawLimits, effectiveLimits = null) {
+    if (!rawLimits && !effectiveLimits) return null;
+    const src = rawLimits || {};
+    const eff = effectiveLimits || {};
+    const perHour = src.perHour ?? src.maxPerHour ?? eff.maxPerHour;
+    const perDay = src.perDay ?? src.maxPerDay ?? eff.maxPerDay;
+    const perMinute = src.perMinute ?? src.maxPerMinute ?? eff.maxPerMinute;
+    return {
+        perMinute,
+        perHour,
+        perDay,
+        maxPerMinute: perMinute,
+        maxPerHour: perHour,
+        maxPerDay: perDay,
+    };
+}
+
 /**
  * Apply config changes to a running AntiBan instance without reconnecting.
  * Returns which fields were hot-applied.
  */
 export function applyLiveAntibanConfig(antibanCtx, v2config) {
+    if (v2config?.enabled === false) {
+        return { applied: true, fields: ['disabled'], bypassEnforcement: true };
+    }
+
     if (!antibanCtx?.antiban) {
         return { applied: false, reason: 'not_running' };
     }

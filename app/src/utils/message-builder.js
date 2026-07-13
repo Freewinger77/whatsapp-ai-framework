@@ -1,23 +1,21 @@
+import { cleanSingleLine, normalizeMessageText } from './interactive-payload.js';
+
 const MAX_TEXT_LENGTH = 4096;
 
-function cleanLine(value) {
-    return String(value || '').replace(/\s+/g, ' ').trim();
-}
-
 function appendUniqueLine(lines, line) {
-    const value = cleanLine(line);
+    const value = cleanSingleLine(line);
     if (value && !lines.includes(value)) {
         lines.push(value);
     }
 }
 
 function ensureLinkInText(text, link) {
-    const lines = [];
-    appendUniqueLine(lines, text);
+    const normalized = normalizeMessageText(text);
+    const lines = normalized ? normalized.split('\n') : [];
     if (link?.url && !String(text || '').includes(link.url)) {
         appendUniqueLine(lines, link.label ? `${link.label}: ${link.url}` : link.url);
     }
-    return lines.join('\n\n');
+    return lines.join('\n');
 }
 
 function buildNativeInteractiveButtons({ buttons = [], ctaUrl }) {
@@ -57,7 +55,7 @@ export function buildWhatsAppMessage(messagePayload = {}) {
         footer = ''
     } = messagePayload;
 
-    const normalizedText = cleanLine(text);
+    const normalizedText = normalizeMessageText(text);
     const normalizedButtons = Array.isArray(buttons) ? buttons : [];
     const requestedTypes = [];
     if (link?.url) requestedTypes.push('link');

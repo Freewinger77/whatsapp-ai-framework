@@ -17,6 +17,9 @@ HOSTS=(
   "wasup|azureuser|20.107.202.157|/opt/whatsapp-ai/app"
   "wasup-dev|azureuser|20.223.209.59|/opt/whatsapp-ai/app"
   "wasup2|azureuser|40.112.73.2|/opt/whatsapp-ai/app"
+  "wasup3|azureuser|94.245.90.173|/opt/whatsapp-ai/app"
+  "wasup4|azureuser|20.166.12.101|/opt/whatsapp-ai/app"
+  "wasup5|azureuser|20.13.163.156|/opt/whatsapp-ai/app"
 )
 
 ONLY="${ONLY:-}"

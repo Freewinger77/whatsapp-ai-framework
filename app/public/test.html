@@ -326,7 +326,7 @@
                 <a href="/" class="back-link">Back to dashboard</a>
                 <h1>WhatsApp Playground</h1>
                 <p class="subtitle" data-marker="interactive-message-playground">
-                    Test plain text, link previews, CTA URL buttons, and quick reply buttons through the worker API.
+                    Test sends, reactions, and outbound delivery status (sent / delivered / read) through the worker API.
                 </p>
             </div>
         </div>
@@ -493,6 +493,37 @@
                     <span id="reactBtnText">Send reaction</span>
                 </button>
             </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Message status</div>
+            <div class="section-note">
+                Poll delivery/read status for an outbound message using the id from a send response (<code>message_id</code> or <code>result.key.id</code>).
+                Status updates while the instance stays connected.
+            </div>
+
+            <div class="grid">
+                <div class="form-group">
+                    <label for="statusMessageId">Message ID</label>
+                    <input type="text" id="statusMessageId" placeholder="3EB0...">
+                    <div class="hint">Auto-filled after a successful instance send.</div>
+                </div>
+                <div class="form-group">
+                    <label for="statusPollLabel">Latest status</label>
+                    <input type="text" id="statusPollLabel" readonly placeholder="Not checked yet">
+                </div>
+            </div>
+
+            <div class="btn-row">
+                <button type="button" class="btn btn-primary" id="statusBtn" onclick="checkMessageStatus(false)">
+                    <span id="statusBtnText">Check status</span>
+                </button>
+                <button type="button" class="btn btn-secondary" id="statusPollBtn" onclick="pollMessageStatus()">
+                    Poll 5× (2s)
+                </button>
+            </div>
+
+            <div class="response-box" id="statusResponseBox" style="margin-top:14px;min-height:80px">Status response will appear here.</div>
         </div>
 
         <div class="grid">
@@ -827,6 +858,70 @@
             }
         }
 
+        function extractMessageId(data) {
+            if (!data || typeof data !== 'object') return '';
+            if (typeof data.message_id === 'string' && data.message_id.trim()) return data.message_id.trim();
+            const keyId = data.result?.key?.id;
+            if (typeof keyId === 'string' && keyId.trim()) return keyId.trim();
+            if (Array.isArray(data) && data[0]?.message_id) return String(data[0].message_id).trim();
+            return '';
+        }
+
+        function statusEndpointUrl(instanceId, messageId) {
+            const baseUrl = document.getElementById('baseUrl').value || window.location.origin;
+            return `${baseUrl}/api/instances/${encodeURIComponent(instanceId)}/messages/${encodeURIComponent(messageId)}/status`;
+        }
+
+        async function checkMessageStatus(silent = false) {
+            const instanceId = document.getElementById('instanceId').value;
+            const messageId = document.getElementById('statusMessageId').value.trim();
+            const statusBtn = document.getElementById('statusBtn');
+            const statusBtnText = document.getElementById('statusBtnText');
+            const box = document.getElementById('statusResponseBox');
+
+            if (!instanceId || !messageId) {
+                if (!silent) {
+                    box.textContent = 'Select an instance and enter a message id (send a test message first).';
+                }
+                return null;
+            }
+
+            statusBtn.disabled = true;
+            statusBtnText.textContent = 'Checking...';
+
+            try {
+                const response = await fetch(statusEndpointUrl(instanceId, messageId), {
+                    headers: buildAuthHeaders(),
+                    cache: 'no-store'
+                });
+                const data = await response.json();
+                box.textContent = JSON.stringify(data, null, 2);
+                if (response.ok && data.status) {
+                    document.getElementById('statusPollLabel').value = data.status;
+                } else if (!silent) {
+                    document.getElementById('statusPollLabel').value = response.ok ? 'unknown' : 'not found';
+                }
+                return response.ok ? data : null;
+            } catch (error) {
+                box.textContent = `Error: ${error.message}`;
+                return null;
+            } finally {
+                statusBtn.disabled = false;
+                statusBtnText.textContent = 'Check status';
+            }
+        }
+
+        async function pollMessageStatus() {
+            const pollBtn = document.getElementById('statusPollBtn');
+            pollBtn.disabled = true;
+            for (let i = 0; i < 5; i += 1) {
+                const data = await checkMessageStatus(true);
+                if (data?.status === 'read' || data?.status === 'delivered') break;
+                await new Promise((resolve) => window.setTimeout(resolve, 2000));
+            }
+            pollBtn.disabled = false;
+        }
+
         let sendInFlight = false;
 
         window.addEventListener('beforeunload', (event) => {
@@ -881,6 +976,14 @@
                     setStatus('success', `Success (${elapsed}ms)`);
                     document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);
                     addToHistory(toPhone, request.body.message || '[interactive]', true, elapsed);
+                    const messageId = extractMessageId(data);
+                    if (messageId) {
+                        document.getElementById('reactMessageId').value = messageId;
+                        document.getElementById('statusMessageId').value = messageId;
+                        if (document.getElementById('instanceId').value) {
+                            void pollMessageStatus();
+                        }
+                    }
                 } else {
                     setStatus('error', `Error ${response.status} (${elapsed}ms)`);
                     document.getElementById('responseBox').textContent = JSON.stringify(data, null, 2);

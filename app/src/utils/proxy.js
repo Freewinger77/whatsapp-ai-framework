@@ -56,9 +56,6 @@ export function parseProxyConfig(input) {
     return null;
 }
 
-/**
- * Accept URL, Webshare shorthand (host:port:user:pass), or structured object.
- */
 export function parseFlexibleProxyInput(input) {
     if (!input) return null;
     if (typeof input === 'string') {
@@ -77,9 +74,24 @@ export function parseFlexibleProxyInput(input) {
         return parseProxyConfig(trimmed);
     }
     if (typeof input === 'object') {
+        if (input.shorthand) return parseFlexibleProxyInput(String(input.shorthand));
         return parseProxyConfig(input);
     }
     return null;
+}
+
+export function buildProxyAttachArg(body = {}) {
+    if (!body || typeof body !== 'object') return null;
+    if (body.enabled === false) return { enabled: false };
+
+    const candidate = body.shorthand || body.url || (body.host ? body : null);
+    if (!candidate) return null;
+
+    const cfg = parseFlexibleProxyInput(candidate);
+    if (!cfg) {
+        throw new Error('Invalid proxy config. Use url, host:port:user:pass, or {host,port,username,password}.');
+    }
+    return { enabled: true, ...cfg };
 }
 
 export function proxyConfigToUrl(cfg) {

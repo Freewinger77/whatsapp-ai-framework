@@ -3,8 +3,21 @@ const MAX_CTA_LABEL = 25;
 const MAX_BUTTON_ID = 256;
 const MAX_INTERACTIVE_ACTIONS = 3;
 
-function cleanLine(value) {
+/** Collapse whitespace on single-line fields (button labels, ids). */
+export function cleanSingleLine(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+/** Preserve intentional line breaks in message body text. */
+export function normalizeMessageText(value) {
+    return String(value || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .split('\n')
+        .map((line) => line.replace(/[^\S\n]+/g, ' ').trimEnd())
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
 }
 
 function isHttpUrl(url) {
@@ -55,11 +68,11 @@ export function hasNativeInteractiveFields(body = {}) {
 
 export function validateInteractiveSendBody(body = {}, { interactiveFocus = false } = {}) {
     const details = [];
-    const message = cleanLine(body.message ?? body.text);
+    const message = normalizeMessageText(body.message ?? body.text);
     const link = normalizeLink(body.link);
     const ctaUrl = normalizeCtaUrl(body.ctaUrl);
     const linkPreview = body.linkPreview !== false;
-    const footer = cleanLine(body.footer);
+    const footer = cleanSingleLine(body.footer);
     const rawButtons = Array.isArray(body.buttons) ? body.buttons : [];
 
     if (link?.url && !isHttpUrl(link.url)) {
@@ -75,8 +88,8 @@ export function validateInteractiveSendBody(body = {}, { interactiveFocus = fals
     const buttons = [];
     for (let index = 0; index < rawButtons.length; index += 1) {
         const button = rawButtons[index] || {};
-        const text = cleanLine(button.text || button.title);
-        const id = cleanLine(button.id) || `btn_${index + 1}`;
+        const text = cleanSingleLine(button.text || button.title);
+        const id = cleanSingleLine(button.id) || `btn_${index + 1}`;
 
         if (!text) {
             details.push(`Button ${index + 1} is missing text`);

@@ -1,4 +1,5 @@
 import { getWorkerInstance } from './worker-client';
+import { getWorkerInstanceId } from './worker-instance-id';
 import { mapWorkerInstanceStatus, workerPhoneFromResult, workerStatusFromResult } from './worker-instance-state';
 
 type SupabaseAdmin = {
@@ -78,7 +79,7 @@ export async function syncInstanceFromWorker(
     endpoint,
     publicIp: deployment?.public_ip ?? null,
     sharedSecret: process.env.WASUP_WORKER_SHARED_SECRET,
-    instanceId: instance.id
+    instanceId: getWorkerInstanceId(instance)
   });
 
   if (!worker.found) return null;

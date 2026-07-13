@@ -1,5 +1,5 @@
 import type { ComponentType, FormEvent, KeyboardEvent, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -17,9 +17,7 @@ import {
   HandIcon,
   KeyRoundIcon,
   LinkIcon,
-  MessageCircleIcon,
   PencilIcon,
-  QrCodeIcon,
   RefreshCwIcon,
   SaveIcon,
   SearchIcon,
@@ -39,14 +37,14 @@ import {
 import { instanceGradient } from "@/polymet/data/instance-colors";
 import { InlineProvisioningSpinner, useWorkspaceState } from "@/polymet/hooks/use-workspace-state";
 import { InstanceDetailSkeleton } from "@/polymet/components/page-skeletons";
-import { clearInstanceAuth, connectInstance, deleteInstance, getDeepDive, getInstance, getInstanceAntibanV2, getInstanceQr, graduateInstanceWarmup, pauseInstanceAntibanV2, resumeInstanceAntibanV2, updateInstanceAntibanV2, updateInstanceSettings } from "@/polymet/lib/control-plane-api";
+import { createAuthenticatedPairingClient, InstanceConnectPanel } from "@/polymet/components/instance-connect-panel";
+import { connectInstance, createInstancePairingLink, deleteInstance, getDeepDive, getInstance, getInstanceAntibanV2, resolveAntibanLimitDay, resolveAntibanLimitHour, updateInstanceAntibanV2, updateInstanceSettings } from "@/polymet/lib/control-plane-api";
+import { copyWithToast } from "@/polymet/lib/copy-to-clipboard";
 import { cn } from "@/lib/utils";
 
-type ConnectMode = "menu" | "qr" | "pairing" | "clear";
 type MainSettingsCard = "webhook" | "api-credentials" | "handoff" | "profile" | "behaviour" | "anti-ban" | "proxy";
 
 const DEFAULT_HANDOFF_NUMBERS: string[] = [];
-const QR_DISPLAY_TTL_MS = 110_000;
 const DEFAULT_OPEN_SETTINGS_CARDS: Record<MainSettingsCard, boolean> = {
   webhook: true,
   "api-credentials": true,
@@ -56,12 +54,6 @@ const DEFAULT_OPEN_SETTINGS_CARDS: Record<MainSettingsCard, boolean> = {
   "anti-ban": true,
   proxy: false,
 };
-
-function getQrExpiresInMs(updatedAt?: string | null, workerExpiresInMs?: number | null) {
-  if (typeof workerExpiresInMs === "number") return workerExpiresInMs;
-  if (!updatedAt) return null;
-  return Math.max(0, QR_DISPLAY_TTL_MS - (Date.now() - new Date(updatedAt).getTime()));
-}
 
 export function InstanceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -113,6 +105,7 @@ export function InstanceDetailPage() {
   const [behaviorProfile, setBehaviorProfile] = useState(inst.behaviorProfile);
   const [connected, setConnected] = useState(inst.status === "active");
   const [linkOpen, setLinkOpen] = useState(false);
+  const [pairingLinkBusy, setPairingLinkBusy] = useState(false);
   const [typing, setTyping] = useState(inst.behaviorProfile !== "Notification max");
   const [readReceipts, setReadReceipts] = useState(inst.behaviorProfile !== "Notification max");
   const [responseDelays, setResponseDelays] = useState(false);
@@ -213,17 +206,11 @@ export function InstanceDetailPage() {
           if (cancelled) return;
           setAntibanV2(status);
           setAntibanError("");
-          const hour =
-            status?.rateLimiter?.limits?.maxPerHour
-            ?? status?.rateLimiter?.limits?.perHour
-            ?? status?.config?.overrides?.maxPerHour;
-          const day =
-            status?.rateLimiter?.limits?.maxPerDay
-            ?? status?.rateLimiter?.limits?.perDay
-            ?? status?.config?.overrides?.maxPerDay;
+          const hour = resolveAntibanLimitHour(status);
+          const day = resolveAntibanLimitDay(status);
           if (hour) setMaxPerHour(String(hour));
           if (day) setMaxPerDay(String(day));
-          const warmupMod = status?.config?.modules?.warmup;
+          const warmupMod = status?.modules?.warmup ?? status?.config?.modules?.warmup;
           if (warmupMod?.enabled === false || status?.warmup?.complete) setWarmupEnabled(false);
           else if (warmupMod?.enabled !== false) setWarmupEnabled(true);
         })
@@ -387,6 +374,22 @@ export function InstanceDetailPage() {
       });
     } finally {
       setReconnecting(false);
+    }
+  };
+
+  const copyPairingLink = async () => {
+    if (!id || pairingLinkBusy) return;
+
+    setPairingLinkBusy(true);
+    try {
+      const link = await createInstancePairingLink(id);
+      await copyWithToast(link.url, "Customer pairing link copied");
+    } catch (error) {
+      toast.error("Could not create pairing link", {
+        description: error instanceof Error ? error.message : "Try again in a few seconds.",
+      });
+    } finally {
+      setPairingLinkBusy(false);
     }
   };
 
@@ -560,6 +563,16 @@ export function InstanceDetailPage() {
             </div>
           )}
           <button
+            type="button"
+            onClick={() => void copyPairingLink()}
+            disabled={pairingLinkBusy || inst.status === "provisioning"}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            title="Copy a customer onboarding link for QR / pairing code setup"
+          >
+            <LinkIcon className="h-4 w-4" />
+            {pairingLinkBusy ? "Creating link..." : "Copy pairing link"}
+          </button>
+          <button
             onClick={saveSettings}
             disabled={saving}
             className="rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
@@ -569,15 +582,52 @@ export function InstanceDetailPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:auto-rows-fr md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:auto-rows-fr md:grid-cols-4">
         {[
           { icon: ActivityIcon, label: "Messages today", value: inst.messagesToday },
           { icon: ClockIcon, label: "Uptime", value: connected ? inst.uptime : "Disconnected" },
           { icon: GlobeIcon, label: "Region", value: inst.region },
+          {
+            icon: BellIcon,
+            label: "Anti-ban",
+            value: antibanLoading
+              ? "Loading..."
+              : antibanV2?.enabled === false
+                ? "Off"
+                : antibanV2?.running
+                  ? "On"
+                  : connected
+                    ? "On (reconnect)"
+                    : "—",
+            onClick: () => {
+              setOpenSettingsCards((prev) => ({ ...prev, "anti-ban": true }));
+              document.getElementById("instance-anti-ban")?.scrollIntoView({ behavior: "smooth", block: "start" });
+            },
+          },
         ].map((stat) => {
           const Icon = stat.icon;
+          const clickable = typeof stat.onClick === "function";
           return (
-            <div key={stat.label} className="flex h-full flex-col rounded-xl border border-border/60 bg-card p-5">
+            <div
+              key={stat.label}
+              role={clickable ? "button" : undefined}
+              tabIndex={clickable ? 0 : undefined}
+              onClick={stat.onClick}
+              onKeyDown={
+                clickable
+                  ? (event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        stat.onClick?.();
+                      }
+                    }
+                  : undefined
+              }
+              className={cn(
+                "flex h-full flex-col rounded-xl border border-border/60 bg-card p-5",
+                clickable && "cursor-pointer transition hover:border-foreground/20 hover:bg-muted/30",
+              )}
+            >
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Icon className="h-4 w-4 shrink-0" />
                 {stat.label}
@@ -712,186 +762,154 @@ export function InstanceDetailPage() {
             open={openSettingsCards["anti-ban"]}
             onToggle={() => toggleSettingsCard("anti-ban")}
           >
+            <div id="instance-anti-ban" className="scroll-mt-24" />
             <p className="mb-3 text-xs text-muted-foreground">
-              Control this instance&apos;s worker anti-ban limits from dev.wasup — no need to open the org worker URL.
-              Changes apply live without disconnecting WhatsApp.
+              Turn protection off to send without rate limits. When on, the same limits apply to plain text and buttons.
             </p>
             {antibanError ? (
               <p className="mb-3 text-xs text-destructive">{antibanError}</p>
             ) : null}
-            <StaticRow
-              label="Worker v2"
-              value={antibanLoading ? "Loading..." : antibanV2?.running ? "Running" : connected ? "Configured (offline)" : "Offline"}
+            <ToggleRow
+              label="Anti-ban protection"
+              checked={antibanV2?.enabled !== false}
+              disabled={antibanSaving || antibanLoading || !id}
+              onChange={async (value) => {
+                if (!id) return;
+                setAntibanSaving(true);
+                try {
+                  const result = await updateInstanceAntibanV2(id, { enabled: value });
+                  toast.success(value ? "Anti-ban protection enabled" : "Anti-ban protection turned off");
+                  if (result.antibanV2) setAntibanV2(result.antibanV2);
+                  else setAntibanV2(await getInstanceAntibanV2(id));
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Could not update anti-ban");
+                } finally {
+                  setAntibanSaving(false);
+                }
+              }}
             />
             <StaticRow
-              label="Warm-up status"
+              label="Status"
               value={
                 antibanLoading
                   ? "Loading..."
-                  : antibanV2?.warmup?.complete || antibanV2?.warmup?.phase === "graduated"
-                    ? "Graduated"
-                    : antibanV2?.warmup
-                      ? `Day ${antibanV2.warmup.day}/${antibanV2.warmup.totalDays} — ${antibanV2.warmup.todaySent}/${antibanV2.warmup.todayLimit === -1 ? "∞" : antibanV2.warmup.todayLimit} today`
+                  : antibanV2?.enabled === false
+                    ? "Off — no send limits"
+                    : antibanV2?.running
+                      ? "On — enforcing"
                       : connected
-                        ? "Active"
-                        : "Offline"
+                        ? "On — reconnect to arm"
+                        : "Off-line"
               }
             />
             <StaticRow
-              label="Sends today (v2)"
+              label="Sends / hour"
               value={
-                antibanV2?.rateLimiter
-                  ? `${antibanV2.rateLimiter.lastDay ?? 0}/${antibanV2.rateLimiter.limits?.perDay ?? antibanV2.rateLimiter.limits?.maxPerDay ?? maxPerDay}`
-                  : "—"
+                antibanV2?.enabled === false
+                  ? "—"
+                  : antibanV2?.rateLimiter || resolveAntibanLimitHour(antibanV2)
+                    ? `${antibanV2?.rateLimiter?.lastHour ?? 0}/${resolveAntibanLimitHour(antibanV2) ?? maxPerHour}`
+                    : "—"
               }
             />
             <StaticRow
-              label="Risk / pause"
+              label="Sends today"
               value={
-                antibanV2?.health?.isPaused
-                  ? "Paused"
-                  : antibanV2?.health?.risk || (connected ? "ok" : "offline")
+                antibanV2?.enabled === false
+                  ? "—"
+                  : antibanV2?.rateLimiter || resolveAntibanLimitDay(antibanV2)
+                    ? `${antibanV2?.rateLimiter?.lastDay ?? 0}/${resolveAntibanLimitDay(antibanV2) ?? maxPerDay}`
+                    : "—"
               }
             />
             <StaticRow label="Credits consumed today" value={inst.messagesToday} />
-            <EditableTextRow label="Max sends / hour" value={maxPerHour} onSave={setMaxPerHour} onDirty={markDirty} monospace />
-            <EditableTextRow label="Max sends / day" value={maxPerDay} onSave={setMaxPerDay} onDirty={markDirty} monospace />
-            <ToggleRow
-              label="Warm-up ramp (day 1 ~20/day default)"
-              checked={warmupEnabled}
-              onChange={(value) => {
-                setWarmupEnabled(value);
-                markDirty();
-              }}
-            />
-            <div className="flex flex-wrap gap-2 pt-2">
-              <button
-                type="button"
-                disabled={antibanSaving || !id}
-                className="inline-flex items-center rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50"
-                onClick={async () => {
-                  if (!id) return;
-                  setAntibanSaving(true);
-                  try {
-                    await updateInstanceAntibanV2(id, {
-                      overrides: {
-                        maxPerHour: Number(maxPerHour) || undefined,
-                        maxPerDay: Number(maxPerDay) || undefined,
-                      },
-                      modules: { warmup: { enabled: warmupEnabled } },
-                    });
-                    toast.success("Anti-ban limits updated");
-                    setDirty(false);
-                    const next = await getInstanceAntibanV2(id);
-                    setAntibanV2(next);
-                  } catch (error) {
-                    toast.error(error instanceof Error ? error.message : "Could not update anti-ban limits");
-                  } finally {
-                    setAntibanSaving(false);
-                  }
-                }}
-              >
-                {antibanSaving ? "Saving..." : "Save limits"}
-              </button>
-              <button
-                type="button"
-                disabled={antibanSaving || !id}
-                className="inline-flex items-center rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50"
-                onClick={async () => {
-                  if (!id) return;
-                  setAntibanSaving(true);
-                  try {
-                    await graduateInstanceWarmup(id);
-                    toast.success("Warm-up graduated — daily cap lifted");
-                    const next = await getInstanceAntibanV2(id);
-                    setAntibanV2(next);
-                    setWarmupEnabled(false);
-                  } catch (error) {
-                    toast.error(error instanceof Error ? error.message : "Could not graduate warm-up");
-                  } finally {
-                    setAntibanSaving(false);
-                  }
-                }}
-              >
-                Graduate warm-up
-              </button>
-              <button
-                type="button"
-                disabled={antibanSaving || !id || antibanV2?.health?.isPaused}
-                className="inline-flex items-center rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50"
-                onClick={async () => {
-                  if (!id) return;
-                  setAntibanSaving(true);
-                  try {
-                    await pauseInstanceAntibanV2(id);
-                    toast.warning("Anti-ban paused — outbound sends blocked");
-                    const next = await getInstanceAntibanV2(id);
-                    setAntibanV2(next);
-                  } catch (error) {
-                    toast.error(error instanceof Error ? error.message : "Could not pause anti-ban");
-                  } finally {
-                    setAntibanSaving(false);
-                  }
-                }}
-              >
-                Pause sends
-              </button>
-              <button
-                type="button"
-                disabled={antibanSaving || !id || !antibanV2?.health?.isPaused}
-                className="inline-flex items-center rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50"
-                onClick={async () => {
-                  if (!id) return;
-                  setAntibanSaving(true);
-                  try {
-                    await resumeInstanceAntibanV2(id);
-                    toast.success("Anti-ban resumed");
-                    const next = await getInstanceAntibanV2(id);
-                    setAntibanV2(next);
-                  } catch (error) {
-                    toast.error(error instanceof Error ? error.message : "Could not resume anti-ban");
-                  } finally {
-                    setAntibanSaving(false);
-                  }
-                }}
-              >
-                Resume sends
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Presets: conservative 100/hr · balanced 200/hr · aggressive 400/hr. Changes apply live without disconnecting.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {(["conservative", "balanced", "aggressive"] as const).map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  disabled={antibanSaving || !id}
-                  className={cn(
-                    "rounded-lg border px-3 py-1 text-xs font-medium capitalize",
-                    antibanV2?.preset === preset || (preset === "balanced" && antibanV2?.preset === "moderate")
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border hover:bg-muted",
-                  )}
-                  onClick={async () => {
-                    if (!id) return;
-                    setAntibanSaving(true);
-                    try {
-                      await updateInstanceAntibanV2(id, { preset });
-                      toast.success(`Anti-ban preset: ${preset}`);
-                      const next = await getInstanceAntibanV2(id);
-                      setAntibanV2(next);
-                    } catch (error) {
-                      toast.error(error instanceof Error ? error.message : "Preset update failed");
-                    } finally {
-                      setAntibanSaving(false);
-                    }
-                  }}
-                >
-                  {preset}
-                </button>
-              ))}
-            </div>
+            {antibanV2?.enabled !== false ? (
+              <>
+                <EditableTextRow label="Max sends / hour" value={maxPerHour} onSave={setMaxPerHour} onDirty={markDirty} monospace />
+                <EditableTextRow label="Max sends / day" value={maxPerDay} onSave={setMaxPerDay} onDirty={markDirty} monospace />
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <button
+                    type="button"
+                    disabled={antibanSaving || !id}
+                    className="inline-flex items-center rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50"
+                    onClick={async () => {
+                      if (!id) return;
+                      setAntibanSaving(true);
+                      try {
+                        const result = await updateInstanceAntibanV2(id, {
+                          overrides: {
+                            maxPerHour: Number(maxPerHour) || undefined,
+                            maxPerDay: Number(maxPerDay) || undefined,
+                          },
+                          modules: { warmup: { enabled: warmupEnabled } },
+                        });
+                        toast.success("Anti-ban limits updated");
+                        setDirty(false);
+                        if (result.antibanV2) {
+                          setAntibanV2(result.antibanV2);
+                          const hour = resolveAntibanLimitHour(result.antibanV2);
+                          const day = resolveAntibanLimitDay(result.antibanV2);
+                          if (hour) setMaxPerHour(String(hour));
+                          if (day) setMaxPerDay(String(day));
+                        } else {
+                          setAntibanV2(await getInstanceAntibanV2(id));
+                        }
+                      } catch (error) {
+                        toast.error(error instanceof Error ? error.message : "Could not update anti-ban limits");
+                      } finally {
+                        setAntibanSaving(false);
+                      }
+                    }}
+                  >
+                    {antibanSaving ? "Saving..." : "Save limits"}
+                  </button>
+                </div>
+                <details className="mt-3 rounded-lg border border-border/60 px-3 py-2 text-xs text-muted-foreground">
+                  <summary className="cursor-pointer select-none font-medium text-foreground">Advanced</summary>
+                  <div className="mt-3 space-y-3">
+                    <ToggleRow
+                      label="Warm-up ramp (~20/day on day 1)"
+                      checked={warmupEnabled}
+                      onChange={(value) => {
+                        setWarmupEnabled(value);
+                        markDirty();
+                      }}
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      {(["conservative", "balanced", "aggressive"] as const).map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          disabled={antibanSaving || !id}
+                          className={cn(
+                            "rounded-lg border px-3 py-1 text-xs font-medium capitalize",
+                            antibanV2?.preset === preset || (preset === "balanced" && antibanV2?.preset === "moderate")
+                              ? "border-primary bg-primary/10 text-primary"
+                              : "border-border hover:bg-muted",
+                          )}
+                          onClick={async () => {
+                            if (!id) return;
+                            setAntibanSaving(true);
+                            try {
+                              const result = await updateInstanceAntibanV2(id, { preset });
+                              toast.success(`Preset: ${preset}`);
+                              if (result.antibanV2) setAntibanV2(result.antibanV2);
+                              else setAntibanV2(await getInstanceAntibanV2(id));
+                            } catch (error) {
+                              toast.error(error instanceof Error ? error.message : "Preset update failed");
+                            } finally {
+                              setAntibanSaving(false);
+                            }
+                          }}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </details>
+              </>
+            ) : null}
           </SettingsAccordionCard>
 
           <SettingsAccordionCard
@@ -928,9 +946,11 @@ export function InstanceDetailPage() {
       </div>
 
       {linkOpen && (
-        <ConnectOverlay
+        <InstanceConnectPanel
           instanceId={inst.id}
+          instanceName={instanceName}
           connected={connected}
+          client={createAuthenticatedPairingClient(inst.id)}
           onClose={() => setLinkOpen(false)}
           onConnected={() => {
             setConnected(true);
@@ -1364,10 +1384,12 @@ function ToggleRow({
   label,
   checked,
   onChange,
+  disabled = false,
 }: {
   label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between gap-6 border-b border-border/60 px-4 py-4 last:border-b-0 sm:px-5">
@@ -1375,9 +1397,10 @@ function ToggleRow({
       <button
         role="switch"
         aria-checked={checked}
+        disabled={disabled}
         onClick={() => onChange(!checked)}
         className={cn(
-          "relative inline-flex h-6 w-11 items-center rounded-full border transition-colors",
+          "relative inline-flex h-6 w-11 items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50",
           checked ? "border-foreground bg-foreground" : "border-border bg-muted",
         )}
       >
@@ -1733,421 +1756,6 @@ function DeleteInstanceSheet({
   );
 }
 
-function ConnectOverlay({
-  instanceId,
-  connected,
-  onClose,
-  onConnected,
-}: {
-  instanceId: string;
-  connected: boolean;
-  onClose: () => void;
-  onConnected: () => void;
-}) {
-  const [mode, setMode] = useState<ConnectMode>("menu");
-  const [loading, setLoading] = useState(false);
-  const [qrCode, setQrCode] = useState<string | null>(null);
-  const [phone, setPhone] = useState("");
-  const [pairingCode, setPairingCode] = useState("");
-  const [authCleared, setAuthCleared] = useState(false);
-  const [connectError, setConnectError] = useState("");
-  const [qrUpdatedAt, setQrUpdatedAt] = useState<string | null>(null);
-  const [qrVersion, setQrVersion] = useState(0);
-  const [qrExpiresInMs, setQrExpiresInMs] = useState<number | null>(null);
-  const [qrRefreshRestartCount, setQrRefreshRestartCount] = useState(0);
-  const [pairingStatus, setPairingStatus] = useState("");
-  const qrRefreshInFlight = useRef(false);
-
-  const requestFreshQr = async () => {
-    if (qrRefreshInFlight.current) return;
-    qrRefreshInFlight.current = true;
-    try {
-      await connectInstance(instanceId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!/connection in progress/i.test(message)) {
-        throw error;
-      }
-    } finally {
-      qrRefreshInFlight.current = false;
-    }
-  };
-
-  useEffect(() => {
-    if (mode !== "qr") return;
-
-    let cancelled = false;
-    const pollQr = async () => {
-      try {
-        const latest = (await getInstanceQr(instanceId)).worker;
-        if (cancelled) return;
-
-        if (latest.status === "connected") {
-          onConnected();
-          return;
-        }
-
-        if (latest.qrCode) {
-          const expiresInMs = getQrExpiresInMs(latest.qrCodeUpdatedAt, latest.qrExpiresInMs);
-          if (typeof expiresInMs === "number" && expiresInMs <= 0) {
-            setQrCode(null);
-            setQrExpiresInMs(0);
-            setPairingStatus("Refreshing QR...");
-            setConnectError("");
-            setLoading(true);
-            requestFreshQr().catch(() => {
-              if (!cancelled) {
-                setLoading(false);
-              }
-            });
-            return;
-          }
-          setQrCode(latest.qrCode);
-          setQrUpdatedAt(latest.qrCodeUpdatedAt || null);
-          setQrVersion(latest.qrVersion || 0);
-          setQrExpiresInMs(expiresInMs);
-          setQrRefreshRestartCount(latest.qrRefreshRestartCount || 0);
-          setPairingStatus("");
-          setConnectError("");
-          setLoading(false);
-          return;
-        }
-
-        if (latest.linkingGraceActive || latest.connectionIssue?.message) {
-          setQrCode(null);
-          setLoading(false);
-          setPairingStatus(latest.connectionIssue?.message || "Scan received, finishing WhatsApp link...");
-          setConnectError("");
-          return;
-        }
-
-        if (latest.status === "disconnected") {
-          setLoading(true);
-          setPairingStatus("Refreshing QR...");
-          setConnectError("");
-          requestFreshQr().catch((error) => {
-            if (!cancelled) {
-              setLoading(false);
-              setConnectError(
-                error instanceof Error
-                  ? error.message
-                  : latest.connectionIssue?.message ||
-                      latest.message ||
-                      "QR pairing stopped. Retrying automatically...",
-              );
-            }
-          });
-          return;
-        }
-
-        setQrRefreshRestartCount(latest.qrRefreshRestartCount || 0);
-      } catch (error) {
-        if (!cancelled) {
-          setLoading(false);
-          setConnectError(error instanceof Error ? error.message : "Could not refresh QR code.");
-        }
-      }
-    };
-
-    pollQr();
-    const timer = window.setInterval(pollQr, 3000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [instanceId, mode, onConnected]);
-
-  const showQr = async () => {
-    setMode("qr");
-    setQrCode(null);
-    setQrUpdatedAt(null);
-    setQrVersion(0);
-    setQrExpiresInMs(null);
-    setQrRefreshRestartCount(0);
-    setPairingStatus("");
-    setConnectError("");
-    setLoading(true);
-    let keepPreparing = false;
-    try {
-      await requestFreshQr();
-      const qr = await waitForQr(instanceId);
-      if (qr.status === "connected") {
-        onConnected();
-        return;
-      }
-      if (!qr.qrCode) {
-        if (qr.status === "connecting") {
-          keepPreparing = true;
-          setConnectError("");
-        } else {
-          setConnectError(qr.message || "QR is not ready yet. Try again in a few seconds.");
-        }
-        return;
-      }
-      const expiresInMs = getQrExpiresInMs(qr.qrCodeUpdatedAt, qr.qrExpiresInMs);
-      if (typeof expiresInMs === "number" && expiresInMs <= 0) {
-        keepPreparing = true;
-        setPairingStatus("Refreshing QR...");
-        return;
-      }
-      setQrCode(qr.qrCode);
-      setQrUpdatedAt(qr.qrCodeUpdatedAt || null);
-      setQrVersion(qr.qrVersion || 0);
-      setQrExpiresInMs(expiresInMs);
-      setQrRefreshRestartCount(qr.qrRefreshRestartCount || 0);
-      setPairingStatus("");
-    } catch (error) {
-      setConnectError(error instanceof Error ? error.message : "Could not start WhatsApp connection.");
-    } finally {
-      setLoading(keepPreparing);
-    }
-  };
-
-  const generatePairingCode = async () => {
-    setMode("pairing");
-    setLoading(true);
-    setConnectError("");
-    setPairingCode("");
-    try {
-      const response = await connectInstance(instanceId, { pairingPhone: phone });
-      const code = response.worker.pairingCode || response.worker.instance?.pairingCode || "";
-      if (!code) {
-        setConnectError("Pairing code was not returned by the worker. Try QR pairing instead.");
-        return;
-      }
-      setPairingCode(code);
-    } catch (error) {
-      setConnectError(error instanceof Error ? error.message : "Could not generate pairing code.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const clearAuth = async () => {
-    if (!window.confirm("Clear saved WhatsApp auth for this instance? You will need to pair again.")) return;
-    setMode("clear");
-    setLoading(true);
-    setConnectError("");
-    setAuthCleared(false);
-    try {
-      await clearInstanceAuth(instanceId);
-      setAuthCleared(true);
-    } catch (error) {
-      setConnectError(error instanceof Error ? error.message : "Could not clear saved auth.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return createPortal(
-    <div className="fixed inset-0 z-[100] flex h-dvh w-screen items-center justify-center bg-black/45 p-3 backdrop-blur-sm animate-fade-in sm:p-4">
-      <div className="relative flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl animate-pop-in sm:rounded-3xl">
-        <div className="flex items-start justify-between gap-4 border-b border-border/60 p-4 sm:p-6">
-          <div>
-            <h2 className="text-xl font-semibold">Connect WhatsApp</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Pair this instance with QR, an 8 digit pairing code, or clear saved auth first.
-            </p>
-          </div>
-          <button onClick={onClose} className="rounded-md p-2 text-muted-foreground hover:bg-muted">
-            <XIcon className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="grid gap-4 overflow-y-auto p-4 sm:p-6 md:grid-cols-[260px_minmax(0,1fr)] md:gap-5">
-          <div className="space-y-3">
-            <ActionTile
-              active={mode === "qr"}
-              icon={QrCodeIcon}
-              title="QR code"
-              body="Scan from WhatsApp linked devices."
-              onClick={showQr}
-            />
-            <ActionTile
-              active={mode === "pairing"}
-              icon={KeyRoundIcon}
-              title="Pairing code"
-              body="Enter a phone number and generate a code."
-              onClick={() => setMode("pairing")}
-            />
-            <ActionTile
-              active={mode === "clear"}
-              icon={LinkIcon}
-              title="Clear auth"
-              body={connected ? "Wipe saved auth before pairing again." : "Reset saved auth state."}
-              onClick={clearAuth}
-            />
-          </div>
-
-          <div className="grid min-h-[300px] place-items-center rounded-2xl border border-border/60 bg-muted/20 p-4 sm:min-h-[360px] sm:p-6">
-            {mode === "menu" && (
-              <div className="max-w-sm text-center">
-                <MessageCircleIcon className="mx-auto h-10 w-10 text-muted-foreground" />
-                <h3 className="mt-4 font-semibold">Choose a pairing method</h3>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  The modal is attached to the viewport, so it stays centered outside the instance content layout.
-                </p>
-              </div>
-            )}
-
-            {mode === "qr" && (
-              <div className="w-full max-w-sm text-center">
-                {loading && <LoadingState label="Preparing QR code" />}
-                {!loading && connectError && (
-                  <div>
-                    <ErrorState message={connectError} />
-                    <button
-                      onClick={showQr}
-                      className="mt-4 rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90"
-                    >
-                      Retry QR
-                    </button>
-                  </div>
-                )}
-                {!loading && !connectError && pairingStatus && (
-                  <div className="rounded-2xl border border-border/60 bg-background p-5">
-                    <LoadingState label={pairingStatus} />
-                    <p className="mt-3 text-xs text-muted-foreground">Keep WhatsApp open while the link finishes. A fresh QR will appear automatically if this attempt times out.</p>
-                  </div>
-                )}
-                {!loading && qrCode && (
-                  <>
-                    <img src={qrCode} alt="WhatsApp pairing QR code" className="mx-auto h-48 w-48 rounded-2xl border border-border bg-white p-3 shadow-inner sm:h-56 sm:w-56" />
-                    <p className="mt-4 text-sm text-muted-foreground">Scan this QR in WhatsApp linked devices. It refreshes automatically while this modal stays open.</p>
-                    {(qrUpdatedAt || qrVersion > 0) && (
-                      <p className="mt-2 text-xs text-muted-foreground">
-                        {qrVersion > 0 ? `QR version ${qrVersion}` : "QR refreshed"}
-                        {qrUpdatedAt ? ` · Updated ${new Date(qrUpdatedAt).toLocaleTimeString()}` : ""}
-                        {typeof qrExpiresInMs === "number" ? ` · Expires in ${Math.max(0, Math.ceil(qrExpiresInMs / 1000))}s` : ""}
-                        {qrRefreshRestartCount > 0 ? ` · Auto-refresh restarts ${qrRefreshRestartCount}` : ""}
-                      </p>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-
-            {mode === "pairing" && (
-              <div className="w-full max-w-sm">
-                <label className="text-sm font-medium">Phone number</label>
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                  <input
-                    value={phone}
-                    onChange={(event) => setPhone(event.target.value)}
-                    placeholder="+15551234567"
-                    className="h-10 min-w-0 flex-1 rounded-lg border border-border/60 bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-                  />
-                  <button
-                    onClick={generatePairingCode}
-                    disabled={!phone.trim() || loading}
-                    className="rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
-                  >
-                    Generate
-                  </button>
-                </div>
-                <div className="mt-8 grid min-h-32 place-items-center rounded-2xl border border-border/60 bg-background p-5 text-center">
-                  {loading && <LoadingState label="Generating code" />}
-                  {!loading && connectError && <ErrorState message={connectError} />}
-                  {!loading && pairingCode && (
-                    <div>
-                      <div className="font-mono text-3xl font-semibold tracking-[0.24em] sm:text-4xl sm:tracking-[0.35em]">{pairingCode}</div>
-                      <p className="mt-3 text-sm text-muted-foreground">Enter this 8 digit code in WhatsApp.</p>
-                    </div>
-                  )}
-                  {!loading && !pairingCode && !connectError && (
-                    <p className="text-sm text-muted-foreground">Enter a phone number to generate an 8 digit code.</p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {mode === "clear" && (
-              <div className="max-w-sm text-center">
-                {loading && <LoadingState label="Clearing auth" />}
-                {!loading && connectError && <ErrorState message={connectError} />}
-                {!loading && authCleared ? (
-                  <>
-                    <CheckIcon className="mx-auto h-10 w-10 text-emerald-600" />
-                    <h3 className="mt-4 font-semibold">Auth cleared</h3>
-                    <p className="mt-2 text-sm text-muted-foreground">Saved credentials were cleared.</p>
-                    <button
-                      onClick={showQr}
-                      className="mt-5 rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90"
-                    >
-                      Show QR next
-                    </button>
-                  </>
-                ) : !loading && !connectError ? (
-                  <p className="text-sm text-muted-foreground">Use the clear auth option to reset pairing credentials.</p>
-                ) : null}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-async function waitForQr(instanceId: string) {
-  let latest = await getInstanceQr(instanceId);
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    if (latest.worker.qrCode || latest.worker.status === "connected") return latest.worker;
-    await new Promise((resolve) => window.setTimeout(resolve, 1500));
-    latest = await getInstanceQr(instanceId);
-  }
-  return latest.worker;
-}
-
-function ActionTile({
-  active,
-  icon: Icon,
-  title,
-  body,
-  onClick,
-}: {
-  active: boolean;
-  icon: ComponentType<{ className?: string }>;
-  title: string;
-  body: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex w-full items-center gap-4 rounded-xl border p-4 text-left transition-colors",
-        active ? "border-foreground bg-foreground text-background" : "border-border/60 hover:bg-muted/50",
-      )}
-    >
-      <div className={cn("grid h-11 w-11 place-items-center rounded-lg", active ? "bg-background/15" : "bg-muted")}>
-        <Icon className="h-5 w-5" />
-      </div>
-      <div>
-        <div className="font-semibold">{title}</div>
-        <p className={cn("mt-0.5 text-sm", active ? "text-background/75" : "text-muted-foreground")}>{body}</p>
-      </div>
-    </button>
-  );
-}
-
-function LoadingState({ label }: { label: string }) {
-  return (
-    <div className="grid place-items-center gap-3 text-center">
-      <div className="h-9 w-9 animate-spin rounded-full border-2 border-muted border-t-foreground" />
-      <p className="text-sm text-muted-foreground">{label}...</p>
-    </div>
-  );
-}
-
-function ErrorState({ message }: { message: string }) {
-  return (
-    <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-center text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
-      {message}
-    </div>
-  );
-}
 
 function getInstanceHealth(connected: boolean, status: string, qualityScore: string) {
   if (status === "connecting") {

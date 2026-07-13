@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { reconcileQueuedWorkerInstances } from '../../../../../lib/org-deployments';
 import { getSupabaseAdmin } from '../../../../../lib/supabase-admin';
 import { checkWorkerHealth } from '../../../../../lib/worker-client';
+import { syncAllReadyOrgWorkers } from '../../../../../lib/worker-instance-sync';
 
 export async function POST(req: Request) {
   const requiredSecret = process.env.WASUP_WORKER_SHARED_SECRET;
@@ -43,6 +44,25 @@ export async function POST(req: Request) {
       results.push({ id: deployment.id, ready: true, error: message });
     }
   }
+
+  return NextResponse.json({ success: true, checked: results.length, results });
+}
+
+export async function PUT(req: Request) {
+  const requiredSecret = process.env.WASUP_WORKER_SHARED_SECRET;
+  const suppliedSecret = req.headers.get('x-wasup-worker-secret') || bearerToken(req);
+
+  if (!requiredSecret || suppliedSecret !== requiredSecret) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const supabase = getSupabaseAdmin() as any;
+  const body = await req.json().catch(() => ({}));
+  const results = await syncAllReadyOrgWorkers(supabase, {
+    cleanupOrphanWorkers: body.cleanupOrphanWorkers ?? true,
+    importOrphanWorkers: body.importOrphanWorkers ?? true,
+    linkSuggestions: body.linkSuggestions
+  });
 
   return NextResponse.json({ success: true, checked: results.length, results });
 }

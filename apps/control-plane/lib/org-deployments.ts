@@ -7,6 +7,7 @@ import { upsertGoDaddyARecord } from './godaddy';
 import type { ProxyClaimResult } from './proxy-pool';
 import { getSupabaseAdmin } from './supabase-admin';
 import { checkWorkerHealth, createWorkerInstance, getWorkerInstance } from './worker-client';
+import { getWorkerInstanceId } from './worker-instance-id';
 import { mapWorkerInstanceStatus, workerPhoneFromResult, workerStatusFromResult } from './worker-instance-state';
 
 type OrganizationRecord = {
@@ -512,7 +513,7 @@ export async function reconcileQueuedWorkerInstances(orgId: string, deployment: 
         endpoint: deployment.base_url,
         publicIp: deployment.public_ip,
         sharedSecret: process.env.WASUP_WORKER_SHARED_SECRET || null,
-        instanceId: instance.id
+        instanceId: getWorkerInstanceId(instance)
       });
       const worker = existingWorker.found
         ? {
