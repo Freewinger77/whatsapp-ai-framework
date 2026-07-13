@@ -31,6 +31,17 @@ export type Instance = {
   qualityScore: string;
   provisioningState?: string;
   lastError?: string;
+  reachoutTimeLock?: ReachoutTimeLock | null;
+};
+
+export type ReachoutTimeLock = {
+  isActive: boolean;
+  timeEnforcementEnds: string | null;
+  enforcementType: string;
+  checkedAt?: string | null;
+  source?: string | null;
+  privacyTokenCount?: number | null;
+  syncedAt?: string | null;
 };
 
 export const INSTANCES: Instance[] = [];

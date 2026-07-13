@@ -16,6 +16,7 @@ import {
 } from "@/polymet/lib/control-plane-api";
 import { InlineProvisioningSpinner, useWorkspaceState } from "@/polymet/hooks/use-workspace-state";
 import { InstancesGridSkeleton } from "@/polymet/components/page-skeletons";
+import { ReachoutTimelockBadge } from "@/polymet/components/reachout-timelock-banner";
 import { instancePhoneLabel, instanceStatusDotClass, instanceStatusLabel } from "@/polymet/lib/instance-status";
 import { wasupProSubscribeLabel, wasupProUpgradeDescription } from "@/polymet/lib/billing-copy";
 import { showBillingPlanToast, showInstanceCreationTrialToast } from "@/polymet/lib/billing-plan-toast";
@@ -113,12 +114,18 @@ export function InstancesPage() {
                 </div>
                 <div className="absolute bottom-4 left-5 right-5 flex items-center justify-between gap-2 text-white/90">
                   <span className="rounded-full bg-black/20 px-3 py-1 text-xs backdrop-blur">{inst.region}</span>
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-black/20 px-3 py-1 text-xs backdrop-blur">
-                    {(inst.status === "provisioning" || inst.status === "connecting") && (
-                      <InlineProvisioningSpinner className="h-2.5 w-2.5" />
+                  <span className="inline-flex items-center gap-1.5">
+                    {inst.reachoutTimeLock?.isActive ? (
+                      <ReachoutTimelockBadge lock={inst.reachoutTimeLock} />
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-black/20 px-3 py-1 text-xs backdrop-blur">
+                        {(inst.status === "provisioning" || inst.status === "connecting") && (
+                          <InlineProvisioningSpinner className="h-2.5 w-2.5" />
+                        )}
+                        {inst.status === "quality-warning" ? "⚠ " : ""}
+                        {instanceStatusLabel(inst.status)}
+                      </span>
                     )}
-                    {inst.status === "quality-warning" ? "⚠ " : ""}
-                    {instanceStatusLabel(inst.status)}
                   </span>
                 </div>
               </div>

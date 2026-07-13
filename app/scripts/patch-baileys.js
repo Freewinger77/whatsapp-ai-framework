@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 
 /**
- * Patches Baileys to use MACOS platform instead of WEB.
- * WhatsApp servers reject Platform.WEB as of Feb 2026.
- * See: https://github.com/WhiskeySockets/Baileys/issues/2364
+ * Baileys platform identity.
+ *
+ * Historically this patched Platform.WEB → Platform.MACOS (Feb 2026 WA rejection).
+ * Production wasup2 still runs unpatched Platform.WEB and delivers reliably;
+ * wasup3 bootstraps that applied MACOS showed ghost ACKs (sent:true, no inbox).
+ *
+ * Keep WEB to match wasup2. Do not flip to MACOS without a controlled A/B on a
+ * non-customer worker first.
  */
 
 import fs from 'fs';
@@ -17,18 +22,16 @@ const __dirname = dirname(__filename);
 const filePath = path.join(__dirname, '..', 'node_modules', 'baileys', 'lib', 'Utils', 'validate-connection.js');
 
 if (!fs.existsSync(filePath)) {
-    console.log('[patch-baileys] File not found, skipping patch');
+    console.log('[patch-baileys] File not found, skipping');
     process.exit(0);
 }
 
-let content = fs.readFileSync(filePath, 'utf8');
+const content = fs.readFileSync(filePath, 'utf8');
 
 if (content.includes('Platform.WEB')) {
-    content = content.replaceAll('Platform.WEB', 'Platform.MACOS');
-    fs.writeFileSync(filePath, content);
-    console.log('[patch-baileys] Patched Platform.WEB -> Platform.MACOS');
+    console.log('[patch-baileys] OK — Platform.WEB (matches wasup2)');
 } else if (content.includes('Platform.MACOS')) {
-    console.log('[patch-baileys] Already patched');
+    console.log('[patch-baileys] WARN — Platform.MACOS present; wasup2 uses WEB. Not auto-reverting (session-sensitive).');
 } else {
-    console.log('[patch-baileys] Could not find Platform.WEB to patch');
+    console.log('[patch-baileys] Could not find Platform.WEB or Platform.MACOS');
 }

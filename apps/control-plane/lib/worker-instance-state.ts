@@ -34,6 +34,43 @@ export function workerPhoneFromResult(result: unknown) {
   return null;
 }
 
+export type WorkerReachoutTimeLock = {
+  isActive: boolean;
+  timeEnforcementEnds: string | null;
+  enforcementType: string;
+  checkedAt: string | null;
+  source: string | null;
+  privacyTokenCount: number | null;
+};
+
+export function workerReachoutTimeLockFromResult(result: unknown): WorkerReachoutTimeLock | null {
+  for (const record of collectWorkerRecords(result)) {
+    const lock = record.reachoutTimeLock ?? record.reachout_time_lock;
+    if (!lock || typeof lock !== 'object') continue;
+    const raw = lock as Record<string, unknown>;
+    const ends =
+      typeof raw.timeEnforcementEnds === 'string'
+        ? raw.timeEnforcementEnds
+        : typeof raw.time_enforcement_ends === 'string'
+          ? raw.time_enforcement_ends
+          : null;
+    return {
+      isActive: Boolean(raw.isActive ?? raw.is_active),
+      timeEnforcementEnds: ends,
+      enforcementType: String(raw.enforcementType ?? raw.enforcement_type ?? 'DEFAULT'),
+      checkedAt: typeof raw.checkedAt === 'string' ? raw.checkedAt : typeof raw.checked_at === 'string' ? raw.checked_at : null,
+      source: typeof raw.source === 'string' ? raw.source : null,
+      privacyTokenCount:
+        typeof record.privacyTokenCount === 'number'
+          ? record.privacyTokenCount
+          : typeof record.privacy_token_count === 'number'
+            ? record.privacy_token_count
+            : null
+    };
+  }
+  return null;
+}
+
 export function normalizeWorkerPhone(value: unknown) {
   if (typeof value !== 'string') return null;
 

@@ -167,6 +167,10 @@ if [ -f /opt/wasup-worker.env ]; then
 fi
 cd "$APP_DIR"
 npm install --omit=dev --legacy-peer-deps --ignore-scripts
+# Keep Baileys on the tctoken/reachout RC line for every newly standardized org worker.
+npm install baileys@7.0.0-rc13 --save-exact --omit=dev --legacy-peer-deps --ignore-scripts
+node scripts/patch-baileys.js || true
+node -e "console.log('baileys', require('./node_modules/baileys/package.json').version)"
 pm2 reload wasup-worker || pm2 restart wasup-worker || pm2 start server.js --name wasup-worker
 sleep 4
 TEST_BODY=$(curl -sf http://127.0.0.1:3000/test || true)
@@ -338,8 +342,11 @@ function buildCloudInit(input: {
     'npm install -g pm2',
     `mkdir -p /opt/wasup-${installId}`,
     `git clone --depth 1 --branch ${shellQuote(input.workerGitRef)} ${shellQuote(input.workerGitRepo)} /opt/wasup-${installId}`,
-    `cd /opt/wasup-${installId}/app && npm ci --omit=dev --legacy-peer-deps || npm install --omit=dev --legacy-peer-deps`,
+    `cd /opt/wasup-${installId}/app && (npm ci --omit=dev --legacy-peer-deps || npm install --omit=dev --legacy-peer-deps)`,
+    `cd /opt/wasup-${installId}/app && npm install baileys@7.0.0-rc13 --save-exact --omit=dev --legacy-peer-deps --ignore-scripts && node scripts/patch-baileys.js || true`,
     `cp /opt/wasup-worker.env /opt/wasup-${installId}/app/.env`,
+    // Prefer reply-first; operators can set WASUP_BLOCK_COLD_WITHOUT_TOKEN=true after warm traffic is proven.
+    `grep -q '^WASUP_BLOCK_COLD_WITHOUT_TOKEN=' /opt/wasup-${installId}/app/.env || echo 'WASUP_BLOCK_COLD_WITHOUT_TOKEN=false' >> /opt/wasup-${installId}/app/.env`,
     `pm2 start /opt/wasup-${installId}/app/server.js --name wasup-worker --cwd /opt/wasup-${installId}/app`,
     'pm2 startup systemd -u root --hp /root || true',
     'pm2 save',

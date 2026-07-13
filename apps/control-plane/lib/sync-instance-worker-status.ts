@@ -1,6 +1,11 @@
 import { getWorkerInstance } from './worker-client';
 import { getWorkerInstanceId } from './worker-instance-id';
-import { mapWorkerInstanceStatus, workerPhoneFromResult, workerStatusFromResult } from './worker-instance-state';
+import {
+  mapWorkerInstanceStatus,
+  workerPhoneFromResult,
+  workerReachoutTimeLockFromResult,
+  workerStatusFromResult
+} from './worker-instance-state';
 
 type SupabaseAdmin = {
   from: (table: string) => any;
@@ -87,6 +92,7 @@ export async function syncInstanceFromWorker(
   const workerStatus = workerStatusFromResult(worker.result);
   const status = mapWorkerInstanceStatus(workerStatus);
   const phone = status === 'connected' ? workerPhoneFromResult(worker.result) : null;
+  const reachoutTimeLock = workerReachoutTimeLockFromResult(worker.result);
   const syncedAt = new Date().toISOString();
   const updatePayload: Record<string, unknown> = {
     status,
@@ -99,7 +105,15 @@ export async function syncInstanceFromWorker(
         status: workerStatus,
         syncedAt,
         phoneSynced: Boolean(phone)
-      }
+      },
+      ...(reachoutTimeLock
+        ? {
+            reachoutTimeLock: {
+              ...reachoutTimeLock,
+              syncedAt
+            }
+          }
+        : {})
     },
     updated_at: syncedAt
   };

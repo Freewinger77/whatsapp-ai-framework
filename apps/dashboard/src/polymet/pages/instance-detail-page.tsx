@@ -38,9 +38,11 @@ import { instanceGradient } from "@/polymet/data/instance-colors";
 import { InlineProvisioningSpinner, useWorkspaceState } from "@/polymet/hooks/use-workspace-state";
 import { InstanceDetailSkeleton } from "@/polymet/components/page-skeletons";
 import { createAuthenticatedPairingClient, InstanceConnectPanel } from "@/polymet/components/instance-connect-panel";
-import { connectInstance, createInstancePairingLink, deleteInstance, getDeepDive, getInstance, getInstanceAntibanV2, resolveAntibanLimitDay, resolveAntibanLimitHour, updateInstanceAntibanV2, updateInstanceSettings } from "@/polymet/lib/control-plane-api";
+import { ReachoutTimelockBanner } from "@/polymet/components/reachout-timelock-banner";
+import { connectInstance, createInstancePairingLink, deleteInstance, getDeepDive, getInstance, getInstanceAntibanV2, getInstanceReachoutTimelock, resolveAntibanLimitDay, resolveAntibanLimitHour, updateInstanceAntibanV2, updateInstanceSettings } from "@/polymet/lib/control-plane-api";
 import { copyWithToast } from "@/polymet/lib/copy-to-clipboard";
 import { cn } from "@/lib/utils";
+import type { ReachoutTimeLock } from "@/polymet/data/dashboard-data";
 
 type MainSettingsCard = "webhook" | "api-credentials" | "handoff" | "profile" | "behaviour" | "anti-ban" | "proxy";
 
@@ -125,12 +127,13 @@ export function InstanceDetailPage() {
   const [antibanLoading, setAntibanLoading] = useState(false);
   const [antibanSaving, setAntibanSaving] = useState(false);
   const [antibanError, setAntibanError] = useState("");
+  const [reachoutTimeLock, setReachoutTimeLock] = useState<ReachoutTimeLock | null>(inst.reachoutTimeLock ?? null);
   const [maxPerHour, setMaxPerHour] = useState("200");
   const [maxPerDay, setMaxPerDay] = useState("1500");
   const [warmupEnabled, setWarmupEnabled] = useState(true);
 
   const statusLabel = inst.status === "provisioning" ? "provisioning" : inst.status === "connecting" ? "connecting" : connected ? "active" : "disconnected";
-  const health = getInstanceHealth(connected, inst.status, inst.qualityScore);
+  const health = getInstanceHealth(connected, inst.status, inst.qualityScore, reachoutTimeLock?.isActive);
 
   const activityItems = useMemo(
     () =>
@@ -231,6 +234,32 @@ export function InstanceDetailPage() {
       window.clearInterval(timer);
     };
   }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    const loadReachout = () => {
+      getInstanceReachoutTimelock(id)
+        .then((payload) => {
+          if (cancelled) return;
+          setReachoutTimeLock(payload.reachoutTimeLock);
+        })
+        .catch(() => {
+          /* keep cached / metadata value */
+        });
+    };
+    setReachoutTimeLock(inst.reachoutTimeLock ?? null);
+    loadReachout();
+    const timer = window.setInterval(loadReachout, 20_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [id]);
+
+  useEffect(() => {
+    if (inst.reachoutTimeLock) setReachoutTimeLock(inst.reachoutTimeLock);
+  }, [inst.reachoutTimeLock]);
 
   useEffect(() => {
     if (!id) return;
@@ -458,6 +487,7 @@ export function InstanceDetailPage() {
           <p className="mt-1">{inst.lastError}</p>
         </div>
       )}
+      <ReachoutTimelockBanner lock={reachoutTimeLock} />
       {deleteError && (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
           <div className="flex items-center gap-2 font-semibold">
@@ -1757,7 +1787,12 @@ function DeleteInstanceSheet({
 }
 
 
-function getInstanceHealth(connected: boolean, status: string, qualityScore: string) {
+function getInstanceHealth(
+  connected: boolean,
+  status: string,
+  qualityScore: string,
+  reachoutRestricted = false,
+) {
   if (status === "connecting") {
     return { label: "Pairing pending", className: "text-amber-600 dark:text-amber-300" };
   }
@@ -1766,8 +1801,8 @@ function getInstanceHealth(connected: boolean, status: string, qualityScore: str
     return { label: "Critical health", className: "text-red-600 dark:text-red-400" };
   }
 
-  if (status === "quality-warning" || /warning|low/i.test(qualityScore)) {
-    return { label: "Low health", className: "text-amber-600 dark:text-amber-400" };
+  if (reachoutRestricted || status === "quality-warning" || /warning|low/i.test(qualityScore)) {
+    return { label: "Restricted", className: "text-amber-600 dark:text-amber-400" };
   }
 
   return { label: "Healthy", className: "text-emerald-600 dark:text-emerald-400" };

@@ -706,6 +706,56 @@ export async function getInstanceAntibanV2(instanceId: string) {
   return normalizeAntibanV2Status(payload.antibanV2);
 }
 
+export type ReachoutTimelockResponse = {
+  success: boolean;
+  reachoutTimeLock: import("@/polymet/data/dashboard-data").ReachoutTimeLock | null;
+  newChatMessageCap?: unknown;
+  privacyTokenCount?: number | null;
+  stale?: boolean;
+  warning?: string;
+};
+
+export function normalizeReachoutTimeLock(raw: unknown): import("@/polymet/data/dashboard-data").ReachoutTimeLock | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const ends =
+    typeof record.timeEnforcementEnds === "string"
+      ? record.timeEnforcementEnds
+      : typeof record.time_enforcement_ends === "string"
+        ? record.time_enforcement_ends
+        : null;
+  return {
+    isActive: Boolean(record.isActive ?? record.is_active),
+    timeEnforcementEnds: ends,
+    enforcementType: String(record.enforcementType ?? record.enforcement_type ?? "DEFAULT"),
+    checkedAt:
+      typeof record.checkedAt === "string"
+        ? record.checkedAt
+        : typeof record.checked_at === "string"
+          ? record.checked_at
+          : null,
+    source: typeof record.source === "string" ? record.source : null,
+    privacyTokenCount:
+      typeof record.privacyTokenCount === "number"
+        ? record.privacyTokenCount
+        : typeof record.privacy_token_count === "number"
+          ? record.privacy_token_count
+          : null,
+    syncedAt: typeof record.syncedAt === "string" ? record.syncedAt : null,
+  };
+}
+
+export async function getInstanceReachoutTimelock(instanceId: string) {
+  const payload = await api<ReachoutTimelockResponse>(
+    `/api/v3/instances/${encodeURIComponent(instanceId)}/reachout-timelock`,
+    { cache: "no-store" },
+  );
+  return {
+    ...payload,
+    reachoutTimeLock: normalizeReachoutTimeLock(payload.reachoutTimeLock),
+  };
+}
+
 export async function updateInstanceAntibanV2(
   instanceId: string,
   body: {
@@ -765,6 +815,7 @@ function mapInstance(instance: ControlPlaneInstance): Instance {
   const lastError = typeof instance.metadata?.last_error === "string" ? instance.metadata.last_error : undefined;
   const status = mapStatus(instance.status);
   const messagesToday = typeof instance.messages_today === "number" ? instance.messages_today : 0;
+  const reachoutTimeLock = normalizeReachoutTimeLock(instance.metadata?.reachoutTimeLock);
   return {
     id: instance.id,
     name: instance.name,
@@ -776,9 +827,10 @@ function mapInstance(instance: ControlPlaneInstance): Instance {
     proxy: proxy ? `${proxy.region_code}-${proxy.host}:${proxy.port}` : "No proxy assigned",
     messagesToday: formatCount(messagesToday),
     uptime: instance.status === "connected" ? "Live" : instance.status === "disconnected" ? "Disconnected" : "Pending",
-    qualityScore: instance.status === "error" ? "Critical" : "Healthy",
+    qualityScore: instance.status === "error" ? "Critical" : reachoutTimeLock?.isActive ? "Warning" : "Healthy",
     provisioningState: instance.provisioning_state,
     lastError,
+    reachoutTimeLock,
   };
 }
 

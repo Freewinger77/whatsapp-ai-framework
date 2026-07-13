@@ -184,7 +184,7 @@ function isPublicDashboardRead(req) {
         path === '/dashboard-config' ||
         path === '/instances' ||
         /^\/instances\/[^/]+$/.test(path) ||
-        /^\/instances\/[^/]+\/(qr|connection|logs)$/.test(path)
+        /^\/instances\/[^/]+\/(qr|connection|logs|reachout-timelock)$/.test(path)
     );
 }
 
@@ -227,6 +227,9 @@ async function authenticateAPI(req, res, next) {
 }
 
 function getCredentialFromRequest(req) {
+    const workerSecret = String(req.headers['x-wasup-worker-secret'] || '').trim();
+    if (workerSecret) return workerSecret;
+
     const apiKey = String(req.headers['x-api-key'] || '').trim();
     if (apiKey) return apiKey;
 
@@ -791,6 +794,10 @@ function buildSendOptions(body = {}) {
     if (body.delayEnabled !== undefined) options.delayEnabled = body.delayEnabled;
     if (body.contactName !== undefined) options.contactName = body.contactName;
     if (body.skipContactSave !== undefined) options.skipContactSave = body.skipContactSave;
+    if (body.allowColdWithoutToken !== undefined) options.allowColdWithoutToken = body.allowColdWithoutToken;
+    if (body.blockColdWithoutToken !== undefined) options.blockColdWithoutToken = body.blockColdWithoutToken;
+    if (body.forceDespiteTimelock !== undefined) options.forceDespiteTimelock = body.forceDespiteTimelock;
+    if (body.skipPrivacyToken !== undefined) options.skipPrivacyToken = body.skipPrivacyToken;
     return options;
 }
 
@@ -879,6 +886,23 @@ async function executeInstanceSend(instanceId, body = {}, { interactiveFocus = f
         payload.textOrParams,
         buildSendOptions(body)
     );
+
+    if (result && result.sent === false) {
+        const is463 = String(result.ackError || '') === '463' || /463|restricted|tctoken/i.test(String(result.reason || ''));
+        return {
+            status: is463 ? 403 : 422,
+            body: {
+                success: false,
+                error: result.reason || 'Message rejected by WhatsApp',
+                messageType: payload.messageType || 'text',
+                delivery: payload.delivery,
+                message_id: result.key?.id || null,
+                message_status: 'failed',
+                doNotRetry: result.doNotRetry === true || is463,
+                result
+            }
+        };
+    }
 
     return {
         status: 200,
@@ -1892,8 +1916,41 @@ app.get('/api/instances/:id/connection', (req, res) => {
             connectedAt: status.connectedAt || null,
             uptime,
             pairingCode: status.pairingCode || null,
-            qrCode: status.qrCode || null
+            qrCode: status.qrCode || null,
+            reachoutTimeLock: status.reachoutTimeLock || null,
+            newChatMessageCap: status.newChatMessageCap || null,
+            privacyTokenCount: status.privacyTokenCount ?? 0,
         });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/instances/:id/reachout-timelock
+ * Probe WhatsApp MEX for reachout timelock + new-chat cap (read-only; does not send).
+ */
+app.get('/api/instances/:id/reachout-timelock', async (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        if (instance.status !== 'connected') {
+            return res.status(409).json({
+                error: 'Instance not connected',
+                reachoutTimeLock: instance.reachoutTimeLock || null,
+                newChatMessageCap: instance.newChatMessageCap || null,
+                privacyTokenCount: typeof instance._countStoredPrivacyTokens === 'function'
+                    ? instance._countStoredPrivacyTokens()
+                    : 0,
+                privacyTokenHardening: typeof instance.getPrivacyTokenHardeningStatus === 'function'
+                    ? instance.getPrivacyTokenHardeningStatus()
+                    : null,
+            });
+        }
+        const diagnostics = await instance.refreshReachoutDiagnostics('manual');
+        res.json({ success: true, ...diagnostics });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

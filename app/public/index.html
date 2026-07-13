@@ -610,6 +610,32 @@
             border-color: var(--zinc-600);
         }
 
+        .reachout-timelock-banner {
+            display: none;
+            margin: 12px 0 4px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            border: 1px solid rgba(245, 158, 11, 0.45);
+            background: rgba(245, 158, 11, 0.12);
+            color: #fbbf24;
+            font-size: 12px;
+            line-height: 1.45;
+        }
+        .reachout-timelock-banner.visible {
+            display: block;
+        }
+        .reachout-timelock-banner strong {
+            display: block;
+            font-size: 13px;
+            margin-bottom: 4px;
+            color: #fcd34d;
+        }
+        .reachout-timelock-banner .rtl-countdown {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+
         .info-list {
             display: flex;
             flex-direction: column;
@@ -4812,6 +4838,7 @@
                                     Disconnected
                                 </span>
                             </div>
+                            <div id="reachout-timelock-banner" class="reachout-timelock-banner" style="display:none;" hidden></div>
                             <div class="info-list">
                     <div class="info-item">
                         <span class="info-label">Phone Number</span>
@@ -5147,6 +5174,7 @@
                 qrPlaceholder: document.getElementById('qr-placeholder'),
                 qrCode: document.getElementById('qr-code'),
             statusBadge: document.getElementById('status-badge'),
+            reachoutBanner: document.getElementById('reachout-timelock-banner'),
                 infoPhone: document.getElementById('info-phone'),
                 infoConnected: document.getElementById('info-connected'),
             infoMessages: document.getElementById('info-messages'),
@@ -5625,12 +5653,96 @@
             el.instanceDetail.classList.add('visible');
             renderInstanceDetail(instance);
             loadLogs(id);
+            startReachoutTimelockPolling(id);
 
             if (isMobileViewport()) {
                 updateMobileSectionState('instances', false);
             } else {
                 syncMobileSidebar();
             }
+        }
+
+        let reachoutPollTimer = null;
+        let reachoutCountdownTimer = null;
+        let reachoutLockState = null;
+
+        function humanizeReachoutType(type) {
+            const map = {
+                DEFAULT: 'Account reach-out limit',
+                WEB_COMPANION_ONLY: 'Web companions only',
+                RESTRICT_ALL_COMPANIONS: 'All linked companions',
+                BULK_MESSAGING: 'Bulk messaging',
+                BIZ_QUALITY: 'Business quality',
+            };
+            const raw = String(type || 'DEFAULT');
+            return map[raw] || raw.replace(/_/g, ' ');
+        }
+
+        function formatReachoutCountdown(endsAt) {
+            if (!endsAt) return 'active (no expiry reported)';
+            const ends = new Date(endsAt).getTime();
+            if (Number.isNaN(ends)) return 'active';
+            const remaining = ends - Date.now();
+            if (remaining <= 0) return 'Expired — refresh to recheck';
+            const totalSec = Math.floor(remaining / 1000);
+            const days = Math.floor(totalSec / 86400);
+            const hours = Math.floor((totalSec % 86400) / 3600);
+            const minutes = Math.floor((totalSec % 3600) / 60);
+            const seconds = totalSec % 60;
+            const pad = (n) => String(n).padStart(2, '0');
+            return days > 0
+                ? `${days}d ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`
+                : `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+        }
+
+        function renderReachoutTimelockBanner(instance) {
+            if (!el.reachoutBanner) return;
+            const lock = (instance && instance.reachoutTimeLock) || reachoutLockState;
+            if (!lock || !lock.isActive) {
+                el.reachoutBanner.classList.remove('visible');
+                el.reachoutBanner.hidden = true;
+                el.reachoutBanner.style.display = 'none';
+                el.reachoutBanner.innerHTML = '';
+                return;
+            }
+            const ends = lock.timeEnforcementEnds || lock.time_enforcement_ends || null;
+            const type = lock.enforcementType || lock.enforcement_type || 'DEFAULT';
+            el.reachoutBanner.hidden = false;
+            el.reachoutBanner.style.display = 'block';
+            el.reachoutBanner.classList.add('visible');
+            el.reachoutBanner.innerHTML = `
+                <strong>Companion reach-out restricted</strong>
+                <div>${humanizeReachoutType(type)} · <span class="rtl-countdown">${formatReachoutCountdown(ends)}</span></div>
+                ${ends ? `<div style="opacity:0.8;margin-top:4px;">Until ${new Date(ends).toLocaleString()}</div>` : ''}
+            `;
+        }
+
+        function startReachoutTimelockPolling(instanceId) {
+            if (reachoutPollTimer) clearInterval(reachoutPollTimer);
+            if (reachoutCountdownTimer) clearInterval(reachoutCountdownTimer);
+            reachoutLockState = null;
+            const tick = async () => {
+                if (!instanceId || selectedInstanceId !== instanceId) return;
+                try {
+                    const data = await apiCall(`/instances/${instanceId}/reachout-timelock`);
+                    reachoutLockState = data.reachoutTimeLock || null;
+                    const idx = instances.findIndex(i => i.id === instanceId);
+                    if (idx >= 0) instances[idx].reachoutTimeLock = reachoutLockState;
+                    if (selectedInstanceId === instanceId) {
+                        renderReachoutTimelockBanner(instances[idx] || { reachoutTimeLock: reachoutLockState });
+                    }
+                } catch (_) {
+                    const cached = instances.find(i => i.id === instanceId);
+                    renderReachoutTimelockBanner(cached);
+                }
+            };
+            tick();
+            reachoutPollTimer = setInterval(tick, 20000);
+            reachoutCountdownTimer = setInterval(() => {
+                if (selectedInstanceId !== instanceId) return;
+                const cached = instances.find(i => i.id === instanceId);
+                renderReachoutTimelockBanner(cached || { reachoutTimeLock: reachoutLockState });
+            }, 1000);
         }
 
         function renderInstanceDetail(instance) {
@@ -5661,6 +5773,8 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></svg>
                 ${statusText}
             `;
+
+            renderReachoutTimelockBanner(instance);
 
             // Phone info
             const phone = instance.connectedPhone || '';

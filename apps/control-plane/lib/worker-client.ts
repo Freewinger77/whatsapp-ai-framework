@@ -289,6 +289,14 @@ export async function getWorkerAntibanV2(input: WorkerRequestInput) {
   return parseWorkerResponse(response, 'Worker antiban v2 status failed');
 }
 
+export async function getWorkerReachoutTimelock(input: WorkerRequestInput) {
+  const response = await requestWorker(
+    input,
+    `/api/instances/${encodeURIComponent(input.instanceId)}/reachout-timelock`
+  );
+  return parseWorkerResponse(response, 'Worker reachout timelock probe failed');
+}
+
 export async function updateWorkerAntibanV2(input: WorkerRequestInput, body: Record<string, unknown>) {
   const response = await requestWorker(
     input,

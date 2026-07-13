@@ -41,6 +41,14 @@ import {
     rampPresence,
     DEFAULT_V2_MODULES,
 } from './antiban-v2.js';
+import {
+    CONTACT_463_CIRCUIT_MS,
+    circuitKeyForJid,
+    createPrivacyTokenMetrics,
+    lookupPrivacyToken,
+    shouldBlockColdWithoutToken,
+    summarizeAuthTokenFiles,
+} from './privacy-token-hardening.js';
 
 const { sendButtons, sendInteractiveMessage } = baileysHelper;
 import { fileURLToPath } from 'url';
@@ -234,7 +242,7 @@ function normalizeBehaviorSettings(settings = {}, previous = {}) {
     const profileDefaults = {
         [BEHAVIOR_PROFILES.BOT_NATIVE]: {
             typingSimulation: true,
-            delayEnabled: true,
+            delayEnabled: false,
             phoneNotificationsEnabled: false,
             notificationGraceMs: 0,
         },
@@ -390,6 +398,17 @@ class WhatsAppInstance {
         // Message store - For getMessage function (retry handling)
         this.messageStore = new Map();
         this.maxStoredMessages = 1000;
+
+        // Outbound ACK errors (e.g. WA 463 account restriction) keyed by message id
+        this.outboundAckErrors = new Map();
+        this.outboundAckStatus = new Map();
+        // WA MEX reachout timelock / new-chat cap (Baileys connection.update)
+        this.reachoutTimeLock = null;
+        this.newChatMessageCap = null;
+        this._lastReachoutFetchAt = 0;
+        // Fleet metrics + per-contact 463 circuit (never retry cold to a 463'd contact)
+        this.privacyTokenMetrics = createPrivacyTokenMetrics();
+        this.contact463Circuit = new Map(); // circuitKey -> untilMs
         
         // Presence cycling interval (for stealth mode)
         this.presenceCycleInterval = null;
@@ -776,7 +795,11 @@ class WhatsAppInstance {
                 this._activeProxyAt = new Date().toISOString();
             }
 
-            const isInitialRegistration = !state.creds.registered;
+            // Baileys often leaves creds.registered=false after a successful QR link.
+            // me.id is the reliable "already paired" signal — same as getAuthStateSummary().
+            // Treating paired reconnects as "initial registration" disables syncFullHistory,
+            // so tctokens from chats on other linked devices never arrive → WA NACK 463.
+            const isInitialRegistration = !state.creds.registered && !state.creds.me?.id;
 
             // ─── Anti-ban v2 integration ──────────────────────────────────
             // 1) Lazy-init the v2 config from legacy on first connect
@@ -959,6 +982,9 @@ class WhatsAppInstance {
                     return;
                 }
                 const { connection, qr, lastDisconnect } = update;
+                if (update.reachoutTimeLock) {
+                    this._applyReachoutTimeLock(update.reachoutTimeLock, 'connection.update');
+                }
                 const updateSummary = summarizeConnectionUpdate(update);
                 this.lastPairingUpdateAt = new Date().toISOString();
 
@@ -1160,6 +1186,11 @@ class WhatsAppInstance {
                     this._emitStatusChange();
                     this._log(`Connected as ${this.connectedPhone || 'unknown phone'}`, 'success');
 
+                    // Probe WA reachout timelock / new-chat cap (read-only MEX). Critical for 463 diagnosis.
+                    setTimeout(() => {
+                        this.refreshReachoutDiagnostics('connect').catch(() => {});
+                    }, 2500);
+
                     const phoneNotifsOn = this._preservesPhoneNotifications();
 
                     if (phoneNotifsOn) {
@@ -1204,6 +1235,66 @@ class WhatsAppInstance {
                     const now = Math.floor(Date.now() / 1000);
                     if (now - msgTimestamp > 60) continue;
                     await this._handleMessage(msg);
+                }
+            });
+
+            // Capture WA server NACKs (463) and positive status ACKs (SERVER_ACK+).
+            this.socket.ev.on('messages.update', (updates) => {
+                for (const { key, update } of updates || []) {
+                    const id = key?.id;
+                    if (!id || !update) continue;
+                    const stub = update.messageStubParameters;
+                    const errCode = Array.isArray(stub) ? stub[0] : null;
+                    if (typeof update.status === 'number' && update.status >= 2) {
+                        this.outboundAckStatus.set(id, {
+                            status: update.status,
+                            at: new Date().toISOString(),
+                            remoteJid: key.remoteJid || null,
+                        });
+                        if (this.outboundAckStatus.size > 500) {
+                            const first = this.outboundAckStatus.keys().next().value;
+                            this.outboundAckStatus.delete(first);
+                        }
+                    }
+                    if (update.status === 0 || errCode === '463' || errCode === 463 || String(errCode) === '463') {
+                        this.outboundAckErrors.set(id, {
+                            code: String(errCode || 'error'),
+                            at: new Date().toISOString(),
+                            remoteJid: key.remoteJid || null,
+                        });
+                        if (this.outboundAckErrors.size > 500) {
+                            const first = this.outboundAckErrors.keys().next().value;
+                            this.outboundAckErrors.delete(first);
+                        }
+                        this._log(
+                            `Outbound NACK ${id}: WhatsApp rejected send (${errCode || 'error'})` +
+                            (String(errCode) === '463' ? ' — account restricted or missing tctoken for this contact' : ''),
+                            'error'
+                        );
+                        if (String(errCode) === '463') {
+                            this._tripContact463Circuit(key.remoteJid, 'messages.update');
+                            this.refreshReachoutDiagnostics('463').catch(() => {});
+                        }
+                    }
+                }
+            });
+
+            // Observability only — Baileys rc13 already harvests chat.tcToken into auth
+            // keys before emitting this event (see process-message storeTcTokensFromHistorySync).
+            this.socket.ev.on('messaging-history.set', ({ chats } = {}) => {
+                const list = Array.isArray(chats) ? chats : [];
+                let withToken = 0;
+                for (const chat of list) {
+                    if (chat?.tcToken?.length) withToken += 1;
+                }
+                this.privacyTokenMetrics.historyHarvestEvents += 1;
+                this.privacyTokenMetrics.historyChatsWithToken += withToken;
+                this.privacyTokenMetrics.lastHistoryHarvestAt = new Date().toISOString();
+                if (list.length || withToken) {
+                    this._log(
+                        `History sync observed: ${list.length} chats, ${withToken} with tcToken (Baileys persists tokens to auth)`,
+                        'info'
+                    );
                 }
             });
             
@@ -1721,7 +1812,7 @@ class WhatsAppInstance {
         // Normalize phone number - remove +, spaces, dashes, etc.
         const normalizedTo = to.includes('@') ? to : to.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
         
-        // Prefer LID JID when we have a PN↔LID mapping (Baileys v7 / WA multi-device).
+        // Prefer PN JID for 1:1 (tctoken attaches to PN when lidTrustedTokenIssueToLid=false).
         const jid = await this._resolveOutboundJid(normalizedTo);
         
         // Check rate limits (skip when anti-ban v2 is explicitly turned off)
@@ -1732,9 +1823,33 @@ class WhatsAppInstance {
             }
         }
         
-        // Anti-ban: Save contact before sending (if not already saved)
+        // Anti-ban: Save contact before sending (Unknown User {last4})
         if (!options.skipContactSave) {
             await this._saveContactBeforeMessage(jid, options.contactName);
+        }
+
+        // Hard stop when WA has companion reachout lock active — retries worsen budget.
+        if (this.reachoutTimeLock?.isActive && !options.forceDespiteTimelock) {
+            const until = this.reachoutTimeLock.timeEnforcementEnds || 'unknown';
+            const type = this.reachoutTimeLock.enforcementType || 'DEFAULT';
+            throw new Error(
+                `Reachout timelock active (${type}) until ${until} — companion cold sends are blocked by WhatsApp`
+            );
+        }
+
+        // Per-contact 463 circuit — never retry a contact that just NACK'd (extends lock).
+        const circuitKey = circuitKeyForJid(jid);
+        const circuitUntil = circuitKey ? this.contact463Circuit.get(circuitKey) : null;
+        if (circuitUntil && Date.now() < circuitUntil && !options.forceDespiteTimelock) {
+            throw new Error(
+                `Contact ${circuitKey} is on a 463 circuit until ${new Date(circuitUntil).toISOString()} — do not retry cold sends`
+            );
+        }
+
+        // Warm/cold classification via persisted tctoken (Baileys attaches on send when present).
+        let tokenProbe = null;
+        if (!options.skipPrivacyToken) {
+            tokenProbe = await this._ensurePrivacyTokenBeforeSend(jid, options);
         }
         
         // Build the outbound message object
@@ -1789,7 +1904,7 @@ class WhatsAppInstance {
             try {
                 const sentMsg = await this.socket.sendMessage(jid, messageObj);
                 this.antiBanManager.recordMessage(jid); // also tick legacy stats
-                result = { sent: true, key: sentMsg?.key, via: 'antiban-v2' };
+                result = { sent: true, key: sentMsg?.key, status: sentMsg?.status, via: 'antiban-v2' };
             } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
                 if (isAntibanTransportGuardMessage(errMsg)) {
@@ -1801,6 +1916,12 @@ class WhatsAppInstance {
         } else {
             // Legacy path (v2 disabled or not yet built)
             result = await safeSendMessage(this.socket, jid, messageObj, '', this.antiBanManager, behaviorOptions);
+        }
+
+        // Baileys resolves sendMessage before WA server ACK. Error 463 (account
+        // restricted / missing tctoken) arrives as messages.update shortly after.
+        if (result?.sent && result?.key?.id) {
+            result = await this._awaitOutboundServerAck(result);
         }
         
         if (result.sent) {
@@ -1826,7 +1947,75 @@ class WhatsAppInstance {
             result = { ...result, reason: sanitizeClientReason(result.reason) };
         }
 
+        if (tokenProbe) {
+            result = {
+                ...result,
+                privacyToken: {
+                    present: !!tokenProbe.present,
+                    expired: !!tokenProbe.expired,
+                    cold: !!tokenProbe.cold,
+                    storageJid: tokenProbe.storageJid || null,
+                },
+            };
+        }
+
         return result;
+    }
+
+    /**
+     * Wait for a real WA server outcome after Baileys returns from sendMessage.
+     * Absence of 463 is NOT success — ghost sends stay PENDING (status 1) forever.
+     * Require SERVER_ACK+ (status >= 2) or fail clearly.
+     */
+    async _awaitOutboundServerAck(result, waitMs = 8000) {
+        const id = result?.key?.id;
+        if (!id) return result;
+
+        const deadline = Date.now() + waitMs;
+        while (Date.now() < deadline) {
+            const nack = this.outboundAckErrors.get(id);
+            if (nack) {
+                this.outboundAckErrors.delete(id);
+                this.outboundAckStatus.delete(id);
+                const code = String(nack.code || 'error');
+                const reason = code === '463'
+                    ? 'WhatsApp 463: missing privacy token (tctoken) for this contact — new-chat gate (other linked devices may still work for established chats)'
+                    : `WhatsApp rejected message (ack error ${code})`;
+                if (code === '463') {
+                    this._tripContact463Circuit(nack.remoteJid || result?.key?.remoteJid, 'server-nack');
+                }
+                const out = {
+                    ...result,
+                    sent: false,
+                    status: 0,
+                    reason,
+                    ackError: code,
+                    doNotRetry: code === '463',
+                    via: result.via || 'server-nack'
+                };
+                if (code === '463' && this.reachoutTimeLock) {
+                    out.reachoutTimeLock = this.reachoutTimeLock;
+                }
+                return out;
+            }
+            const ack = this.outboundAckStatus.get(id);
+            if (ack && ack.status >= 2) {
+                this.outboundAckStatus.delete(id);
+                return {
+                    ...result,
+                    sent: true,
+                    status: ack.status,
+                    via: result.via || 'server-ack'
+                };
+            }
+            await delay(100);
+        }
+        return {
+            ...result,
+            sent: false,
+            reason: 'WhatsApp did not acknowledge the message (stuck PENDING — not delivered)',
+            via: 'server-ack-timeout'
+        };
     }
     
     /**
@@ -1877,47 +2066,26 @@ class WhatsAppInstance {
 
     /**
      * Resolve the best outbound JID for sendMessage.
-     * When a PN→LID mapping exists, prefer @lid — PN-only sends can ACK without
-     * delivering on newer WhatsApp builds.
+     * Prefer PN (@s.whatsapp.net) for 1:1 sends. WA issues privacy tokens (tctoken)
+     * to PN when lidTrustedTokenIssueToLid=false (current server default). Sending
+     * to @lid first caused 463 NACKs on fresh contacts even when other linked
+     * devices on the same phone could message fine.
      * @param {string} to - Phone number or JID
      * @returns {Promise<string>}
      */
     async _resolveOutboundJid(to) {
         if (to.includes('@g.us')) return to;
-        if (to.includes('@lid')) return to;
         if (to.includes('@s.whatsapp.net')) return to;
 
+        // Explicit @lid input: map back to PN when we can
+        if (to.includes('@lid')) {
+            const lidId = to.replace('@lid', '').split(':')[0];
+            const pn = this.lidCache.get(lidId);
+            if (pn) return `${pn}@s.whatsapp.net`;
+            return to;
+        }
+
         const pn = to.replace(/^\+/, '').replace(/[\s\-\(\)]/g, '');
-
-        for (const [lid, cachedPn] of this.lidCache.entries()) {
-            if (cachedPn === pn) {
-                return `${lid}@lid`;
-            }
-        }
-
-        const mappingFile = path.join(this.authFolder, `lid-mapping-${pn}.json`);
-        if (fsSync.existsSync(mappingFile)) {
-            try {
-                const lid = JSON.parse(fsSync.readFileSync(mappingFile, 'utf8'));
-                const cleanLid = String(lid || '').replace('@lid', '').replace('@s.whatsapp.net', '').trim();
-                if (cleanLid && cleanLid !== pn) {
-                    await this._storeLidMapping(cleanLid, pn);
-                    return `${cleanLid}@lid`;
-                }
-            } catch (_) { /* fall through to PN */ }
-        }
-
-        if (this.socket?.signalRepository?.lidMapping?.getLIDForPN) {
-            try {
-                const lid = await this.socket.signalRepository.lidMapping.getLIDForPN(pn);
-                const cleanLid = String(lid || '').replace('@lid', '').replace('@s.whatsapp.net', '').trim();
-                if (cleanLid && cleanLid !== pn) {
-                    await this._storeLidMapping(cleanLid, pn);
-                    return `${cleanLid}@lid`;
-                }
-            } catch (_) { /* fall through to PN */ }
-        }
-
         return `${pn}@s.whatsapp.net`;
     }
     
@@ -1968,26 +2136,35 @@ class WhatsAppInstance {
      * @returns {boolean} - True if saved successfully
      */
     async _saveContactBeforeMessage(jid, contactName = null) {
-        // Skip if we've already saved this contact
-        if (this.savedContacts.has(jid)) {
-            return true;
-        }
-        
         // Skip group chats
         if (jid.includes('@g.us')) {
             return true;
         }
+
+        // Always address-book against PN, named "Unknown User {last4}" like wasup2.
+        let contactJid = jid;
+        let phoneNumber = jid.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0];
+        if (jid.includes('@lid')) {
+            const mappedPn = this.lidCache.get(phoneNumber);
+            if (!mappedPn) {
+                // Don't poison the address book with raw LID digits
+                return false;
+            }
+            phoneNumber = mappedPn;
+            contactJid = `${mappedPn}@s.whatsapp.net`;
+        }
+
+        if (this.savedContacts.has(contactJid) || this.savedContacts.has(jid)) {
+            return true;
+        }
         
         try {
-            // Extract phone number for the name if not provided
-            const phoneNumber = jid.replace('@s.whatsapp.net', '').replace('@lid', '');
-            const name = contactName || `Unknown User ${phoneNumber.slice(-4)}`;
+            const name = contactName || `Unknown User ${String(phoneNumber).slice(-4)}`;
             
             console.log(`[Instance ${this.id}] Saving contact before message: ${phoneNumber} as "${name}"`);
             
-            // Use addOrEditContact on the socket when available (bounded wait — never block sends)
             await Promise.race([
-                this.socket.addOrEditContact(jid, {
+                this.socket.addOrEditContact(contactJid, {
                     fullName: name,
                     firstName: name,
                     saveOnPrimaryAddressbook: true
@@ -1997,17 +2174,81 @@ class WhatsAppInstance {
                 })
             ]);
             
-            // Mark as saved
-            this.savedContacts.add(jid);
+            this.savedContacts.add(contactJid);
             await this._saveSavedContacts();
             
             this._log(`Saved new contact: ${phoneNumber} as "${name}"`, 'info');
             return true;
         } catch (error) {
             console.error(`[Instance ${this.id}] Could not save contact:`, error.message);
-            // Don't fail the message send if contact save fails
             return false;
         }
+    }
+
+    /**
+     * Ensure a usable privacy token exists before cold 1:1 send when possible.
+     * Baileys/WA Web: 463 when outbound 1:1 has no <tctoken>.
+     * Real tokens come from history sync or inbound privacy_token notifications
+     * (Baileys rc13 persists both into useMultiFileAuthState `tctoken` keys).
+     * Do NOT invent tokens; fake ones can skip the 463 NACK and still never deliver.
+     */
+    async _ensurePrivacyTokenBeforeSend(jid, options = {}) {
+        if (!jid || jid.includes('@g.us')) {
+            return { present: false, expired: false, cold: false };
+        }
+        const sock = this.rawSocket || this.socket;
+        const probe = await lookupPrivacyToken(sock, this.lidCache, jid);
+
+        if (probe.present && !probe.expired) {
+            this.privacyTokenMetrics.tokenHits += 1;
+            return { ...probe, cold: false };
+        }
+
+        if (probe.present && probe.expired) {
+            this.privacyTokenMetrics.tokenExpired += 1;
+        } else {
+            this.privacyTokenMetrics.tokenMisses += 1;
+        }
+
+        this.privacyTokenMetrics.coldSends += 1;
+        const pnUser = jid.split('@')[0].split(':')[0];
+        this._log(
+            `No usable privacy token for ${pnUser}` +
+            (probe.expired ? ' (expired ~28d window)' : ' yet') +
+            ' — classified as COLD send (history sync / inbound token required)',
+            'warning'
+        );
+
+        if (shouldBlockColdWithoutToken(options)) {
+            this.privacyTokenMetrics.coldBlocked += 1;
+            throw new Error(
+                `Cold send blocked: no usable tctoken for ${pnUser}. ` +
+                'Wait for history sync or an inbound message from this contact, or set allowColdWithoutToken=true / WASUP_BLOCK_COLD_WITHOUT_TOKEN=false'
+            );
+        }
+
+        return { ...probe, cold: true };
+    }
+
+    /**
+     * Trip a per-contact circuit after 463. Retries count as more reach-outs.
+     */
+    _tripContact463Circuit(jid, source = 'unknown') {
+        const key = circuitKeyForJid(jid);
+        this.privacyTokenMetrics.nack463 += 1;
+        this.privacyTokenMetrics.last463At = new Date().toISOString();
+        this.privacyTokenMetrics.last463Jid = key || jid || null;
+        if (!key) return;
+        const until = Date.now() + CONTACT_463_CIRCUIT_MS;
+        this.contact463Circuit.set(key, until);
+        if (this.contact463Circuit.size > 2000) {
+            const first = this.contact463Circuit.keys().next().value;
+            this.contact463Circuit.delete(first);
+        }
+        this._log(
+            `463 circuit OPEN for ${key} until ${new Date(until).toISOString()} (source=${source}) — do not retry`,
+            'error'
+        );
     }
     
     /**
@@ -2759,6 +3000,109 @@ class WhatsAppInstance {
     }
 
     /**
+     * Count persisted tctoken files (excludes Baileys __index sentinel).
+     */
+    _countStoredPrivacyTokens() {
+        return summarizeAuthTokenFiles(this.authFolder, fsSync).tctokenFiles;
+    }
+
+    getPrivacyTokenHardeningStatus() {
+        const authFiles = summarizeAuthTokenFiles(this.authFolder, fsSync);
+        const hits = this.privacyTokenMetrics.tokenHits || 0;
+        const misses = this.privacyTokenMetrics.tokenMisses || 0;
+        const expired = this.privacyTokenMetrics.tokenExpired || 0;
+        const attempts = hits + misses + expired;
+        return {
+            metrics: { ...this.privacyTokenMetrics },
+            authFiles,
+            tokenHitRate: attempts > 0 ? Number((hits / attempts).toFixed(4)) : null,
+            open463Circuits: this.contact463Circuit.size,
+            blockColdWithoutToken: shouldBlockColdWithoutToken({}),
+            baileysNote:
+                'Baileys 7.0.0-rc13 harvests history tcToken + privacy_token into useMultiFileAuthState; Wasup adds circuit breaker + metrics',
+        };
+    }
+
+    _applyReachoutTimeLock(lock, source = 'unknown') {
+        if (!lock || typeof lock !== 'object') return;
+        const normalized = {
+            isActive: !!lock.isActive,
+            timeEnforcementEnds: lock.timeEnforcementEnds
+                ? new Date(lock.timeEnforcementEnds).toISOString()
+                : null,
+            enforcementType: lock.enforcementType || 'DEFAULT',
+            checkedAt: new Date().toISOString(),
+            source,
+        };
+        this.reachoutTimeLock = normalized;
+        if (normalized.isActive) {
+            this._log(
+                `Reachout timelock ACTIVE until ${normalized.timeEnforcementEnds || 'unknown'} (${normalized.enforcementType})`,
+                'error'
+            );
+        } else {
+            this._log(`Reachout timelock inactive (${normalized.enforcementType})`, 'info');
+        }
+        this._emitStatusChange();
+    }
+
+    /**
+     * Read-only MEX probes: account reachout timelock + new-chat message cap.
+     * Does not send messages. Safe to call on connect / after 463.
+     */
+    async refreshReachoutDiagnostics(source = 'manual') {
+        const sock = this.rawSocket || this.socket;
+        if (!sock || this.status !== 'connected') {
+            return {
+                reachoutTimeLock: this.reachoutTimeLock,
+                newChatMessageCap: this.newChatMessageCap,
+                privacyTokenCount: this._countStoredPrivacyTokens(),
+                privacyTokenHardening: this.getPrivacyTokenHardeningStatus(),
+            };
+        }
+        const now = Date.now();
+        if (source !== 'manual' && now - this._lastReachoutFetchAt < 15_000) {
+            return {
+                reachoutTimeLock: this.reachoutTimeLock,
+                newChatMessageCap: this.newChatMessageCap,
+                privacyTokenCount: this._countStoredPrivacyTokens(),
+                privacyTokenHardening: this.getPrivacyTokenHardeningStatus(),
+            };
+        }
+        this._lastReachoutFetchAt = now;
+
+        if (typeof sock.fetchAccountReachoutTimelock === 'function') {
+            try {
+                const lock = await sock.fetchAccountReachoutTimelock();
+                this._applyReachoutTimeLock(lock, source);
+            } catch (err) {
+                this._log(`Reachout timelock probe failed: ${err.message}`, 'warning');
+            }
+        }
+
+        if (typeof sock.fetchNewChatMessageCap === 'function') {
+            try {
+                const cap = await sock.fetchNewChatMessageCap();
+                this.newChatMessageCap = {
+                    ...((cap && typeof cap === 'object') ? cap : { raw: cap }),
+                    checkedAt: new Date().toISOString(),
+                    source,
+                };
+                this._log(`New-chat message cap: ${JSON.stringify(this.newChatMessageCap)}`, 'info');
+            } catch (err) {
+                this._log(`New-chat cap probe failed: ${err.message}`, 'warning');
+            }
+        }
+
+        return {
+            reachoutTimeLock: this.reachoutTimeLock,
+            newChatMessageCap: this.newChatMessageCap,
+            privacyTokenCount: this._countStoredPrivacyTokens(),
+            privacyTokenHardening: this.getPrivacyTokenHardeningStatus(),
+        };
+    }
+
+    /**
      * Get instance status
      */
     getStatus() {
@@ -2792,6 +3136,10 @@ class WhatsAppInstance {
             antiBanSettings: this.antiBanSettings,
             antiBanHealth: this.antiBanManager.getHealth(),
             antibanV2: this.getAntibanV2Status(),
+            reachoutTimeLock: this.reachoutTimeLock,
+            newChatMessageCap: this.newChatMessageCap,
+            privacyTokenCount: this._countStoredPrivacyTokens(),
+            privacyTokenHardening: this.getPrivacyTokenHardeningStatus(),
             handoffSettings: this.handoffSettings,
             humanModeChats: this.getHandoffChats(),
             proxy: this.getProxyStatus(),
@@ -3572,7 +3920,7 @@ class InstanceManager {
             webhookSigningSecret: config.webhookSigningSecret || '',
             behaviorSettings: config.behaviorSettings,
             antiBanSettings: config.antiBanSettings,
-            antibanV2: config.antibanV2 || null,
+            antibanV2: config.antibanV2 || legacyToV2Config(config.antiBanSettings || {}),
             proxy: proxyConfig,
         });
         

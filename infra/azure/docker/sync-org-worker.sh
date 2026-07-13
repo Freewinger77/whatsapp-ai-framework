@@ -89,6 +89,9 @@ sudo rsync -a --delete \
 rm -rf "${STAGING}"
 cd "${REMOTE_APP_DIR}"
 sudo npm install --omit=dev --legacy-peer-deps --ignore-scripts
+sudo npm install baileys@7.0.0-rc13 --save-exact --omit=dev --legacy-peer-deps --ignore-scripts
+sudo node scripts/patch-baileys.js || true
+sudo node -e "console.log('baileys', require('./node_modules/baileys/package.json').version)"
 sudo pm2 reload "${PM2_NAME}" || sudo pm2 restart "${PM2_NAME}"
 sleep 3
 curl -sf http://127.0.0.1:3000/api/health | head -c 200 || true
