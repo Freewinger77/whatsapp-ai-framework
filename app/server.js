@@ -1057,10 +1057,13 @@ app.post('/api/send', async (req, res) => {
         // Check if error indicates a ban or connection issue
         const errorMsg = error.message.toLowerCase();
         let status = 'failed';
-        if (errorMsg.includes('rate') || errorMsg.includes('limit')) {
+        if (errorMsg.includes('reachout timelock') || errorMsg.includes('463 circuit')) {
+            status = 'reachout_timelock';
+        } else if (errorMsg.includes('rate') || errorMsg.includes('limit')) {
             status = 'rate_limited';
-        } else if (errorMsg.includes('ban') || errorMsg.includes('blocked')) {
-            status = 'banned';
+        } else if (errorMsg.includes('ban') || /\bblocked\b/.test(errorMsg)) {
+            // Avoid classifying "cold sends are blocked by WhatsApp" timelock text as banned.
+            status = errorMsg.includes('timelock') ? 'reachout_timelock' : 'banned';
         } else if (errorMsg.includes('connect') || errorMsg.includes('disconnect')) {
             status = 'disconnected';
         }

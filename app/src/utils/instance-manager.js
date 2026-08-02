@@ -45,7 +45,9 @@ import {
     CONTACT_463_CIRCUIT_MS,
     circuitKeyForJid,
     createPrivacyTokenMetrics,
+    isReachoutTimelockCurrentlyActive,
     lookupPrivacyToken,
+    normalizeReachoutTimeLock,
     shouldBlockColdWithoutToken,
     summarizeAuthTokenFiles,
 } from './privacy-token-hardening.js';
@@ -1828,10 +1830,11 @@ class WhatsAppInstance {
             await this._saveContactBeforeMessage(jid, options.contactName);
         }
 
-        // Hard stop when WA has companion reachout lock active — retries worsen budget.
-        if (this.reachoutTimeLock?.isActive && !options.forceDespiteTimelock) {
-            const until = this.reachoutTimeLock.timeEnforcementEnds || 'unknown';
-            const type = this.reachoutTimeLock.enforcementType || 'DEFAULT';
+        // Hard stop only while WA reachout lock is still inside its window.
+        // Stale cached isActive after timeEnforcementEnds must not block webhook/API sends.
+        if (this._isReachoutTimelockBlocking() && !options.forceDespiteTimelock) {
+            const until = this.reachoutTimeLock?.timeEnforcementEnds || 'unknown';
+            const type = this.reachoutTimeLock?.enforcementType || 'DEFAULT';
             throw new Error(
                 `Reachout timelock active (${type}) until ${until} — companion cold sends are blocked by WhatsApp`
             );
@@ -3025,25 +3028,60 @@ class WhatsAppInstance {
 
     _applyReachoutTimeLock(lock, source = 'unknown') {
         if (!lock || typeof lock !== 'object') return;
-        const normalized = {
-            isActive: !!lock.isActive,
-            timeEnforcementEnds: lock.timeEnforcementEnds
-                ? new Date(lock.timeEnforcementEnds).toISOString()
-                : null,
-            enforcementType: lock.enforcementType || 'DEFAULT',
+        const normalized = normalizeReachoutTimeLock({
+            ...lock,
             checkedAt: new Date().toISOString(),
             source,
+        });
+        if (!normalized) return;
+
+        const prevActive = !!this.reachoutTimeLock?.isActive;
+        this.reachoutTimeLock = {
+            isActive: normalized.isActive,
+            timeEnforcementEnds: normalized.timeEnforcementEnds,
+            enforcementType: normalized.enforcementType,
+            checkedAt: normalized.checkedAt,
+            source: normalized.source,
         };
-        this.reachoutTimeLock = normalized;
-        if (normalized.isActive) {
+
+        if (normalized.clearedBecauseExpired) {
+            this._log(
+                `Reachout timelock expired at ${normalized.timeEnforcementEnds} — clearing stale active flag (${normalized.enforcementType})`,
+                'info'
+            );
+        } else if (normalized.isActive) {
             this._log(
                 `Reachout timelock ACTIVE until ${normalized.timeEnforcementEnds || 'unknown'} (${normalized.enforcementType})`,
                 'error'
             );
-        } else {
+        } else if (prevActive || source === 'connection.update' || source === 'manual') {
             this._log(`Reachout timelock inactive (${normalized.enforcementType})`, 'info');
         }
         this._emitStatusChange();
+    }
+
+    /**
+     * True only when a cached reachout lock is still inside its enforcement window.
+     * Auto-clears stale isActive flags so webhook sends do not need forceDespiteTimelock.
+     */
+    _isReachoutTimelockBlocking(nowMs = Date.now()) {
+        if (!this.reachoutTimeLock) return false;
+        const normalized = normalizeReachoutTimeLock(this.reachoutTimeLock, nowMs);
+        if (!normalized) return false;
+        if (normalized.clearedBecauseExpired || normalized.isActive !== !!this.reachoutTimeLock.isActive) {
+            this._applyReachoutTimeLock({
+                ...this.reachoutTimeLock,
+                isActive: normalized.isActive,
+            }, 'expiry-sweep');
+        }
+        return isReachoutTimelockCurrentlyActive(this.reachoutTimeLock, nowMs);
+    }
+
+    /** Status payload for reachout lock — always expiry-normalized. */
+    _getReachoutTimeLockStatus(nowMs = Date.now()) {
+        if (!this.reachoutTimeLock) return null;
+        this._isReachoutTimelockBlocking(nowMs);
+        return this.reachoutTimeLock;
     }
 
     /**
@@ -3054,7 +3092,7 @@ class WhatsAppInstance {
         const sock = this.rawSocket || this.socket;
         if (!sock || this.status !== 'connected') {
             return {
-                reachoutTimeLock: this.reachoutTimeLock,
+                reachoutTimeLock: this._getReachoutTimeLockStatus(),
                 newChatMessageCap: this.newChatMessageCap,
                 privacyTokenCount: this._countStoredPrivacyTokens(),
                 privacyTokenHardening: this.getPrivacyTokenHardeningStatus(),
@@ -3063,7 +3101,7 @@ class WhatsAppInstance {
         const now = Date.now();
         if (source !== 'manual' && now - this._lastReachoutFetchAt < 15_000) {
             return {
-                reachoutTimeLock: this.reachoutTimeLock,
+                reachoutTimeLock: this._getReachoutTimeLockStatus(),
                 newChatMessageCap: this.newChatMessageCap,
                 privacyTokenCount: this._countStoredPrivacyTokens(),
                 privacyTokenHardening: this.getPrivacyTokenHardeningStatus(),
@@ -3077,7 +3115,13 @@ class WhatsAppInstance {
                 this._applyReachoutTimeLock(lock, source);
             } catch (err) {
                 this._log(`Reachout timelock probe failed: ${err.message}`, 'warning');
+                // MEX often returns ambiguous after re-pair; never keep a past-due lock active.
+                if (this.reachoutTimeLock) {
+                    this._isReachoutTimelockBlocking();
+                }
             }
+        } else if (this.reachoutTimeLock) {
+            this._isReachoutTimelockBlocking();
         }
 
         if (typeof sock.fetchNewChatMessageCap === 'function') {
@@ -3095,7 +3139,7 @@ class WhatsAppInstance {
         }
 
         return {
-            reachoutTimeLock: this.reachoutTimeLock,
+            reachoutTimeLock: this._getReachoutTimeLockStatus(),
             newChatMessageCap: this.newChatMessageCap,
             privacyTokenCount: this._countStoredPrivacyTokens(),
             privacyTokenHardening: this.getPrivacyTokenHardeningStatus(),
@@ -3136,7 +3180,7 @@ class WhatsAppInstance {
             antiBanSettings: this.antiBanSettings,
             antiBanHealth: this.antiBanManager.getHealth(),
             antibanV2: this.getAntibanV2Status(),
-            reachoutTimeLock: this.reachoutTimeLock,
+            reachoutTimeLock: this._getReachoutTimeLockStatus(),
             newChatMessageCap: this.newChatMessageCap,
             privacyTokenCount: this._countStoredPrivacyTokens(),
             privacyTokenHardening: this.getPrivacyTokenHardeningStatus(),
