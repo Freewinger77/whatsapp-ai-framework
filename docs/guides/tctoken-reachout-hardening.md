@@ -25,7 +25,7 @@ Wasup uses **file auth only** (`instances/<id>/auth/`). There is no Postgres/Red
 | History sync | `syncFullHistory` enabled for paired sessions (`me.id` present). Never disable to “save resources”. |
 | Observability | `messaging-history.set` logs how many chats carried `tcToken`. |
 | Warm / cold | Before send, lookup usable (non-expired) token by LID then PN. |
-| Circuit breaker | Active `reachoutTimeLock` → hard-block companion cold sends. |
+| Circuit breaker | Active `reachoutTimeLock` → hard-block companion cold sends. Past `timeEnforcementEnds` auto-clears stale `isActive` (no `forceDespiteTimelock` needed for webhooks). |
 | 463 never-retry | Per-contact 6h circuit after 463; API returns `doNotRetry: true`. |
 | Honest delivery | Require SERVER_ACK (≥2); no fake local tokens. |
 | Metrics | `GET /api/instances/:id/reachout-timelock` and instance status include `privacyTokenHardening` (hits/misses/expired/463/tokenHitRate/auth file counts). |

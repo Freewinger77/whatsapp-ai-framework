@@ -52,6 +52,44 @@ export function shouldBlockColdWithoutToken(options = {}) {
     return env === '1' || env === 'true' || env === 'yes';
 }
 
+/**
+ * Normalize a Baileys / cached reachout timelock object.
+ * If WhatsApp reported an end timestamp that is already past, treat the lock as inactive
+ * even when a stale `isActive: true` flag is still cached (common after re-pair when MEX
+ * probes fail with "payload ambiguous").
+ */
+export function normalizeReachoutTimeLock(lock, nowMs = Date.now()) {
+    if (!lock || typeof lock !== 'object') return null;
+
+    let timeEnforcementEnds = null;
+    if (lock.timeEnforcementEnds != null && lock.timeEnforcementEnds !== '') {
+        const endMs = new Date(lock.timeEnforcementEnds).getTime();
+        if (Number.isFinite(endMs)) {
+            timeEnforcementEnds = new Date(endMs).toISOString();
+        }
+    }
+
+    const rawActive = !!lock.isActive;
+    const expired = !!(timeEnforcementEnds && new Date(timeEnforcementEnds).getTime() <= nowMs);
+    const isActive = rawActive && !expired;
+
+    return {
+        isActive,
+        timeEnforcementEnds,
+        enforcementType: lock.enforcementType || 'DEFAULT',
+        checkedAt: lock.checkedAt ? new Date(lock.checkedAt).toISOString() : new Date(nowMs).toISOString(),
+        source: lock.source || 'unknown',
+        expired,
+        clearedBecauseExpired: rawActive && expired,
+    };
+}
+
+/** True only while a reachout lock is still within its enforcement window. */
+export function isReachoutTimelockCurrentlyActive(lock, nowMs = Date.now()) {
+    const normalized = normalizeReachoutTimeLock(lock, nowMs);
+    return !!(normalized && normalized.isActive);
+}
+
 export function circuitKeyForJid(jid) {
     if (!jid || typeof jid !== 'string') return null;
     return jid.split('@')[0].split(':')[0] || null;
