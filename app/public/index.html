@@ -636,6 +636,71 @@
             letter-spacing: 0.02em;
         }
 
+        .instance-item.restricted {
+            border-color: rgba(245, 158, 11, 0.38);
+            background: rgba(245, 158, 11, 0.06);
+        }
+        .instance-item.restricted.active {
+            border-color: rgba(245, 158, 11, 0.55);
+            background: rgba(245, 158, 11, 0.10);
+            box-shadow: inset 2px 0 0 #f59e0b;
+        }
+        .instance-avatar.restricted {
+            background: #f59e0b !important;
+            box-shadow: 0 0 10px rgba(245, 158, 11, 0.35);
+        }
+        .instance-reachout-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            width: fit-content;
+            max-width: 100%;
+            margin-top: 2px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            border: 1px solid rgba(245, 158, 11, 0.55);
+            background: rgba(245, 158, 11, 0.18);
+            color: #fbbf24;
+            font-size: 10px;
+            font-weight: 650;
+            line-height: 1.2;
+            letter-spacing: 0.01em;
+        }
+        .instance-reachout-badge .rtl-countdown {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+        .instance-fp-risk {
+            display: inline-flex;
+            align-items: center;
+            width: fit-content;
+            max-width: 100%;
+            margin-top: 2px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 650;
+            line-height: 1.2;
+            letter-spacing: 0.01em;
+        }
+        .instance-fp-risk.low {
+            border: 1px solid rgba(52, 211, 153, 0.45);
+            background: rgba(16, 185, 129, 0.14);
+            color: #6ee7b7;
+        }
+        .instance-fp-risk.amber {
+            border: 1px solid rgba(245, 158, 11, 0.55);
+            background: rgba(245, 158, 11, 0.16);
+            color: #fbbf24;
+        }
+        .instance-fp-risk.high {
+            border: 1px solid rgba(248, 113, 113, 0.55);
+            background: rgba(239, 68, 68, 0.16);
+            color: #fca5a5;
+        }
+
         .info-list {
             display: flex;
             flex-direction: column;
@@ -826,40 +891,59 @@
         .toggle-list {
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 10px;
             margin-bottom: 16px;
         }
 
         .toggle-row {
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            padding: 12px;
+            align-items: flex-start;
+            gap: 16px;
+            padding: 12px 14px;
             background: rgba(39, 39, 42, 0.3);
-            border-radius: 8px;
+            border: 1px solid rgba(63, 63, 70, 0.55);
+            border-radius: 12px;
+            min-height: 64px;
+            box-sizing: border-box;
+        }
+
+        .toggle-info {
+            flex: 1 1 auto;
+            min-width: 0;
         }
 
         .toggle-info h4 {
-            font-size: 14px;
-            font-weight: 500;
-            margin-bottom: 2px;
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            color: white;
+            margin: 0 0 3px;
+            line-height: 1.3;
         }
 
         .toggle-info p {
             font-size: 12px;
+            line-height: 1.4;
             color: var(--zinc-500);
+            margin: 0;
         }
 
         .toggle-switch {
             position: relative;
+            display: inline-block;
+            flex: 0 0 44px;
             width: 44px;
             height: 24px;
+            margin-top: 1px;
+            flex-shrink: 0;
         }
 
         .toggle-switch input {
             opacity: 0;
             width: 0;
             height: 0;
+            position: absolute;
         }
 
         .toggle-slider {
@@ -872,6 +956,7 @@
             background-color: var(--zinc-700);
             transition: 0.2s;
             border-radius: 24px;
+            border: 1px solid rgba(63, 63, 70, 0.9);
         }
 
         .toggle-slider:before {
@@ -879,15 +964,17 @@
             content: "";
             height: 18px;
             width: 18px;
-            left: 3px;
-            bottom: 3px;
+            left: 2px;
+            top: 2px;
             background-color: white;
             transition: 0.2s;
             border-radius: 50%;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
         }
 
         .toggle-switch input:checked + .toggle-slider {
             background-color: var(--emerald-500);
+            border-color: rgba(89, 220, 181, 0.85);
         }
 
         .toggle-switch input:checked + .toggle-slider:before {
@@ -2169,9 +2256,12 @@
             }
 
             .toggle-row {
-                align-items: flex-start;
                 gap: 12px;
                 padding: 14px;
+            }
+
+            .toggle-switch {
+                margin-top: 2px;
             }
 
             .log-container {
@@ -4797,6 +4887,7 @@
                         </button>
                     </div>
                 </header>
+                <div id="reachout-timelock-banner-header" class="reachout-timelock-banner" style="display:none;margin:0 0 12px;" hidden></div>
 
                 <main class="main" id="dashboard-main">
                     <div class="grid-12">
@@ -5049,24 +5140,54 @@
                                 <div class="toggle-row">
                                     <div class="toggle-info">
                                         <h4>Typing Simulation</h4>
-                                        <p>Show "typing..." indicator before sending</p>
-                </div>
-                                    <label class="toggle-switch">
+                                        <p>Show “typing…” indicator before sending</p>
+                                    </div>
+                                    <label class="toggle-switch" aria-label="Typing simulation">
                                         <input type="checkbox" id="toggle-typing">
                                         <span class="toggle-slider"></span>
                                     </label>
-                        </div>
+                                </div>
                                 <div class="toggle-row">
                                     <div class="toggle-info">
                                         <h4>Response Delays</h4>
                                         <p>Human-like delay before responding</p>
-                        </div>
-                                    <label class="toggle-switch">
+                                    </div>
+                                    <label class="toggle-switch" aria-label="Response delays">
                                         <input type="checkbox" id="toggle-delay">
                                         <span class="toggle-slider"></span>
                                     </label>
-                    </div>
-                        </div>
+                                </div>
+                                <div class="toggle-row">
+                                    <div class="toggle-info">
+                                        <h4>Shared Devices</h4>
+                                        <p>Staff Web/Desktop coexist — no conflict reclaim, presence stays passive</p>
+                                    </div>
+                                    <label class="toggle-switch" aria-label="Shared devices mode">
+                                        <input type="checkbox" id="toggle-multi-device-coexist">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="toggle-row">
+                                    <div class="toggle-info">
+                                        <h4>Webhook Typing Events</h4>
+                                        <p>Forward contact typing / recording / paused to the instance webhook (for n8n hold/cancel)</p>
+                                    </div>
+                                    <label class="toggle-switch" aria-label="Webhook typing events">
+                                        <input type="checkbox" id="toggle-webhook-typing-events">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="toggle-row">
+                                    <div class="toggle-info">
+                                        <h4>Group Alert Mode</h4>
+                                        <p>Off = classic handoff (skips webhook). On = groups never arm handoff; webhooks keep flowing</p>
+                                    </div>
+                                    <label class="toggle-switch" aria-label="Group alert mode">
+                                        <input type="checkbox" id="toggle-group-alert-mode">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                            </div>
                             <button class="btn btn-primary" style="width: 100%;" id="btn-save-behavior">Save Behavior</button>
                     </div>
 
@@ -5175,6 +5296,7 @@
                 qrCode: document.getElementById('qr-code'),
             statusBadge: document.getElementById('status-badge'),
             reachoutBanner: document.getElementById('reachout-timelock-banner'),
+            reachoutBannerHeader: document.getElementById('reachout-timelock-banner-header'),
                 infoPhone: document.getElementById('info-phone'),
                 infoConnected: document.getElementById('info-connected'),
             infoMessages: document.getElementById('info-messages'),
@@ -5228,6 +5350,9 @@
             btnSaveBehavior: document.getElementById('btn-save-behavior'),
             toggleTyping: document.getElementById('toggle-typing'),
             toggleDelay: document.getElementById('toggle-delay'),
+            toggleMultiDeviceCoexist: document.getElementById('toggle-multi-device-coexist'),
+            toggleWebhookTypingEvents: document.getElementById('toggle-webhook-typing-events'),
+            toggleGroupAlertMode: document.getElementById('toggle-group-alert-mode'),
             behaviorProfileInputs: document.querySelectorAll('input[name="behavior-profile"]'),
             modalCreate: document.getElementById('modal-create'),
             modalClose: document.getElementById('modal-close'),
@@ -5425,6 +5550,7 @@
                         instances = data.data.instances;
                         applyInstanceOrder();
                         renderInstanceList();
+                        startReachoutFleetPolling();
                     } else if (dashboardConfig.allowPublicDashboard || !dashboardConfig.dashboardRequiresApiKey) {
                         void refreshInstancesFromApi().catch((error) => {
                             console.warn('Instance refresh failed:', error.message);
@@ -5458,6 +5584,9 @@
                     if (data.instanceId === selectedInstanceId) {
                         appendLog(data.data);
                     }
+                    if (data.instanceId && data.data?.message) {
+                        maybeApplyReachoutLockFromLog(data.instanceId, data.data.message);
+                    }
                     break;
             }
         }
@@ -5465,7 +5594,17 @@
         function updateInstance(updated) {
             const idx = instances.findIndex(i => i.id === updated.id);
             if (idx !== -1) {
+                const prevLock = instances[idx].reachoutTimeLock;
                 instances[idx] = { ...instances[idx], ...updated };
+                // Don't let a status payload without reachout wipe an active lock.
+                if (
+                    (updated.reachoutTimeLock === undefined || updated.reachoutTimeLock === null)
+                    && prevLock?.isActive
+                    && prevLock.timeEnforcementEnds
+                    && new Date(prevLock.timeEnforcementEnds).getTime() > Date.now()
+                ) {
+                    instances[idx].reachoutTimeLock = prevLock;
+                }
             }
             renderInstanceList();
             if (updated.id === selectedInstanceId) {
@@ -5503,13 +5642,19 @@
             }
 
             filtered.forEach(instance => {
+                const lock = instance.reachoutTimeLock;
+                const endsMs = lock?.timeEnforcementEnds ? new Date(lock.timeEnforcementEnds).getTime() : null;
+                const isRestricted = !!(lock && lock.isActive && (endsMs === null || endsMs > Date.now()));
                 const item = document.createElement('div');
-                item.className = `instance-item ${instance.id === selectedInstanceId ? 'active' : ''}`;
+                item.className = `instance-item ${instance.id === selectedInstanceId ? 'active' : ''}${isRestricted ? ' restricted' : ''}`;
                 item.dataset.id = instance.id;
                 item.tabIndex = 0;
                 item.setAttribute('role', 'button');
                 if (instance.id === selectedInstanceId) {
                     item.setAttribute('aria-current', 'true');
+                }
+                if (isRestricted) {
+                    item.setAttribute('aria-label', `${instance.name} — companion reach-out restricted`);
                 }
                 
                 const firstLetter = (instance.name || 'I').charAt(0).toUpperCase();
@@ -5527,14 +5672,30 @@
                     : instance.status === 'connecting'
                         ? 'connecting'
                         : 'disconnected';
+                const avatarClass = isRestricted
+                    ? 'restricted'
+                    : (isConnected ? 'connected' : 'disconnected');
+                const ends = isRestricted
+                    ? (lock.timeEnforcementEnds || lock.time_enforcement_ends || null)
+                    : null;
+                const reachoutBadge = isRestricted
+                    ? `<div class="instance-reachout-badge" title="Companion reach-out restricted">Restricted · <span class="rtl-countdown" data-reachout-ends="${ends ? escapeHtml(String(ends)) : ''}">${escapeHtml(formatReachoutCountdown(ends))}</span></div>`
+                    : '';
+                const fp = instance.fingerprintRisk;
+                const fpRisk = fp?.risk || null;
+                const fpBadge = fpRisk
+                    ? `<div class="instance-fp-risk ${escapeHtml(fpRisk)}" title="${escapeHtml(fp.label || '')} · shared with ${fp.sharedWith} other(s)">FP ${escapeHtml(fpRisk)} · ${fp.sharedWith}</div>`
+                    : '';
                 
                 item.innerHTML = `
-                    <div class="instance-avatar ${isConnected ? 'connected' : 'disconnected'}">${firstLetter}</div>
+                    <div class="instance-avatar ${avatarClass}">${firstLetter}</div>
                     <div class="instance-info">
                         <div class="instance-name">${escapeHtml(instance.name)}</div>
                         <div class="instance-status-text ${statusClass}">${statusText}</div>
+                        ${reachoutBadge}
+                        ${fpBadge}
                     </div>
-                    <div class="instance-chevron" style="color:${isConnected ? 'rgba(89,220,181,0.58)' : 'rgba(188,202,194,0.28)'};">›</div>
+                    <div class="instance-chevron" style="color:${isRestricted ? 'rgba(251,191,36,0.75)' : (isConnected ? 'rgba(89,220,181,0.58)' : 'rgba(188,202,194,0.28)')};">›</div>
                 `;
                 item.addEventListener('click', () => selectInstance(instance.id));
                 item.addEventListener('keydown', (event) => {
@@ -5558,6 +5719,14 @@
             });
 
             syncMobileSidebar();
+            updateSidebarReachoutCountdowns();
+        }
+
+        function updateSidebarReachoutCountdowns() {
+            document.querySelectorAll('.instance-reachout-badge .rtl-countdown[data-reachout-ends]').forEach((node) => {
+                const ends = node.getAttribute('data-reachout-ends');
+                node.textContent = formatReachoutCountdown(ends || null);
+            });
         }
 
         // ========================================
@@ -5664,6 +5833,7 @@
 
         let reachoutPollTimer = null;
         let reachoutCountdownTimer = null;
+        let reachoutFleetPollTimer = null;
         let reachoutLockState = null;
 
         function humanizeReachoutType(type) {
@@ -5696,30 +5866,137 @@
         }
 
         function renderReachoutTimelockBanner(instance) {
-            if (!el.reachoutBanner) return;
             const lock = (instance && instance.reachoutTimeLock) || reachoutLockState;
+            const banners = [el.reachoutBanner, el.reachoutBannerHeader].filter(Boolean);
+            if (!banners.length) return;
+
+            const hide = () => {
+                banners.forEach((banner) => {
+                    banner.classList.remove('visible');
+                    banner.hidden = true;
+                    banner.style.display = 'none';
+                    banner.innerHTML = '';
+                });
+            };
+
             if (!lock || !lock.isActive) {
-                el.reachoutBanner.classList.remove('visible');
-                el.reachoutBanner.hidden = true;
-                el.reachoutBanner.style.display = 'none';
-                el.reachoutBanner.innerHTML = '';
+                hide();
                 return;
             }
             const ends = lock.timeEnforcementEnds || lock.time_enforcement_ends || null;
+            if (ends && new Date(ends).getTime() <= Date.now()) {
+                hide();
+                return;
+            }
             const type = lock.enforcementType || lock.enforcement_type || 'DEFAULT';
-            el.reachoutBanner.hidden = false;
-            el.reachoutBanner.style.display = 'block';
-            el.reachoutBanner.classList.add('visible');
-            el.reachoutBanner.innerHTML = `
+            const html = `
                 <strong>Companion reach-out restricted</strong>
                 <div>${humanizeReachoutType(type)} · <span class="rtl-countdown">${formatReachoutCountdown(ends)}</span></div>
                 ${ends ? `<div style="opacity:0.8;margin-top:4px;">Until ${new Date(ends).toLocaleString()}</div>` : ''}
             `;
+            banners.forEach((banner) => {
+                banner.hidden = false;
+                banner.style.display = 'block';
+                banner.classList.add('visible');
+                banner.innerHTML = html;
+            });
+        }
+
+        function applyReachoutLockToInstance(instanceId, lock) {
+            if (!instanceId || !lock) return;
+            const next = {
+                isActive: !!lock.isActive,
+                timeEnforcementEnds: lock.timeEnforcementEnds || lock.time_enforcement_ends || null,
+                enforcementType: lock.enforcementType || lock.enforcement_type || 'DEFAULT',
+                checkedAt: lock.checkedAt || new Date().toISOString(),
+                source: lock.source || 'ui',
+            };
+            const idx = instances.findIndex((i) => i.id === instanceId);
+            const prev = idx >= 0 ? instances[idx].reachoutTimeLock : null;
+            const prevActive = !!(prev && prev.isActive);
+            const nextActive = !!next.isActive;
+            const prevEnds = prev?.timeEnforcementEnds || null;
+            const nextEnds = next.timeEnforcementEnds || null;
+            if (idx >= 0) {
+                instances[idx].reachoutTimeLock = next;
+            }
+            if (instanceId === selectedInstanceId) {
+                reachoutLockState = next;
+                renderReachoutTimelockBanner(instances[idx] || { reachoutTimeLock: next });
+            }
+            if (prevActive !== nextActive || prevEnds !== nextEnds) {
+                renderInstanceList();
+            } else {
+                updateSidebarReachoutCountdowns();
+            }
+        }
+
+        function maybeApplyReachoutLockFromLog(instanceId, message) {
+            if (!instanceId || typeof message !== 'string') return;
+            const active = message.match(
+                /Reachout timelock ACTIVE until\s+(\S+)\s+\(([^)]+)\)/i
+            );
+            if (active) {
+                applyReachoutLockToInstance(instanceId, {
+                    isActive: true,
+                    timeEnforcementEnds: active[1] === 'unknown' ? null : active[1],
+                    enforcementType: active[2] || 'DEFAULT',
+                    source: 'activity-log',
+                });
+                return;
+            }
+            if (/Reachout timelock inactive/i.test(message)) {
+                applyReachoutLockToInstance(instanceId, {
+                    isActive: false,
+                    timeEnforcementEnds: null,
+                    enforcementType: 'DEFAULT',
+                    source: 'activity-log',
+                });
+            }
+        }
+
+        async function refreshReachoutLocksForSidebar() {
+            const targets = instances.filter((i) => i && i.status === 'connected');
+            if (!targets.length) return;
+            let changed = false;
+            await Promise.all(targets.map(async (instance) => {
+                try {
+                    const data = await apiCall(`/instances/${instance.id}/reachout-timelock`);
+                    const next = data.reachoutTimeLock || null;
+                    const prevActive = !!(instance.reachoutTimeLock && instance.reachoutTimeLock.isActive);
+                    const nextActive = !!(next && next.isActive);
+                    const prevEnds = instance.reachoutTimeLock?.timeEnforcementEnds || null;
+                    const nextEnds = next?.timeEnforcementEnds || null;
+                    instance.reachoutTimeLock = next;
+                    if (prevActive !== nextActive || prevEnds !== nextEnds) changed = true;
+                    if (instance.id === selectedInstanceId) {
+                        reachoutLockState = next;
+                        renderReachoutTimelockBanner(instance);
+                    }
+                } catch (_) { /* keep cached */ }
+            }));
+            if (changed) renderInstanceList();
+            else updateSidebarReachoutCountdowns();
+        }
+
+        function startReachoutFleetPolling() {
+            if (reachoutFleetPollTimer) clearInterval(reachoutFleetPollTimer);
+            if (reachoutCountdownTimer) clearInterval(reachoutCountdownTimer);
+            refreshReachoutLocksForSidebar().catch(() => {});
+            // Countdown is local; MEX probe is throttled server-side and polled rarely.
+            reachoutFleetPollTimer = setInterval(() => {
+                refreshReachoutLocksForSidebar().catch(() => {});
+            }, 5 * 60 * 1000);
+            reachoutCountdownTimer = setInterval(() => {
+                updateSidebarReachoutCountdowns();
+                if (!selectedInstanceId) return;
+                const cached = instances.find((i) => i.id === selectedInstanceId);
+                renderReachoutTimelockBanner(cached || { reachoutTimeLock: reachoutLockState });
+            }, 1000);
         }
 
         function startReachoutTimelockPolling(instanceId) {
             if (reachoutPollTimer) clearInterval(reachoutPollTimer);
-            if (reachoutCountdownTimer) clearInterval(reachoutCountdownTimer);
             reachoutLockState = null;
             const tick = async () => {
                 if (!instanceId || selectedInstanceId !== instanceId) return;
@@ -5727,7 +6004,14 @@
                     const data = await apiCall(`/instances/${instanceId}/reachout-timelock`);
                     reachoutLockState = data.reachoutTimeLock || null;
                     const idx = instances.findIndex(i => i.id === instanceId);
-                    if (idx >= 0) instances[idx].reachoutTimeLock = reachoutLockState;
+                    if (idx >= 0) {
+                        const prev = instances[idx].reachoutTimeLock;
+                        instances[idx].reachoutTimeLock = reachoutLockState;
+                        const prevActive = !!(prev && prev.isActive);
+                        const nextActive = !!(reachoutLockState && reachoutLockState.isActive);
+                        if (prevActive !== nextActive) renderInstanceList();
+                        else updateSidebarReachoutCountdowns();
+                    }
                     if (selectedInstanceId === instanceId) {
                         renderReachoutTimelockBanner(instances[idx] || { reachoutTimeLock: reachoutLockState });
                     }
@@ -5737,12 +6021,8 @@
                 }
             };
             tick();
-            reachoutPollTimer = setInterval(tick, 20000);
-            reachoutCountdownTimer = setInterval(() => {
-                if (selectedInstanceId !== instanceId) return;
-                const cached = instances.find(i => i.id === instanceId);
-                renderReachoutTimelockBanner(cached || { reachoutTimeLock: reachoutLockState });
-            }, 1000);
+            // Detail countdown updates locally; probe only every 5m (server also caches 2m).
+            reachoutPollTimer = setInterval(tick, 5 * 60 * 1000);
         }
 
         function renderInstanceDetail(instance) {
@@ -5842,6 +6122,15 @@
                 });
                 el.toggleTyping.checked = instance.behaviorSettings.typingSimulation !== false;
                 el.toggleDelay.checked = instance.behaviorSettings.delayEnabled !== false;
+                if (el.toggleMultiDeviceCoexist) {
+                    el.toggleMultiDeviceCoexist.checked = !!instance.behaviorSettings.multiDeviceCoexist;
+                }
+                if (el.toggleWebhookTypingEvents) {
+                    el.toggleWebhookTypingEvents.checked = !!instance.behaviorSettings.webhookTypingEvents;
+                }
+                if (el.toggleGroupAlertMode) {
+                    el.toggleGroupAlertMode.checked = !!instance.behaviorSettings.groupAlertMode;
+                }
             }
 
             renderProxyPanel(instance);
@@ -6225,6 +6514,7 @@
             instances = result.instances || [];
             applyInstanceOrder();
             renderInstanceList();
+            startReachoutFleetPolling();
 
             if (selectedInstanceId) {
                 const selected = instances.find(i => i.id === selectedInstanceId);
@@ -6560,6 +6850,9 @@
                         behaviorProfile,
                         typingSimulation: el.toggleTyping.checked,
                         delayEnabled: el.toggleDelay.checked,
+                        multiDeviceCoexist: !!(el.toggleMultiDeviceCoexist && el.toggleMultiDeviceCoexist.checked),
+                        webhookTypingEvents: !!(el.toggleWebhookTypingEvents && el.toggleWebhookTypingEvents.checked),
+                        groupAlertMode: !!(el.toggleGroupAlertMode && el.toggleGroupAlertMode.checked),
                         phoneNotificationsEnabled: behaviorProfile !== 'bot-native',
                         notificationGraceMs: behaviorProfile === 'notification-max' ? 5000
                             : behaviorProfile === 'notification-balanced' ? 2500

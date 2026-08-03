@@ -107,7 +107,63 @@ const CONFLICT_RECONNECT_MAX_ATTEMPTS = Math.max(
     1,
     Number.parseInt(process.env.WA_CONFLICT_RECONNECT_MAX_ATTEMPTS || '8', 10) || 8,
 );
+/** Cap generic auto-reconnect (405/503/etc) so we don't hammer WhatsApp forever. */
+const GENERIC_RECONNECT_MAX_ATTEMPTS = Math.max(
+    1,
+    Number.parseInt(process.env.WA_RECONNECT_MAX_ATTEMPTS || '8', 10) || 8,
+);
+const GENERIC_RECONNECT_MAX_DELAY_MS = Math.max(
+    15_000,
+    Number.parseInt(process.env.WA_RECONNECT_MAX_DELAY_MS || '300000', 10) || 300_000,
+);
+/** Space startup auto-reconnects so a worker bounce does not mass re-auth. */
+const STARTUP_RECONNECT_STAGGER_MS = Math.max(
+    1_000,
+    Number.parseInt(process.env.WA_STARTUP_RECONNECT_STAGGER_MS || '8000', 10) || 8_000,
+);
+const STARTUP_RECONNECT_JITTER_MS = Math.max(
+    0,
+    Number.parseInt(process.env.WA_STARTUP_RECONNECT_JITTER_MS || '3000', 10) || 3_000,
+);
+/** Extra cross-instance offset on runtime reconnects (conflict / recoverable). */
+const RUNTIME_RECONNECT_STAGGER_MS = Math.max(
+    0,
+    Number.parseInt(process.env.WA_RUNTIME_RECONNECT_STAGGER_MS || '5000', 10) || 5_000,
+);
 const QR_CODE_TTL_MS = 110_000;
+
+/**
+ * Stable egress fingerprint for risk scoring.
+ * Direct (no proxy) instances share one fingerprint on this worker — Meta sees one Azure egress.
+ */
+function proxyFingerprintKeyFromResolved(resolved) {
+    if (!resolved || resolved.source === 'disabled' || resolved.source === 'none' || !resolved.config) {
+        return 'direct';
+    }
+    const host = resolved.config.host || null;
+    const port = resolved.config.port || null;
+    if (host && port) return `${host}:${port}`;
+    if (host) return String(host);
+    return 'direct';
+}
+
+function classifyFingerprintRisk(sharedWith) {
+    const n = Math.max(0, Number(sharedWith) || 0);
+    // sharedWith = number of OTHER instances on the same fingerprint
+    if (n <= 2) return 'low';
+    if (n <= 4) return 'amber';
+    return 'high';
+}
+
+function stableInstanceSlot(instanceId, modulo) {
+    const mod = Math.max(1, modulo | 0);
+    const s = String(instanceId || '');
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+        h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
+    return Math.abs(h) % mod;
+}
 
 async function getCurrentBaileysVersion() {
     const now = Date.now();
@@ -284,6 +340,22 @@ function normalizeBehaviorSettings(settings = {}, previous = {}) {
         merged.typingSimulation = false;
     }
 
+    // Orthogonal to behavior profiles: clinic/staff Web coexistence (default off).
+    merged.multiDeviceCoexist = settings.multiDeviceCoexist !== undefined
+        ? !!settings.multiDeviceCoexist
+        : (previous.multiDeviceCoexist !== undefined ? !!previous.multiDeviceCoexist : false);
+
+    // Forward Baileys presence/typing updates to the instance webhook (default off).
+    merged.webhookTypingEvents = settings.webhookTypingEvents !== undefined
+        ? !!settings.webhookTypingEvents
+        : (previous.webhookTypingEvents !== undefined ? !!previous.webhookTypingEvents : false);
+
+    // Group alert mode (default off): keep inbound webhooks flowing for groups /
+    // handoff maps — for tyrejobs-style numbers that sit in many groups.
+    merged.groupAlertMode = settings.groupAlertMode !== undefined
+        ? !!settings.groupAlertMode
+        : (previous.groupAlertMode !== undefined ? !!previous.groupAlertMode : false);
+
     return merged;
 }
 
@@ -304,6 +376,8 @@ class WhatsAppInstance {
         //   - enabled=true   -> use this instance-specific proxy
         //   - null/undefined -> fall back to deployment default (DEFAULT_PROXY_URL env var)
         this.proxy = this._normalizeProxy(config.proxy);
+        /** Set by InstanceManager so reconnects can stagger across the fleet. */
+        this.manager = null;
 
         // Anti-ban v2 (Wasup transport anti-ban pipeline)
         // Per-instance config block. If absent, derived from legacy antiBanSettings
@@ -329,6 +403,7 @@ class WhatsAppInstance {
         this.pairingRestartTimer = null;
         this.conflictReconnectTimer = null;
         this.conflictReconnectAttempts = 0;
+        this.genericReconnectAttempts = 0;
         this.activeConnectGeneration = 0;
         this.connectInFlight = false;
         this.qrScanReceivedAt = null;
@@ -412,6 +487,9 @@ class WhatsAppInstance {
         
         // Presence cycling interval (for stealth mode)
         this.presenceCycleInterval = null;
+        // presenceSubscribe throttling + last presence webhook fingerprint (chatJid -> ms / fingerprint)
+        this._presenceSubscribedAt = new Map();
+        this._lastPresenceWebhookAt = new Map();
         
         // Human handoff settings (per-instance configurable)
         this.handoffSettings = Object.assign({
@@ -423,6 +501,9 @@ class WhatsAppInstance {
         this.humanModeChats = new Map();
         // IDs of messages we sent via the bot, so we can distinguish manual sends
         this.botSentMessageIds = new Set();
+        // JIDs we are actively sending to — ignore fromMe handoff echoes during the race
+        // between sendMessage resolve and messages.upsert (ack wait widens that window).
+        this._botOutboundJidUntil = new Map();
         
         // Event callbacks
         this.onStatusChange = null;
@@ -475,7 +556,9 @@ class WhatsAppInstance {
 
         this.conflictReconnectAttempts += 1;
         const attempt = this.conflictReconnectAttempts;
-        const waitSec = Math.round(delayMs / 1000);
+        const staggerMs = this.manager?.getRuntimeReconnectStaggerMs?.(this.id) || 0;
+        const totalDelayMs = delayMs + staggerMs;
+        const waitSec = Math.round(totalDelayMs / 1000);
         this.connectionIssue = {
             message: `WhatsApp replaced this socket (${statusCode || 428}). Auto-reconnect ${attempt}/${CONFLICT_RECONNECT_MAX_ATTEMPTS} in ${waitSec}s…`,
             category: 'connection_replaced',
@@ -483,12 +566,13 @@ class WhatsAppInstance {
             at: new Date().toISOString(),
             statusCode: statusCode || null,
             detail: detail || null,
-            retryAfterMs: delayMs,
+            retryAfterMs: totalDelayMs,
             conflictReconnectAttempt: attempt,
             conflictReconnectMaxAttempts: CONFLICT_RECONNECT_MAX_ATTEMPTS,
         };
         this._log(
-            `Connection replaced/conflict (${statusCode}: ${detail || 'Connection Terminated'}); scheduling auto-reconnect ${attempt}/${CONFLICT_RECONNECT_MAX_ATTEMPTS} in ${waitSec}s`,
+            `Connection replaced/conflict (${statusCode}: ${detail || 'Connection Terminated'}); scheduling auto-reconnect ${attempt}/${CONFLICT_RECONNECT_MAX_ATTEMPTS} in ${waitSec}s` +
+                (staggerMs ? ` (fleet stagger +${Math.round(staggerMs / 1000)}s)` : ''),
             'warning',
         );
         this._emitStatusChange();
@@ -508,7 +592,7 @@ class WhatsAppInstance {
                 this._log(`Conflict auto-reconnect failed: ${err.message}`, 'error');
                 this._emitStatusChange();
             });
-        }, delayMs);
+        }, totalDelayMs);
     }
 
     async _readAuthRegistrationState() {
@@ -1034,7 +1118,11 @@ class WhatsAppInstance {
                     const isConflict = this._isConflictDisconnect(statusCode, reconnectPlan, updateSummary);
                     // A 401 with "conflict" is a replaced socket, not an auth wipe signal.
                     const isLoggedOut = statusCode === DisconnectReason.loggedOut && !isConflict;
-                    const shouldReconnect = !isLoggedOut && !isConflict && reconnectPlan.shouldReconnect !== false;
+                    // 403 forbidden = WA rejected companion (ban/temp block). Never reconnect-loop.
+                    const isForbidden = statusCode === DisconnectReason.forbidden
+                        || statusCode === 403
+                        || reconnectPlan.category === 'forbidden';
+                    const shouldReconnect = !isLoggedOut && !isForbidden && !isConflict && reconnectPlan.shouldReconnect !== false;
                     const wasPairing = this.status === 'connecting' && !this.connectedAt;
                     const isQrTimeout = this._isQrTimeoutDisconnect(statusCode, updateSummary);
                     const isStaleProtocol = this._isStaleProtocolDisconnect(statusCode, reconnectPlan, updateSummary);
@@ -1128,26 +1216,90 @@ class WhatsAppInstance {
                             this._emitStatusChange();
                         }
                     } else if (isConflict) {
-                        this._scheduleConflictReconnect({
-                            statusCode,
-                            detail: updateSummary.error || reconnectPlan.message,
-                            delayMs: CONNECT_REPLACED_RETRY_DELAY_MS,
-                        });
-                    } else if (shouldReconnect) {
-                        const backoffMs = Math.max(2000, reconnectPlan.backoffMs || 5000);
-                        this._log(`Connection lost (${reconnectPlan.category}: ${reconnectPlan.message}) — reconnecting in ${Math.round(backoffMs / 1000)}s`, 'warning');
-                        this.connectionIssue = null;
-                        this._emitStatusChange();
-                        setTimeout(() => this.connect().catch((err) => {
+                        if (this._isMultiDeviceCoexist() && !this._groupAlertModeEnabled()) {
+                            // Clinic/chatbot coexist: stand down — staff Web wins, no reclaim fight.
+                            this._cancelConflictReconnectTimer();
+                            this.conflictReconnectAttempts = 0;
                             this.connectionIssue = {
-                                message: `Reconnect failed: ${err.message}`,
-                                category: 'reconnect_failed',
+                                message: 'Paused: another linked device is active (shared-devices mode). Auth preserved — press Connect when staff Web/Desktop is idle.',
+                                category: 'shared_device_stand_down',
                                 requiresAuthClear: false,
-                                at: new Date().toISOString()
+                                at: new Date().toISOString(),
+                                statusCode: statusCode || null,
+                                detail: updateSummary.error || reconnectPlan.message,
                             };
-                            this._log(`Reconnect failed: ${err.message}`, 'error');
+                            this._log(this.connectionIssue.message, 'warning');
                             this._emitStatusChange();
-                        }), backoffMs);
+                        } else if (this._isMultiDeviceCoexist() && this._groupAlertModeEnabled()) {
+                            // Alert numbers: reclaim fast. Jobs hit 24/7 — a long stand-down
+                            // drops group traffic with no local queue to drain later.
+                            const alertConflictDelayMs = CONNECT_REPLACED_RETRY_DELAY_MS; // 10s
+                            this._log(
+                                `Shared-devices + group alert mode: conflict (${statusCode}) — auto-reclaim in ${Math.round(alertConflictDelayMs / 1000)}s`,
+                                'warning'
+                            );
+                            this._scheduleConflictReconnect({
+                                statusCode,
+                                detail: updateSummary.error || reconnectPlan.message,
+                                delayMs: alertConflictDelayMs,
+                            });
+                        } else {
+                            this._scheduleConflictReconnect({
+                                statusCode,
+                                detail: updateSummary.error || reconnectPlan.message,
+                                delayMs: CONNECT_REPLACED_RETRY_DELAY_MS,
+                            });
+                        }
+                    } else if (shouldReconnect) {
+                        this.genericReconnectAttempts = (this.genericReconnectAttempts || 0) + 1;
+                        const attempt = this.genericReconnectAttempts;
+                        if (attempt > GENERIC_RECONNECT_MAX_ATTEMPTS) {
+                            this.connectionIssue = {
+                                message: `Auto-reconnect stopped after ${GENERIC_RECONNECT_MAX_ATTEMPTS} attempts (${reconnectPlan.message}). Press Reconnect; auth is preserved.`,
+                                category: reconnectPlan.category || 'reconnect_exhausted',
+                                requiresAuthClear: false,
+                                at: new Date().toISOString(),
+                                statusCode: statusCode || null,
+                            };
+                            this._log(this.connectionIssue.message, 'error');
+                            this._emitStatusChange();
+                        } else {
+                            const baseMs = Math.max(2000, reconnectPlan.backoffMs || 5000);
+                            // Exponential backoff so 405/503 loops don't hammer WhatsApp every 15s.
+                            const backoffMs = Math.min(
+                                GENERIC_RECONNECT_MAX_DELAY_MS,
+                                baseMs * (2 ** Math.max(0, attempt - 1)),
+                            );
+                            const staggerMs = this.manager?.getRuntimeReconnectStaggerMs?.(this.id) || 0;
+                            const totalDelayMs = backoffMs + staggerMs;
+                            const generation = this.activeConnectGeneration;
+                            this._log(
+                                `Connection lost (${reconnectPlan.category}: ${reconnectPlan.message}) — reconnecting ${attempt}/${GENERIC_RECONNECT_MAX_ATTEMPTS} in ${Math.round(totalDelayMs / 1000)}s` +
+                                    (staggerMs ? ` (fleet stagger +${Math.round(staggerMs / 1000)}s)` : ''),
+                                'warning',
+                            );
+                            this.connectionIssue = {
+                                message: `Reconnecting ${attempt}/${GENERIC_RECONNECT_MAX_ATTEMPTS} in ${Math.round(totalDelayMs / 1000)}s…`,
+                                category: reconnectPlan.category || 'recoverable',
+                                requiresAuthClear: false,
+                                at: new Date().toISOString(),
+                                statusCode: statusCode || null,
+                            };
+                            this._emitStatusChange();
+                            setTimeout(() => {
+                                if (generation !== this.activeConnectGeneration) return;
+                                this.connect().catch((err) => {
+                                    this.connectionIssue = {
+                                        message: `Reconnect failed: ${err.message}`,
+                                        category: 'reconnect_failed',
+                                        requiresAuthClear: false,
+                                        at: new Date().toISOString()
+                                    };
+                                    this._log(`Reconnect failed: ${err.message}`, 'error');
+                                    this._emitStatusChange();
+                                });
+                            }, totalDelayMs);
+                        }
                     } else {
                         const isProtocolMismatch = isProtocolMismatchDisconnect(reconnectPlan);
                         this.connectionIssue = {
@@ -1166,6 +1318,7 @@ class WhatsAppInstance {
                 if (connection === 'open') {
                     console.log(`[Instance ${this.id}] Connected!`);
                     this.conflictReconnectAttempts = 0;
+                    this.genericReconnectAttempts = 0;
                     this._cancelConflictReconnectTimer();
                     await enableAntibanAfterRegistration();
                     this.status = 'connected';
@@ -1191,14 +1344,19 @@ class WhatsAppInstance {
                         this.refreshReachoutDiagnostics('connect').catch(() => {});
                     }, 2500);
 
-                    const phoneNotifsOn = this._preservesPhoneNotifications();
+                    const stayPassive = this._shouldStayPresencePassive();
 
-                    if (phoneNotifsOn) {
+                    if (stayPassive) {
                         // Force the linked-device presence to 'unavailable' so WhatsApp's
-                        // server keeps delivering push notifications to the phone.
+                        // server keeps delivering push notifications / staff Web stays primary.
                         try {
                             await this.socket.sendPresenceUpdate('unavailable');
-                            this._log('Phone notifications mode: forced presence=unavailable on connect', 'info');
+                            this._log(
+                                this._isMultiDeviceCoexist()
+                                    ? 'Shared-devices mode: forced presence=unavailable on connect'
+                                    : 'Phone notifications mode: forced presence=unavailable on connect',
+                                'info'
+                            );
                         } catch (err) {
                             this._log(`Failed to force unavailable presence: ${err.message}`, 'warning');
                         }
@@ -1227,15 +1385,26 @@ class WhatsAppInstance {
             });
             
             // Handle incoming messages
+            // Baileys: `notify` = typical realtime DM; `append` is common for groups /
+            // catch-up after reconnect. Ignoring append drops many group alerts.
             this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
-                if (type !== 'notify') return;
-                
+                if (type !== 'notify' && type !== 'append') return;
+
+                const now = Math.floor(Date.now() / 1000);
+                // 15 min — group bursts + slow webhooks used to exceed the old 60s gate
+                // while earlier messages were still awaiting webhook replies.
+                const MAX_AGE_SEC = 15 * 60;
+                const tasks = [];
                 for (const msg of messages) {
-                    const msgTimestamp = msg.messageTimestamp;
-                    const now = Math.floor(Date.now() / 1000);
-                    if (now - msgTimestamp > 60) continue;
-                    await this._handleMessage(msg);
+                    const msgTimestamp = Number(msg.messageTimestamp) || now;
+                    if (now - msgTimestamp > MAX_AGE_SEC) continue;
+                    tasks.push(
+                        this._handleMessage(msg).catch((err) => {
+                            console.error(`[Instance ${this.id}] Message handling error:`, err);
+                        })
+                    );
                 }
+                if (tasks.length) await Promise.allSettled(tasks);
             });
 
             // Capture WA server NACKs (463) and positive status ACKs (SERVER_ACK+).
@@ -1296,6 +1465,13 @@ class WhatsAppInstance {
                         'info'
                     );
                 }
+            });
+
+            // Inbound typing / recording / online presence → optional webhook events
+            this.socket.ev.on('presence.update', (update) => {
+                this._handlePresenceUpdate(update).catch((err) => {
+                    console.warn(`[Instance ${this.id}] presence.update handler failed:`, err?.message || err);
+                });
             });
             
             // Store messages for retry handling
@@ -1360,6 +1536,7 @@ class WhatsAppInstance {
         this._cancelPairingRestartTimer();
         this._cancelConflictReconnectTimer();
         this.activeConnectGeneration += 1;
+        this.genericReconnectAttempts = 0;
         // Stop presence cycling
         this._stopPresenceCycling();
         
@@ -1406,6 +1583,16 @@ class WhatsAppInstance {
             || !!this.behaviorSettings?.phoneNotificationsEnabled;
     }
 
+    /** Staff Web/Desktop coexistence: stand down on conflict, stay presence-passive. */
+    _isMultiDeviceCoexist() {
+        return !!this.behaviorSettings?.multiDeviceCoexist;
+    }
+
+    /** Passive companion presence so phone/staff Web keep push + don't fight Wasup. */
+    _shouldStayPresencePassive() {
+        return this._preservesPhoneNotifications() || this._isMultiDeviceCoexist();
+    }
+
     _isNotificationMaxProfile() {
         return this._behaviorProfile() === BEHAVIOR_PROFILES.NOTIFICATION_MAX;
     }
@@ -1434,14 +1621,13 @@ class WhatsAppInstance {
         // Clear any existing interval
         this._stopPresenceCycling();
 
-        // Phone-notifications mode never cycles presence: any 'available' nudge
-        // suppresses the phone's push notification for ~10s. Bail out early.
-        if (this._preservesPhoneNotifications()) return;
+        // Phone-notifications / shared-devices: never cycle presence.
+        if (this._shouldStayPresencePassive()) return;
         
         // Cycle presence every 3-7 minutes
         const cyclePresence = async () => {
             if (!this.socket || this.status !== 'connected') return;
-            if (this._preservesPhoneNotifications()) return;
+            if (this._shouldStayPresencePassive()) return;
             
             try {
                 const random = Math.random();
@@ -1559,6 +1745,9 @@ class WhatsAppInstance {
         this.connectedPhone = null;
         this.connectedAt = null;
         this.connectionIssue = null;
+        this.reachoutTimeLock = null;
+        this.newChatMessageCap = null;
+        try { fsSync.unlinkSync(this._reachoutCachePath()); } catch (_) {}
         this._emitStatusChange();
         
         try {
@@ -1814,6 +2003,8 @@ class WhatsAppInstance {
         
         // Prefer PN JID for 1:1 (tctoken attaches to PN when lidTrustedTokenIssueToLid=false).
         const jid = await this._resolveOutboundJid(normalizedTo);
+        // Mark before send so fromMe upserts during ack wait are not treated as manual handoff.
+        this._markBotOutbound(jid);
         
         // Check rate limits (skip when anti-ban v2 is explicitly turned off)
         if (this._isAntibanV2Enforcing()) {
@@ -1829,7 +2020,9 @@ class WhatsAppInstance {
         }
 
         // Hard stop when WA has companion reachout lock active — retries worsen budget.
-        if (this.reachoutTimeLock?.isActive && !options.forceDespiteTimelock) {
+        // Expired end timestamps must not keep blocking (sticky Argo/connection.update flags).
+        this._expireReachoutTimeLockIfNeeded('send:expiry');
+        if (this._isReachoutTimeLockBlocking() && !options.forceDespiteTimelock) {
             const until = this.reachoutTimeLock.timeEnforcementEnds || 'unknown';
             const type = this.reachoutTimeLock.enforcementType || 'DEFAULT';
             throw new Error(
@@ -1913,24 +2106,36 @@ class WhatsAppInstance {
                     throw err;
                 }
             }
+        } else if (this._isAntibanOff()) {
+            // Switch OFF = zero anti-ban. Raw send, no rate limits / antiban delays.
+            const sock = this.rawSocket || this.socket;
+            if (behaviorOptions.typingSimulation) {
+                try { await sock.sendPresenceUpdate('composing', jid); } catch (_) {}
+                await delay(400 + Math.random() * 600);
+                try { await sock.sendPresenceUpdate('paused', jid); } catch (_) {}
+            }
+            const sentMsg = await sock.sendMessage(jid, messageObj);
+            result = { sent: true, key: sentMsg?.key, status: sentMsg?.status, via: 'raw-no-antiban' };
         } else {
-            // Legacy path (v2 disabled or not yet built)
-            result = await safeSendMessage(this.socket, jid, messageObj, '', this.antiBanManager, behaviorOptions);
+            // Anti-ban enabled but pipeline not live yet — still skip hard rate blocks.
+            result = await safeSendMessage(this.socket, jid, messageObj, '', this.antiBanManager, {
+                ...behaviorOptions,
+                skipRateLimits: true,
+            });
         }
 
         // Baileys resolves sendMessage before WA server ACK. Error 463 (account
         // restricted / missing tctoken) arrives as messages.update shortly after.
+        // Track bot-sent IDs BEFORE ack wait — fromMe echo often arrives during the wait
+        // and used to falsely arm human handoff (TyreFlow leads → bashir/owner numbers).
         if (result?.sent && result?.key?.id) {
+            this._markBotOutbound(jid, result.key.id);
             result = await this._awaitOutboundServerAck(result);
         }
         
         if (result.sent) {
-            // Track this message ID as bot-sent (for human handoff detection)
-            if (result.key?.id) this.botSentMessageIds.add(result.key.id);
-            if (this.botSentMessageIds.size > 2000) {
-                const arr = Array.from(this.botSentMessageIds);
-                this.botSentMessageIds = new Set(arr.slice(-1000));
-            }
+            // Ensure tracking even if key arrived late / ack path mutated result
+            this._markBotOutbound(jid, result.key?.id || null);
             
             this._log(`Sent to ${to}: ${logText.substring(0, 50)}...`, 'success');
             this._logMessage('outbound', this.connectedPhone || this.id, normalizedTo, logText, result.key?.id);
@@ -2287,44 +2492,107 @@ class WhatsAppInstance {
             return jid.replace('@s.whatsapp.net', '').replace('@g.us', '');
         }
         
-        const lidId = jid.replace('@lid', '');
+        const lidId = jid.replace('@lid', '').split(':')[0];
         console.log(`[Instance ${this.id}] Detected LID: ${lidId}`);
         
         // 1. Try to get PN from message alternate JID fields
         // remoteJidAlt is for DMs, participantAlt is for groups
-        const altJid = msg.key.remoteJidAlt || msg.key.participantAlt;
+        const altJid = msg?.key?.remoteJidAlt || msg?.key?.participantAlt;
         if (altJid && !altJid.includes('@lid')) {
-            const pn = altJid.replace('@s.whatsapp.net', '');
+            const pn = altJid.replace('@s.whatsapp.net', '').split(':')[0];
             console.log(`[Instance ${this.id}] Found PN from alt JID: ${pn}`);
             // Cache this mapping for future use
             await this._storeLidMapping(lidId, pn);
             return pn;
         }
         
-        // 2. Try to get PN from the transport LID mapping store
-        if (this.socket?.signalRepository?.lidMapping) {
-            try {
-                const pn = await this.socket.signalRepository.lidMapping.getPNForLID(lidId);
-                if (pn) {
-                    console.log(`[Instance ${this.id}] Resolved LID via transport store: ${pn}`);
-                    await this._storeLidMapping(lidId, pn);
-                    return pn;
-                }
-            } catch (e) {
-                // Silently fail, try next method
-            }
-        }
-        
-        // 3. Try our persistent cache (fallback)
-        if (this.lidCache.has(lidId)) {
-            const cachedPn = this.lidCache.get(lidId);
-            console.log(`[Instance ${this.id}] Found PN in cache: ${cachedPn}`);
-            return cachedPn;
-        }
-        
-        // 4. Last resort: return the LID number (will show as LID)
+        // 2–4. Shared LID→PN resolution (transport store + disk cache)
+        const resolved = await this._resolveLidToPhone(lidId);
+        if (resolved) return resolved;
+
+        // Last resort: return the LID number (will show as LID)
         console.log(`[Instance ${this.id}] Could not resolve LID, using raw: ${lidId}`);
         return lidId;
+    }
+
+    /**
+     * Resolve a LID id (no suffix) to a phone number using Baileys store + disk cache.
+     * Used by message webhooks and presence webhooks so both key on the same phone.
+     */
+    async _resolveLidToPhone(lidId) {
+        const cleanLid = String(lidId || '').replace('@lid', '').replace('@s.whatsapp.net', '').split(':')[0].trim();
+        if (!cleanLid) return null;
+
+        if (this.socket?.signalRepository?.lidMapping) {
+            try {
+                // Baileys expects a full @lid JID
+                const pn = await this.socket.signalRepository.lidMapping.getPNForLID(`${cleanLid}@lid`);
+                if (pn) {
+                    const cleanPn = String(pn).replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0];
+                    if (cleanPn && cleanPn !== cleanLid) {
+                        await this._storeLidMapping(cleanLid, cleanPn);
+                        return cleanPn;
+                    }
+                }
+            } catch (_) {
+                // try cache next
+            }
+        }
+
+        if (this.lidCache.has(cleanLid)) {
+            return this.lidCache.get(cleanLid);
+        }
+        return null;
+    }
+
+    /**
+     * Normalize a chat/participant JID into phone + PN jid for webhooks.
+     * Presence often arrives as @lid while messages use @s.whatsapp.net — n8n must key on phone.
+     */
+    async _resolveWebhookIdentity(jid) {
+        const raw = String(jid || '');
+        if (!raw || raw.endsWith('@g.us') || raw.endsWith('@broadcast')) {
+            return {
+                rawJid: raw || null,
+                from_phone: null,
+                from_jid: raw || null,
+                from_lid: null,
+                phoneResolved: false,
+            };
+        }
+
+        const isLid = raw.includes('@lid');
+        if (!isLid) {
+            const phone = raw.replace('@s.whatsapp.net', '').split(':')[0];
+            return {
+                rawJid: raw,
+                from_phone: normalizePhone(phone),
+                from_jid: raw.includes('@') ? raw : `${phone}@s.whatsapp.net`,
+                from_lid: null,
+                phoneResolved: true,
+            };
+        }
+
+        const lidId = raw.replace('@lid', '').split(':')[0];
+        const pn = await this._resolveLidToPhone(lidId);
+        if (pn) {
+            return {
+                rawJid: raw,
+                from_phone: normalizePhone(pn),
+                from_jid: `${pn}@s.whatsapp.net`,
+                from_lid: `${lidId}@lid`,
+                phoneResolved: true,
+            };
+        }
+
+        // Unresolved — do not pretend LID digits are a phone number
+        return {
+            rawJid: raw,
+            from_phone: null,
+            from_jid: raw,
+            from_lid: `${lidId}@lid`,
+            phoneResolved: false,
+        };
     }
 
     /**
@@ -2382,7 +2650,8 @@ class WhatsAppInstance {
             // manually from the phone (not via the bot API)
             if (msg.key.fromMe) {
                 const msgId = msg.key.id;
-                if (this.botSentMessageIds.has(msgId)) return; // Bot sent this, ignore
+                // Bot API send (by id) or in-flight outbound to this jid — not a human handoff.
+                if (this._isBotOutboundEcho(from, msgId)) return;
                 
                 const messageContent = this._extractMessageContent(msg.message);
                 if (!messageContent.text) return;
@@ -2405,6 +2674,13 @@ class WhatsAppInstance {
                             }
                         }
                     }
+                    return;
+                }
+
+                // Group alert / broadcast numbers: never auto-arm handoff from fromMe
+                // (API broadcasts to ops phones were falsely tagged as "manual").
+                if (this._groupAlertModeEnabled()) {
+                    this._logMessage('outbound', this.connectedPhone || this.id, from.split('@')[0], text, msg.key.id);
                     return;
                 }
                 
@@ -2484,16 +2760,20 @@ class WhatsAppInstance {
             
             // Bot-native mode behaves like an active linked device. Notification
             // profiles defer any read/typing/reply until after the grace window.
-            if (!this._preservesPhoneNotifications()) {
+            // Skip auto-reads on groups — they slow alert bursts and mark whole chats read.
+            if (!this._preservesPhoneNotifications() && !isGroup) {
                 await this._simulateReadReceipt(msg, messageContent.text || '[media]');
             }
-            
-            // HUMAN HANDOFF CHECK: If this chat is tagged for human mode, skip bot processing
-            if (this.humanModeChats.has(from)) {
+
+            const groupAlertMode = this._groupAlertModeEnabled();
+            const humanMode = this.humanModeChats.has(from);
+
+            // Default (groupAlertMode OFF): classic handoff — skip webhook entirely.
+            if (humanMode && !groupAlertMode) {
                 const handoff = this.humanModeChats.get(from);
                 handoff.lastActivity = new Date().toISOString();
                 this._log(`[Handoff] Skipping bot for ${phoneNumber} - human mode active since ${handoff.taggedAt}`, 'warning');
-                
+
                 if (this.onMessage) {
                     this.onMessage({
                         instanceId: this.id,
@@ -2514,17 +2794,31 @@ class WhatsAppInstance {
                         fileName: messageContent.fileName,
                         timestamp: new Date().toISOString(),
                         messageId: msg.key.id,
-                        humanMode: true
+                        humanMode: true,
                     });
                 }
                 return;
             }
+
+            if (humanMode && groupAlertMode) {
+                const handoff = this.humanModeChats.get(from);
+                handoff.lastActivity = new Date().toISOString();
+                this._log(`[Handoff] human mode active for ${phoneNumber} since ${handoff.taggedAt} — groupAlertMode: webhook still forwarded, auto-reply suppressed`, 'warning');
+            }
             
-            // Check rate limits
-            const canSend = this.antiBanManager.canSendMessage(from);
-            if (!canSend.allowed) {
+            // Legacy unique-chat caps only apply when anti-ban v2 is enforcing.
+            // (API sends already skip them when v2 is off — inbound must match.)
+            const antibanEnforcing = this._isAntibanV2Enforcing();
+            const canSend = antibanEnforcing
+                ? this.antiBanManager.canSendMessage(from)
+                : { allowed: true };
+            const rateLimited = !canSend.allowed;
+            if (rateLimited && !groupAlertMode) {
                 this._log(`Rate limited: ${canSend.reason}`, 'warning');
                 return;
+            }
+            if (rateLimited && groupAlertMode) {
+                this._log(`Rate limited (inbound webhook still sent): ${canSend.reason}`, 'warning');
             }
             
             // Emit message event for external handling
@@ -2548,7 +2842,7 @@ class WhatsAppInstance {
                     fileName: messageContent.fileName,
                     timestamp: new Date().toISOString(),
                     messageId: msg.key.id,
-                    humanMode: false
+                    humanMode,
                 });
             }
             
@@ -2558,7 +2852,24 @@ class WhatsAppInstance {
             // Only forward if this instance has its own webhook configured
             if (this.webhookUrl) {
                 this._log(`Forwarding to webhook: ${this.webhookUrl.substring(0, 50)}...`, 'info');
-                await this._forwardToWebhook(msg, messageContent, from, phoneNumber, this.webhookUrl, mediaInfo, receivedAtMs, senderContext);
+                // Subscribe so subsequent composing/recording events reach us for this chat.
+                this._ensurePresenceSubscription(from).catch(() => {});
+                await this._forwardToWebhook(
+                    msg,
+                    messageContent,
+                    from,
+                    phoneNumber,
+                    this.webhookUrl,
+                    mediaInfo,
+                    receivedAtMs,
+                    senderContext,
+                    {
+                        // Alert numbers: never block the inbound pipeline waiting on n8n replies.
+                        suppressReply: groupAlertMode && (humanMode || rateLimited || isGroup),
+                        humanMode,
+                        fireAndForget: groupAlertMode && isGroup,
+                    }
+                );
             } else {
                 this._log('No instance webhook configured - message logged only', 'info');
             }
@@ -2566,6 +2877,215 @@ class WhatsAppInstance {
         } catch (error) {
             console.error(`[Instance ${this.id}] Message handling error:`, error);
             this._log(`Error: ${error.message}`, 'error');
+        }
+    }
+
+    _webhookTypingEventsEnabled() {
+        return !!this.behaviorSettings?.webhookTypingEvents && !!this.webhookUrl;
+    }
+
+    _groupAlertModeEnabled() {
+        return !!this.behaviorSettings?.groupAlertMode;
+    }
+
+    /** Drop any @g.us entries from the in-memory handoff map (used when enabling groupAlertMode). */
+    _clearGroupHandoffs() {
+        let cleared = 0;
+        for (const jid of [...this.humanModeChats.keys()]) {
+            if (isGroupJid(jid)) {
+                this.humanModeChats.delete(jid);
+                cleared += 1;
+            }
+        }
+        return cleared;
+    }
+
+    _markBotOutbound(jid, messageId = null) {
+        if (jid) {
+            this._botOutboundJidUntil.set(jid, Date.now() + 30_000);
+            // Also mark bare phone / alt forms loosely used by handoff keys
+            const bare = String(jid).split('@')[0].split(':')[0];
+            if (bare) this._botOutboundJidUntil.set(`${bare}@s.whatsapp.net`, Date.now() + 30_000);
+        }
+        if (messageId) {
+            this.botSentMessageIds.add(messageId);
+            if (this.botSentMessageIds.size > 2000) {
+                const arr = Array.from(this.botSentMessageIds);
+                this.botSentMessageIds = new Set(arr.slice(-1000));
+            }
+        }
+        // Bound map
+        if (this._botOutboundJidUntil.size > 2000) {
+            const now = Date.now();
+            for (const [k, exp] of this._botOutboundJidUntil) {
+                if (exp < now) this._botOutboundJidUntil.delete(k);
+            }
+        }
+    }
+
+    _isBotOutboundEcho(jid, messageId = null) {
+        if (messageId && this.botSentMessageIds.has(messageId)) return true;
+        const until = this._botOutboundJidUntil.get(jid)
+            || this._botOutboundJidUntil.get(`${String(jid || '').split('@')[0].split(':')[0]}@s.whatsapp.net`);
+        return !!(until && until > Date.now());
+    }
+
+    /**
+     * Baileys only emits composing/recording for chats we have subscribed to.
+     * Throttle re-subscribes so we don't spam WA on every inbound message.
+     * Subscribe to both PN and LID forms when mapped — WA may emit presence on either.
+     */
+    async _ensurePresenceSubscription(chatJid) {
+        if (!this._webhookTypingEventsEnabled() || !this.socket || !chatJid) return;
+        if (String(chatJid).endsWith('@g.us') || String(chatJid).endsWith('@broadcast')) return;
+
+        const targets = new Set([String(chatJid)]);
+        try {
+            const identity = await this._resolveWebhookIdentity(chatJid);
+            if (identity.from_jid) targets.add(identity.from_jid);
+            if (identity.from_lid) targets.add(identity.from_lid);
+
+            // Reverse: if we subscribed on PN, also try LID from Baileys store
+            if (identity.phoneResolved && identity.from_jid && this.socket?.signalRepository?.lidMapping?.getLIDForPN) {
+                try {
+                    const lid = await this.socket.signalRepository.lidMapping.getLIDForPN(identity.from_jid);
+                    if (lid) {
+                        const lidJid = String(lid).includes('@') ? String(lid) : `${String(lid).split(':')[0]}@lid`;
+                        targets.add(lidJid);
+                    }
+                } catch (_) {}
+            }
+        } catch (_) {}
+
+        const now = Date.now();
+        for (const jid of targets) {
+            const last = this._presenceSubscribedAt.get(jid) || 0;
+            if (now - last < 5 * 60 * 1000) continue;
+            try {
+                await this.socket.presenceSubscribe(jid);
+                this._presenceSubscribedAt.set(jid, now);
+            } catch (err) {
+                console.warn(`[Instance ${this.id}] presenceSubscribe failed for ${jid}:`, err?.message || err);
+            }
+        }
+    }
+
+    /**
+     * Handle inbound Baileys presence.update → optional webhook event for n8n.
+     * Only forwards typing-relevant states (composing / recording / paused).
+     */
+    async _handlePresenceUpdate(update) {
+        if (!this._webhookTypingEventsEnabled()) return;
+
+        const chatId = update?.id;
+        if (!chatId || String(chatId).endsWith('@g.us') || String(chatId).endsWith('@broadcast')) return;
+
+        const presences = update?.presences && typeof update.presences === 'object'
+            ? update.presences
+            : null;
+        if (!presences) return;
+
+        const TYPING_STATES = new Set(['composing', 'recording', 'paused']);
+        const DEBOUNCE_MS = 1500;
+
+        for (const [participantJid, presenceObj] of Object.entries(presences)) {
+            const presence = presenceObj?.lastKnownPresence || presenceObj?.presence || null;
+            if (!presence || !TYPING_STATES.has(presence)) continue;
+
+            // Resolve before debounce so LID and PN forms share one fingerprint key
+            const identity = await this._resolveWebhookIdentity(participantJid || chatId);
+            const chatIdentity = await this._resolveWebhookIdentity(chatId);
+            const sessionKey = identity.from_phone
+                || chatIdentity.from_phone
+                || identity.from_lid
+                || chatId;
+            const fingerprint = `${sessionKey}|${presence}`;
+            const now = Date.now();
+            const last = this._lastPresenceWebhookAt.get(fingerprint) || 0;
+            if (now - last < DEBOUNCE_MS) continue;
+            this._lastPresenceWebhookAt.set(fingerprint, now);
+
+            // Bound map growth
+            if (this._lastPresenceWebhookAt.size > 5000) {
+                const cutoff = now - 60_000;
+                for (const [k, ts] of this._lastPresenceWebhookAt) {
+                    if (ts < cutoff) this._lastPresenceWebhookAt.delete(k);
+                }
+            }
+
+            await this._forwardPresenceWebhook({
+                chatId,
+                participantJid,
+                presence,
+                lastSeen: presenceObj?.lastSeen ?? null,
+                identity,
+                chatIdentity,
+            });
+        }
+    }
+
+    async _forwardPresenceWebhook({ chatId, participantJid, presence, lastSeen, identity, chatIdentity }) {
+        const webhookUrl = this.webhookUrl;
+        if (!webhookUrl) return;
+
+        const axios = (await import('axios')).default;
+        const resolved = identity || await this._resolveWebhookIdentity(participantJid || chatId);
+        const chatResolved = chatIdentity || await this._resolveWebhookIdentity(chatId);
+
+        // Prefer PN so n8n typing-hold keys match message webhooks (from_phone).
+        const fromPhone = resolved.from_phone || chatResolved.from_phone || null;
+        const fromJid = resolved.from_jid || chatResolved.from_jid || participantJid || chatId;
+        const fromLid = resolved.from_lid || chatResolved.from_lid || null;
+        const stableChatId = (fromPhone ? `${fromPhone}@s.whatsapp.net` : null)
+            || chatResolved.from_jid
+            || chatId;
+
+        const payload = {
+            event: 'presence.update',
+            created_at: new Date().toISOString(),
+            webhook_id: this.id,
+            instanceId: this.id,
+            chatId: stableChatId,
+            from_jid: fromJid,
+            from_lid: fromLid,
+            from_phone: fromPhone,
+            to_phone: normalizePhone(this.connectedPhone),
+            presence,
+            lastSeen: lastSeen ?? null,
+            status: 'presence',
+            phone_resolved: !!(resolved.phoneResolved || chatResolved.phoneResolved),
+        };
+
+        if (!fromPhone) {
+            this._log(
+                `Presence ${presence} on unresolved LID ${fromLid || chatId} — webhook sent without from_phone (n8n cannot match message session yet)`,
+                'warning'
+            );
+        }
+
+        try {
+            const webhookBody = JSON.stringify(payload);
+            const headers = {};
+            if (this.webhookSigningSecret) {
+                const timestamp = Math.floor(Date.now() / 1000).toString();
+                const signature = crypto
+                    .createHmac('sha256', this.webhookSigningSecret)
+                    .update(`${timestamp}.${webhookBody}`)
+                    .digest('hex');
+                headers['X-Wasup-Signature-Timestamp'] = timestamp;
+                headers['X-Wasup-Signature-256'] = `sha256=${signature}`;
+            }
+
+            await axios.post(webhookUrl, payload, { timeout: 10000, headers });
+            this._log(
+                `Presence webhook: ${presence} from ${fromPhone || fromLid || chatId}${fromLid && fromPhone ? ` (lid ${fromLid})` : ''}`,
+                'info'
+            );
+        } catch (err) {
+            console.warn(
+                `[Instance ${this.id}] Presence webhook failed:`,
+                err?.response?.status || err?.message || err
+            );
         }
     }
     
@@ -2577,19 +3097,34 @@ class WhatsAppInstance {
      * @param {string} phoneNumber - Sender phone number
      * @param {string} webhookUrl - Webhook URL to forward to
      */
-    async _forwardToWebhook(msg, messageContent, from, phoneNumber, webhookUrl, mediaInfo = null, receivedAtMs = Date.now(), senderContext = {}) {
+    async _forwardToWebhook(
+        msg,
+        messageContent,
+        from,
+        phoneNumber,
+        webhookUrl,
+        mediaInfo = null,
+        receivedAtMs = Date.now(),
+        senderContext = {},
+        options = {}
+    ) {
         const axios = (await import('axios')).default;
         const phoneNotifsOn = this._preservesPhoneNotifications();
         const notificationMax = this._isNotificationMaxProfile();
         const typingOn = this.behaviorSettings?.typingSimulation !== false && !notificationMax;
         const behaviorSocket = phoneNotifsOn ? (this.rawSocket || this.socket) : this.socket;
+        const suppressReply = !!options.suppressReply;
+        const humanMode = !!options.humanMode;
+        const fireAndForget = !!options.fireAndForget
+            || (this._groupAlertModeEnabled() && !!senderContext.isGroup);
         
         console.log(`[Instance ${this.id}] Calling webhook: ${webhookUrl}`);
         
         try {
             // While the webhook runs, show typing only on the v2 path — legacy
             // safeSendMessage already runs its own typing/read pipeline after the reply.
-            if (!phoneNotifsOn && typingOn && this._isAntibanV2Enforcing()) {
+            // Skip typing in groups / when we won't reply.
+            if (!fireAndForget && !suppressReply && !senderContext.isGroup && !phoneNotifsOn && typingOn && this._isAntibanV2Enforcing()) {
                 try {
                     await this.socket.sendPresenceUpdate('composing', from);
                 } catch (e) {}
@@ -2629,6 +3164,7 @@ class WhatsAppInstance {
                 webhook_id: this.id,
                 event: 'message',
                 quoted_message: messageContent.quotedText || null,
+                human_mode: humanMode,
                 media: mediaInfo
                     ? {
                         id: mediaInfo.mediaId,
@@ -2654,13 +3190,43 @@ class WhatsAppInstance {
                 headers['X-Wasup-Signature-256'] = `sha256=${signature}`;
             }
 
+            // Group-alert path: POST and move on. Never wait 30s on n8n / never send replies.
+            // One quick retry on transient TLS/timeouts so bursts still land.
+            if (fireAndForget) {
+                const postAlert = async () => {
+                    const attempts = 2;
+                    let lastErr = null;
+                    for (let i = 0; i < attempts; i++) {
+                        try {
+                            const response = await axios.post(webhookUrl, payload, {
+                                timeout: 8000,
+                                headers,
+                            });
+                            this._log(
+                                `Alert webhook ${response.status} → ${phoneNumber || senderContext.groupId || from}`
+                                + (i > 0 ? ` (retry ${i})` : ''),
+                                'info'
+                            );
+                            return;
+                        } catch (err) {
+                            lastErr = err;
+                            if (i + 1 < attempts) await delay(250 + Math.random() * 400);
+                        }
+                    }
+                    console.error(`[Instance ${this.id}] Alert webhook failed:`, lastErr?.message || lastErr);
+                    this._log(`Alert webhook failed: ${lastErr?.message || lastErr}`, 'error');
+                };
+                void postAlert();
+                return;
+            }
+
             const response = await axios.post(webhookUrl, payload, { timeout: 30000, headers });
             
             console.log(`[Instance ${this.id}] Webhook response:`, response.status, response.data);
             
             // Handle response
             if (response.data?.skip) {
-                this._log(`Human handoff active for ${phoneNumber}`, 'info');
+                this._log(`Webhook requested skip for ${phoneNumber}`, 'info');
                 if (!phoneNotifsOn) {
                     try {
                         await this.socket.sendPresenceUpdate('paused', from);
@@ -2671,6 +3237,14 @@ class WhatsAppInstance {
                 return;
             }
             
+            if (suppressReply) {
+                this._log(
+                    `Webhook delivered for ${phoneNumber}; auto-reply suppressed (${humanMode ? 'human_mode' : 'rate_limit'})`,
+                    'info'
+                );
+                return;
+            }
+
             const reply = response.data?.reply || response.data?.message || response.data?.text;
             
             if (reply) {
@@ -2698,6 +3272,7 @@ class WhatsAppInstance {
                             try { await this.socket.sendPresenceUpdate('paused', from); } catch (_) {}
                         }
                         const sent = await this.socket.sendMessage(from, { text: reply });
+                        this._markBotOutbound(from, sent?.key?.id);
                         this.antiBanManager.recordMessage(from);
                         result = { sent: true, key: sent?.key, via: 'antiban-v2' };
                     } catch (err) {
@@ -2718,6 +3293,7 @@ class WhatsAppInstance {
                             try { await behaviorSocket.sendPresenceUpdate('paused', from); } catch (_) {}
                         }
                         const sent = await behaviorSocket.sendMessage(from, { text: reply });
+                        this._markBotOutbound(from, sent?.key?.id);
                         this.antiBanManager.recordMessage(from);
                         result = { sent: true, key: sent?.key, via: 'notification-profile' };
                     } catch (err) {
@@ -2725,8 +3301,14 @@ class WhatsAppInstance {
                         result = { sent: false, reason: m };
                         throw err;
                     }
+                } else if (this._isAntibanOff()) {
+                    // Switch OFF = zero anti-ban on webhook replies too.
+                    const sock = this.rawSocket || behaviorSocket;
+                    const sent = await sock.sendMessage(from, { text: reply });
+                    this._markBotOutbound(from, sent?.key?.id);
+                    result = { sent: true, key: sent?.key, via: 'raw-no-antiban' };
                 } else {
-                    // Legacy path
+                    // Anti-ban on but v2 path not live — soft behavior only, no hard rate blocks.
                     result = await safeSendMessage(
                         behaviorSocket,
                         from,
@@ -2737,6 +3319,7 @@ class WhatsAppInstance {
                             ...this.behaviorSettings,
                             messageKey: msg.key,
                             simulateReading: !phoneNotifsOn,
+                            skipRateLimits: true,
                         }
                     );
                 }
@@ -2939,15 +3522,30 @@ class WhatsAppInstance {
     }
     
     /**
-     * Update behavior settings (profile, typing simulation, delays)
+     * Update behavior settings (profile, typing simulation, delays, shared-devices)
      */
     updateBehaviorSettings(settings) {
-        const previousPreservesNotifications = this._preservesPhoneNotifications();
+        const previousPassive = this._shouldStayPresencePassive();
+        const previousGroupAlert = this._groupAlertModeEnabled();
         this.behaviorSettings = normalizeBehaviorSettings(settings || {}, this.behaviorSettings || {});
-        const nextPreservesNotifications = this._preservesPhoneNotifications();
+        const nextPassive = this._shouldStayPresencePassive();
+        const nextGroupAlert = this._groupAlertModeEnabled();
 
-        if (nextPreservesNotifications !== previousPreservesNotifications && this.socket && this.status === 'connected') {
-            if (nextPreservesNotifications) {
+        // Turning group-alert mode on: clear any stuck @g.us handoff entries immediately.
+        if (nextGroupAlert && !previousGroupAlert) {
+            const cleared = this._clearGroupHandoffs();
+            if (cleared > 0) {
+                this._log(`Group alert mode ON — cleared ${cleared} group handoff map entries`, 'success');
+                this._emitStatusChange();
+            } else {
+                this._log('Group alert mode ON — groups will not arm handoff; webhooks keep flowing during DM handoff', 'success');
+            }
+        } else if (!nextGroupAlert && previousGroupAlert) {
+            this._log('Group alert mode OFF — classic handoff (webhook skipped while human mode active)', 'info');
+        }
+
+        if (nextPassive !== previousPassive && this.socket && this.status === 'connected') {
+            if (nextPassive) {
                 // Stop the cycler that randomly flips presence to 'available'
                 // and cancel any pending stealth-presence ramp.
                 try { this._stopPresenceCycling(); } catch (_) {}
@@ -2956,14 +3554,19 @@ class WhatsAppInstance {
                     this.presenceRampAbort = null;
                 }
                 this.socket.sendPresenceUpdate('unavailable')
-                    .then(() => this._log('Notification profile: presence forced unavailable', 'success'))
+                    .then(() => this._log(
+                        this._isMultiDeviceCoexist()
+                            ? 'Shared-devices mode: presence forced unavailable'
+                            : 'Notification profile: presence forced unavailable',
+                        'success'
+                    ))
                     .catch((e) => this._log(`Failed to push unavailable: ${e.message}`, 'warning'));
             } else {
                 // Returning to bot-native behaviour - resume background cycling.
                 try { this._startPresenceCycling(); } catch (_) {}
                 this._log('Bot-native behaviour enabled - resumed presence cycling', 'info');
             }
-        } else if (nextPreservesNotifications && this.socket && this.status === 'connected') {
+        } else if (nextPassive && this.socket && this.status === 'connected') {
             this.socket.sendPresenceUpdate('unavailable')
                 .catch((e) => this._log(`Failed to push unavailable: ${e.message}`, 'warning'));
         }
@@ -3023,51 +3626,148 @@ class WhatsAppInstance {
         };
     }
 
+    _reachoutCachePath() {
+        return path.join(INSTANCES_FOLDER, this.id, 'reachout-cache.json');
+    }
+
+    _persistReachoutCache(lock) {
+        if (!lock?.isActive || !lock.timeEnforcementEnds) return;
+        if (new Date(lock.timeEnforcementEnds).getTime() <= Date.now()) return;
+        try {
+            fsSync.writeFileSync(this._reachoutCachePath(), JSON.stringify({
+                isActive: true,
+                timeEnforcementEnds: lock.timeEnforcementEnds,
+                enforcementType: lock.enforcementType || 'DEFAULT',
+                savedAt: new Date().toISOString(),
+            }));
+        } catch (_) {}
+    }
+
+    _loadReachoutCache() {
+        try {
+            const raw = fsSync.readFileSync(this._reachoutCachePath(), 'utf8');
+            const parsed = JSON.parse(raw);
+            if (!parsed?.isActive || !parsed.timeEnforcementEnds) return null;
+            if (new Date(parsed.timeEnforcementEnds).getTime() <= Date.now()) return null;
+            return {
+                isActive: true,
+                timeEnforcementEnds: parsed.timeEnforcementEnds,
+                enforcementType: parsed.enforcementType || 'DEFAULT',
+                checkedAt: new Date().toISOString(),
+                source: 'disk-cache',
+            };
+        } catch (_) {
+            return null;
+        }
+    }
+
+    _reachoutEndMs(lock = this.reachoutTimeLock) {
+        const ends = lock?.timeEnforcementEnds || lock?.time_enforcement_ends || null;
+        if (!ends) return null;
+        const ms = new Date(ends).getTime();
+        return Number.isFinite(ms) ? ms : null;
+    }
+
+    /** True only while WA lock is active AND end time is still in the future (or unknown). */
+    _isReachoutTimeLockBlocking(lock = this.reachoutTimeLock) {
+        if (!lock?.isActive && !lock?.is_active) return false;
+        const endMs = this._reachoutEndMs(lock);
+        if (endMs !== null && endMs <= Date.now()) return false;
+        return true;
+    }
+
+    /** Drop stale in-memory locks whose end time already passed. */
+    _expireReachoutTimeLockIfNeeded(source = 'expiry') {
+        const lock = this.reachoutTimeLock;
+        if (!lock?.isActive) return false;
+        const endMs = this._reachoutEndMs(lock);
+        if (endMs === null || endMs > Date.now()) return false;
+        return this._applyReachoutTimeLock(
+            {
+                isActive: false,
+                timeEnforcementEnds: lock.timeEnforcementEnds,
+                enforcementType: lock.enforcementType || 'DEFAULT',
+            },
+            source
+        );
+    }
+
     _applyReachoutTimeLock(lock, source = 'unknown') {
-        if (!lock || typeof lock !== 'object') return;
+        if (!lock || typeof lock !== 'object') return false;
+        const prev = this.reachoutTimeLock || this._loadReachoutCache();
+        let timeEnforcementEnds = lock.timeEnforcementEnds
+            ? new Date(lock.timeEnforcementEnds).toISOString()
+            : null;
+        // Argo compact payloads sometimes omit the end timestamp. Keep a still-future
+        // previous end so the dashboard countdown does not disappear mid-lock.
+        if (
+            !!lock.isActive
+            && !timeEnforcementEnds
+            && prev?.isActive
+            && prev.timeEnforcementEnds
+            && new Date(prev.timeEnforcementEnds).getTime() > Date.now()
+        ) {
+            timeEnforcementEnds = prev.timeEnforcementEnds;
+        }
+        let isActive = !!lock.isActive;
+        // Never keep isActive=true past the reported end — WA/Argo can leave a sticky flag.
+        if (isActive && timeEnforcementEnds && new Date(timeEnforcementEnds).getTime() <= Date.now()) {
+            isActive = false;
+        }
         const normalized = {
-            isActive: !!lock.isActive,
-            timeEnforcementEnds: lock.timeEnforcementEnds
-                ? new Date(lock.timeEnforcementEnds).toISOString()
-                : null,
-            enforcementType: lock.enforcementType || 'DEFAULT',
+            isActive,
+            timeEnforcementEnds,
+            enforcementType: lock.enforcementType || prev?.enforcementType || 'DEFAULT',
             checkedAt: new Date().toISOString(),
             source,
         };
+        const changed = !prev
+            || prev.isActive !== normalized.isActive
+            || prev.timeEnforcementEnds !== normalized.timeEnforcementEnds
+            || prev.enforcementType !== normalized.enforcementType;
         this.reachoutTimeLock = normalized;
+        if (normalized.isActive) this._persistReachoutCache(normalized);
+        else {
+            try { fsSync.unlinkSync(this._reachoutCachePath()); } catch (_) {}
+        }
+        // Polling every 20–30s used to re-log + WS-broadcast the same lock and freeze the admin UI.
+        if (!changed) return false;
         if (normalized.isActive) {
             this._log(
                 `Reachout timelock ACTIVE until ${normalized.timeEnforcementEnds || 'unknown'} (${normalized.enforcementType})`,
                 'error'
             );
         } else {
-            this._log(`Reachout timelock inactive (${normalized.enforcementType})`, 'info');
+            this._log(
+                `Reachout timelock inactive (${normalized.enforcementType})${source === 'expiry' || /expir/i.test(source) ? ' — end time passed' : ''}`,
+                'info'
+            );
         }
         this._emitStatusChange();
+        return true;
     }
 
     /**
      * Read-only MEX probes: account reachout timelock + new-chat message cap.
      * Does not send messages. Safe to call on connect / after 463.
+     * UI polls are throttled; pass force:true for an explicit refresh.
      */
-    async refreshReachoutDiagnostics(source = 'manual') {
+    async refreshReachoutDiagnostics(source = 'manual', { force = false } = {}) {
+        this._expireReachoutTimeLockIfNeeded(`${source}:expiry`);
+        const cached = {
+            reachoutTimeLock: this.reachoutTimeLock,
+            newChatMessageCap: this.newChatMessageCap,
+            privacyTokenCount: this._countStoredPrivacyTokens(),
+            privacyTokenHardening: this.getPrivacyTokenHardeningStatus(),
+        };
         const sock = this.rawSocket || this.socket;
         if (!sock || this.status !== 'connected') {
-            return {
-                reachoutTimeLock: this.reachoutTimeLock,
-                newChatMessageCap: this.newChatMessageCap,
-                privacyTokenCount: this._countStoredPrivacyTokens(),
-                privacyTokenHardening: this.getPrivacyTokenHardeningStatus(),
-            };
+            return cached;
         }
         const now = Date.now();
-        if (source !== 'manual' && now - this._lastReachoutFetchAt < 15_000) {
-            return {
-                reachoutTimeLock: this.reachoutTimeLock,
-                newChatMessageCap: this.newChatMessageCap,
-                privacyTokenCount: this._countStoredPrivacyTokens(),
-                privacyTokenHardening: this.getPrivacyTokenHardeningStatus(),
-            };
+        const throttleMs = (source === 'connect' || source === '463') ? 5_000 : 120_000;
+        if (!force && now - (this._lastReachoutFetchAt || 0) < throttleMs) {
+            return cached;
         }
         this._lastReachoutFetchAt = now;
 
@@ -3076,19 +3776,44 @@ class WhatsAppInstance {
                 const lock = await sock.fetchAccountReachoutTimelock();
                 this._applyReachoutTimeLock(lock, source);
             } catch (err) {
-                this._log(`Reachout timelock probe failed: ${err.message}`, 'warning');
+                const ambiguous = !!(err?.data?._wasupAmbiguous || /argo reachout payload ambiguous/i.test(err?.message || ''));
+                const prev = this.reachoutTimeLock || this._loadReachoutCache();
+                const prevStillActive = this._isReachoutTimeLockBlocking(prev);
+                if (ambiguous && prevStillActive) {
+                    this.reachoutTimeLock = {
+                        ...prev,
+                        checkedAt: new Date().toISOString(),
+                        source: `${source}:argo-ambiguous`,
+                    };
+                    this._persistReachoutCache(this.reachoutTimeLock);
+                    this._emitStatusChange();
+                } else {
+                    // Probe failed and lock is expired/missing — clear sticky active flag.
+                    if (prev?.isActive && !prevStillActive) {
+                        this._expireReachoutTimeLockIfNeeded(`${source}:probe-expired`);
+                    }
+                    this._log(`Reachout timelock probe failed: ${err.message}`, 'warning');
+                }
             }
         }
 
         if (typeof sock.fetchNewChatMessageCap === 'function') {
             try {
                 const cap = await sock.fetchNewChatMessageCap();
-                this.newChatMessageCap = {
+                const nextCap = {
                     ...((cap && typeof cap === 'object') ? cap : { raw: cap }),
                     checkedAt: new Date().toISOString(),
                     source,
                 };
-                this._log(`New-chat message cap: ${JSON.stringify(this.newChatMessageCap)}`, 'info');
+                const prevCap = this.newChatMessageCap;
+                const capChanged = !prevCap
+                    || prevCap.capping_status !== nextCap.capping_status
+                    || String(prevCap.used_quota) !== String(nextCap.used_quota)
+                    || String(prevCap.total_quota) !== String(nextCap.total_quota);
+                this.newChatMessageCap = nextCap;
+                if (capChanged) {
+                    this._log(`New-chat message cap: ${JSON.stringify(this.newChatMessageCap)}`, 'info');
+                }
             } catch (err) {
                 this._log(`New-chat cap probe failed: ${err.message}`, 'warning');
             }
@@ -3106,6 +3831,7 @@ class WhatsAppInstance {
      * Get instance status
      */
     getStatus() {
+        this._expireReachoutTimeLockIfNeeded('status:expiry');
         return {
             id: this.id,
             name: this.name,
@@ -3143,6 +3869,8 @@ class WhatsAppInstance {
             handoffSettings: this.handoffSettings,
             humanModeChats: this.getHandoffChats(),
             proxy: this.getProxyStatus(),
+            fingerprintRisk: this.manager?.getFingerprintRiskForInstance?.(this.id) || null,
+            hasSavedCredentials: null, // filled by list enrichment when available
             createdAt: this.createdAt
         };
     }
@@ -3152,6 +3880,11 @@ class WhatsAppInstance {
      */
     _isAntibanV2Enforcing() {
         return !!(this.antibanCtx && this.antibanV2?.enabled !== false && this._antibanV2Enforcing !== false);
+    }
+
+    /** Anti-ban master switch is explicitly OFF — zero rate limits / antiban pipeline. */
+    _isAntibanOff() {
+        return this.antibanV2?.enabled === false;
     }
 
     /**
@@ -3923,6 +4656,7 @@ class InstanceManager {
             antibanV2: config.antibanV2 || legacyToV2Config(config.antiBanSettings || {}),
             proxy: proxyConfig,
         });
+        instance.manager = this;
         
         console.log(`[InstanceManager] Instance object created, auth folder: ${instance.authFolder}`);
         
@@ -3957,14 +4691,100 @@ class InstanceManager {
     }
     
     /**
-     * Get all instances
+     * Get all instances (enriched with shared-fingerprint risk across this worker)
      */
     getAllInstances() {
+        const riskMap = this.buildFingerprintRiskMap();
         const list = [];
         for (const [id, instance] of this.instances) {
-            list.push(instance.getStatus());
+            const status = instance.getStatus();
+            status.fingerprintRisk = riskMap.get(id) || status.fingerprintRisk || null;
+            list.push(status);
         }
         return list;
+    }
+
+    /**
+     * Egress fingerprint key for an instance on this worker.
+     * `direct` = no proxy (shared Azure outbound IP risk).
+     */
+    getInstanceFingerprintKey(instance) {
+        try {
+            const resolved = resolveEffectiveProxy(instance?.proxy);
+            return proxyFingerprintKeyFromResolved(resolved);
+        } catch {
+            return 'direct';
+        }
+    }
+
+    /**
+     * @returns {Map<string, object>} instanceId -> fingerprintRisk profile
+     */
+    buildFingerprintRiskMap() {
+        const groups = new Map(); // fingerprint -> [instanceId]
+        for (const [id, instance] of this.instances) {
+            const key = this.getInstanceFingerprintKey(instance);
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(id);
+        }
+
+        const out = new Map();
+        for (const [fingerprint, ids] of groups) {
+            const sharedWith = Math.max(0, ids.length - 1);
+            const risk = classifyFingerprintRisk(sharedWith);
+            for (const id of ids) {
+                const peers = ids.filter((x) => x !== id).map((peerId) => {
+                    const peer = this.instances.get(peerId);
+                    return { id: peerId, name: peer?.name || peerId };
+                });
+                out.set(id, {
+                    risk,
+                    sharedWith,
+                    fingerprint,
+                    label: fingerprint === 'direct'
+                        ? 'Direct egress (no proxy) — shares worker outbound IP'
+                        : `Proxy ${fingerprint}`,
+                    peers,
+                    thresholds: { lowMax: 2, amberMax: 4 },
+                });
+            }
+        }
+        return out;
+    }
+
+    getFingerprintRiskForInstance(instanceId) {
+        return this.buildFingerprintRiskMap().get(instanceId) || null;
+    }
+
+    /**
+     * Deterministic per-instance offset so conflict/recoverable reconnects don't align.
+     */
+    getRuntimeReconnectStaggerMs(instanceId) {
+        if (!RUNTIME_RECONNECT_STAGGER_MS) return 0;
+        const n = Math.max(1, this.instances.size);
+        const slot = stableInstanceSlot(instanceId, n);
+        return slot * RUNTIME_RECONNECT_STAGGER_MS;
+    }
+
+    /**
+     * Startup auto-reconnect with fleet stagger + jitter (prevents mass companion re-auth).
+     */
+    scheduleStartupReconnect(instance, index = 0) {
+        const jitter = STARTUP_RECONNECT_JITTER_MS
+            ? Math.floor(Math.random() * (STARTUP_RECONNECT_JITTER_MS + 1))
+            : 0;
+        const delayMs = (index * STARTUP_RECONNECT_STAGGER_MS) + jitter;
+        console.log(
+            `[InstanceManager] Scheduling startup auto-reconnect for ${instance.id} in ${Math.round(delayMs / 1000)}s (slot ${index})`,
+        );
+        setTimeout(() => {
+            if (!this.instances.has(instance.id)) return;
+            if (instance.status === 'connected' || instance.status === 'connecting') return;
+            instance.connect().catch((err) => {
+                console.error(`[InstanceManager] Startup auto-reconnect failed for ${instance.id}:`, err.message);
+            });
+        }, delayMs);
+        return delayMs;
     }
     
     /**
@@ -4313,6 +5133,7 @@ class InstanceManager {
                 
                 for (const config of instanceConfigs) {
                     const instance = new WhatsAppInstance(config);
+                    instance.manager = this;
                     
                     instance.onStatusChange = (id, status) => {
                         if (this.onStatusChange) this.onStatusChange(id, status);
@@ -4327,24 +5148,23 @@ class InstanceManager {
                     await instance.init();
                     this.instances.set(instance.id, instance);
                     console.log(`[InstanceManager] Loaded instance: ${instance.id} (${instance.name})`);
-                    
-                    // Auto-connect when credentials represent a paired line (registered or me.id present).
-                    // Only wipe auth for true abandoned QR attempts (creds exist but no me.id).
+                }
+
+                // Second pass: staggered startup reconnect (never fire all companion sessions at once)
+                let startupSlot = 0;
+                for (const [id, instance] of this.instances) {
                     const credsFile = path.join(instance.authFolder, 'creds.json');
-                    if (fsSync.existsSync(credsFile)) {
-                        const authState = await instance._readAuthRegistrationState();
-                        if (authState.registered) {
-                            console.log(`[InstanceManager] Auto-reconnecting instance: ${instance.id}`);
-                            instance.connect().catch(err => {
-                                console.error(`[InstanceManager] Auto-reconnect failed for ${instance.id}:`, err.message);
-                            });
-                        } else if (authState.exists && !authState.hasMe) {
-                            console.log(`[InstanceManager] Clearing abandoned unpaired auth for ${instance.id} on startup`);
-                            await instance._clearLocalAuthFiles('Cleared abandoned unpaired auth on startup');
-                        }
+                    if (!fsSync.existsSync(credsFile)) continue;
+                    const authState = await instance._readAuthRegistrationState();
+                    if (authState.registered) {
+                        this.scheduleStartupReconnect(instance, startupSlot);
+                        startupSlot += 1;
+                    } else if (authState.exists && !authState.hasMe) {
+                        console.log(`[InstanceManager] Clearing abandoned unpaired auth for ${id} on startup`);
+                        await instance._clearLocalAuthFiles('Cleared abandoned unpaired auth on startup');
                     }
                 }
-                console.log(`[InstanceManager] Finished loading ${this.instances.size} instances`);
+                console.log(`[InstanceManager] Finished loading ${this.instances.size} instances (${startupSlot} staggered startup reconnects)`);
             } else {
                 console.log(`[InstanceManager] No instances file found at ${INSTANCES_DB_FILE}`);
             }

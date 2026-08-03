@@ -337,6 +337,55 @@ app.get('/api/instances', (req, res) => {
 });
 
 /**
+ * GET /api/fingerprint-risk
+ * Audit shared egress fingerprints across instances on this worker.
+ * risk: low (sharedWith ≤2) | amber (3–4) | high (5+)
+ * Direct (no proxy) counts as one shared fingerprint — Azure outbound IP.
+ */
+app.get('/api/fingerprint-risk', (req, res) => {
+    try {
+        const riskMap = instanceManager.buildFingerprintRiskMap();
+        const instances = [];
+        const groups = new Map();
+        for (const [id, profile] of riskMap) {
+            const inst = instanceManager.getInstance(id);
+            instances.push({
+                id,
+                name: inst?.name || id,
+                status: inst?.status || null,
+                ...profile,
+            });
+            if (!groups.has(profile.fingerprint)) {
+                groups.set(profile.fingerprint, {
+                    fingerprint: profile.fingerprint,
+                    label: profile.label,
+                    count: 0,
+                    sharedWith: profile.sharedWith,
+                    risk: profile.risk,
+                    members: [],
+                });
+            }
+            const g = groups.get(profile.fingerprint);
+            g.count += 1;
+            g.members.push({ id, name: inst?.name || id, status: inst?.status || null });
+        }
+        res.json({
+            success: true,
+            thresholds: { lowMaxSharedWith: 2, amberMaxSharedWith: 4 },
+            summary: {
+                high: instances.filter((i) => i.risk === 'high').length,
+                amber: instances.filter((i) => i.risk === 'amber').length,
+                low: instances.filter((i) => i.risk === 'low').length,
+            },
+            groups: [...groups.values()].sort((a, b) => b.count - a.count),
+            instances,
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
  * POST /api/instances
  * Create a new WhatsApp instance
  * Body: { name?, webhookUrl?, antiBanSettings? }
@@ -1145,7 +1194,7 @@ app.get('/api/instances/:id/behavior', (req, res) => {
 /**
  * PUT /api/instances/:id/behavior
  * Update behavior settings for instance
- * Body: { behaviorProfile?, typingSimulation?, delayEnabled?, phoneNotificationsEnabled?, notificationGraceMs? }
+ * Body: { behaviorProfile?, typingSimulation?, delayEnabled?, phoneNotificationsEnabled?, notificationGraceMs?, multiDeviceCoexist?, webhookTypingEvents?, groupAlertMode? }
  * Any subset may be sent; omitted keys are left unchanged.
  */
 app.put('/api/instances/:id/behavior', async (req, res) => {
@@ -1158,6 +1207,9 @@ app.put('/api/instances/:id/behavior', async (req, res) => {
         if (body.delayEnabled !== undefined) behaviorSettings.delayEnabled = body.delayEnabled;
         if (body.phoneNotificationsEnabled !== undefined) behaviorSettings.phoneNotificationsEnabled = body.phoneNotificationsEnabled;
         if (body.notificationGraceMs !== undefined) behaviorSettings.notificationGraceMs = body.notificationGraceMs;
+        if (body.multiDeviceCoexist !== undefined) behaviorSettings.multiDeviceCoexist = body.multiDeviceCoexist;
+        if (body.webhookTypingEvents !== undefined) behaviorSettings.webhookTypingEvents = body.webhookTypingEvents;
+        if (body.groupAlertMode !== undefined) behaviorSettings.groupAlertMode = body.groupAlertMode;
 
         const instance = await instanceManager.updateInstance(req.params.id, {
             behaviorSettings,
@@ -1949,7 +2001,8 @@ app.get('/api/instances/:id/reachout-timelock', async (req, res) => {
                     : null,
             });
         }
-        const diagnostics = await instance.refreshReachoutDiagnostics('manual');
+        const force = req.query.force === '1' || req.query.force === 'true';
+        const diagnostics = await instance.refreshReachoutDiagnostics('poll', { force });
         res.json({ success: true, ...diagnostics });
     } catch (error) {
         res.status(500).json({ error: error.message });
