@@ -547,6 +547,88 @@ export async function listProxyPool(regionCode?: string) {
   return api<{ proxies: PlatformProxyPoolItem[] }>(`/api/v3/proxy/admin${search.size ? `?${search.toString()}` : ""}`);
 }
 
+export type FleetProxyAudit = {
+  success: true;
+  generatedAt: string;
+  sharedSecretConfigured: boolean;
+  summary: {
+    workersTotal: number;
+    workersReachable: number;
+    workersUnreachable: number;
+    instancesTotal: number;
+    instancesConnected: number;
+    instancesWithProxy: number;
+    instancesDirect: number;
+    poolSlotsTotal: number;
+    poolSlotsUsed: number;
+    poolSlotsFree: number;
+    fingerprintHighWorkers: number;
+    fingerprintAmberWorkers: number;
+  };
+  controlPlanePool: {
+    total: number;
+    free: number;
+    assigned: number;
+    unavailable: number;
+    byRegion: Array<{
+      regionCode: string;
+      total: number;
+      free: number;
+      assigned: number;
+      unavailable: number;
+    }>;
+  };
+  workers: Array<{
+    id: string;
+    kind: "shared" | "org";
+    label: string;
+    baseUrl: string;
+    publicIp: string | null;
+    orgSlug?: string | null;
+    reachable: boolean;
+    error?: string;
+    instanceCount: number;
+    connectedCount: number;
+    withProxyCount: number;
+    directCount: number;
+    pool: { enabled: boolean; total: number; used: number; free: number } | null;
+    fingerprintSummary: { high: number; amber: number; low: number } | null;
+    fingerprintGroups: Array<{
+      fingerprint: string;
+      risk: string;
+      count: number;
+      sharedWith: number;
+      members: string[];
+    }>;
+    instances: Array<{
+      id: string;
+      name: string;
+      status: string;
+      phone: string | null;
+      proxySource: string | null;
+      fingerprint: string | null;
+      fingerprintRisk: string | null;
+      sharedWith: number | null;
+      proxyHost: string | null;
+      proxyPort: number | null;
+      hasProxy: boolean;
+    }>;
+  }>;
+};
+
+export async function getFleetProxyAudit(options?: {
+  includeShared?: boolean;
+  includeOrg?: boolean;
+  workers?: string[];
+}) {
+  const search = new URLSearchParams();
+  if (options?.includeShared === false) search.set("includeShared", "0");
+  if (options?.includeOrg === false) search.set("includeOrg", "0");
+  if (options?.workers?.length) search.set("workers", options.workers.join(","));
+  const qs = search.size ? `?${search.toString()}` : "";
+  return api<FleetProxyAudit>(`/api/v3/proxy/fleet${qs}`, { cache: "no-store" });
+}
+
 export async function removeProxyFromPool(proxyId: string, force = false) {
   return api<{ success: boolean }>("/api/v3/proxy/admin", {
     method: "DELETE",
@@ -754,6 +836,34 @@ export async function getInstanceReachoutTimelock(instanceId: string) {
     ...payload,
     reachoutTimeLock: normalizeReachoutTimeLock(payload.reachoutTimeLock),
   };
+}
+
+export type InstanceBehaviorSettings = {
+  behaviorProfile?: string;
+  typingSimulation?: boolean;
+  delayEnabled?: boolean;
+  phoneNotificationsEnabled?: boolean;
+  notificationGraceMs?: number;
+  multiDeviceCoexist?: boolean;
+  webhookTypingEvents?: boolean;
+  groupAlertMode?: boolean;
+};
+
+export async function getInstanceBehavior(instanceId: string) {
+  return api<{ success: boolean; behaviorSettings?: InstanceBehaviorSettings }>(
+    `/api/v3/instances/${encodeURIComponent(instanceId)}/behavior`,
+    { cache: "no-store" },
+  );
+}
+
+export async function updateInstanceBehavior(
+  instanceId: string,
+  body: Partial<InstanceBehaviorSettings>,
+) {
+  return api<{ success: boolean; behaviorSettings?: InstanceBehaviorSettings }>(
+    `/api/v3/instances/${encodeURIComponent(instanceId)}/behavior`,
+    { method: "PUT", body: JSON.stringify(body) },
+  );
 }
 
 export async function updateInstanceAntibanV2(

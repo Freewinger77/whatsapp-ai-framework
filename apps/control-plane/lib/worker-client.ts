@@ -297,6 +297,44 @@ export async function getWorkerReachoutTimelock(input: WorkerRequestInput) {
   return parseWorkerResponse(response, 'Worker reachout timelock probe failed');
 }
 
+export async function getWorkerProxyPool(
+  input: Pick<WorkerRequestInput, 'endpoint' | 'publicIp' | 'sharedSecret'>
+) {
+  const response = await requestWorker(input, '/api/proxy/pool');
+  return parseWorkerResponse(response, 'Worker proxy pool failed');
+}
+
+export async function getWorkerProxyStatus(
+  input: Pick<WorkerRequestInput, 'endpoint' | 'publicIp' | 'sharedSecret'>
+) {
+  const response = await requestWorker(input, '/api/proxy');
+  return parseWorkerResponse(response, 'Worker proxy status failed');
+}
+
+export async function getWorkerFingerprintRisk(
+  input: Pick<WorkerRequestInput, 'endpoint' | 'publicIp' | 'sharedSecret'>
+) {
+  const response = await requestWorker(input, '/api/fingerprint-risk');
+  return parseWorkerResponse(response, 'Worker fingerprint risk failed');
+}
+
+export async function getWorkerBehavior(input: WorkerRequestInput) {
+  const response = await requestWorker(
+    input,
+    `/api/instances/${encodeURIComponent(input.instanceId)}/behavior`
+  );
+  return parseWorkerResponse(response, 'Worker behavior status failed');
+}
+
+export async function updateWorkerBehavior(input: WorkerRequestInput, body: Record<string, unknown>) {
+  const response = await requestWorker(
+    input,
+    `/api/instances/${encodeURIComponent(input.instanceId)}/behavior`,
+    { method: 'PUT', body }
+  );
+  return parseWorkerResponse(response, 'Worker behavior update failed');
+}
+
 export async function updateWorkerAntibanV2(input: WorkerRequestInput, body: Record<string, unknown>) {
   const response = await requestWorker(
     input,

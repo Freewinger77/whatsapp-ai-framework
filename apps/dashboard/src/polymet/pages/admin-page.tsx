@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ExternalLinkIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { PlatformProxyPoolPanel } from "@/polymet/components/platform-proxy-pool-panel";
+import { PlatformFleetProxyPanel } from "@/polymet/components/platform-fleet-proxy-panel";
 import {
   blockPlatformOrganization,
   deletePlatformOrganization,
@@ -286,7 +287,10 @@ export function AdminPage() {
       )}
 
       {tab === "fleet" && overview && (
-        <section className="space-y-4">
+        <section className="space-y-6">
+          <PlatformFleetProxyPanel />
+          <div className="space-y-4">
+            <h3 className="text-sm font-medium">Control-plane instances</h3>
           <input
             value={fleetSearch}
             onChange={(event) => setFleetSearch(event.target.value)}
@@ -329,6 +333,7 @@ export function AdminPage() {
                 )}
               </tbody>
             </table>
+          </div>
           </div>
         </section>
       )}
