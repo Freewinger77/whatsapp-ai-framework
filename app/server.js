@@ -183,6 +183,7 @@ function isPublicDashboardRead(req) {
         path === '/health' ||
         path === '/dashboard-config' ||
         path === '/instances' ||
+        path === '/ui/instance-order' ||
         /^\/instances\/[^/]+$/.test(path) ||
         /^\/instances\/[^/]+\/(qr|connection|logs|reachout-timelock)$/.test(path)
     );
@@ -846,7 +847,10 @@ function buildSendOptions(body = {}) {
     if (body.allowColdWithoutToken !== undefined) options.allowColdWithoutToken = body.allowColdWithoutToken;
     if (body.blockColdWithoutToken !== undefined) options.blockColdWithoutToken = body.blockColdWithoutToken;
     if (body.forceDespiteTimelock !== undefined) options.forceDespiteTimelock = body.forceDespiteTimelock;
+    if (body.forceDespiteHandoff !== undefined) options.forceDespiteHandoff = body.forceDespiteHandoff;
+    if (body.allowDuringHandoff !== undefined) options.allowDuringHandoff = body.allowDuringHandoff;
     if (body.skipPrivacyToken !== undefined) options.skipPrivacyToken = body.skipPrivacyToken;
+    if (body.contentVariation !== undefined) options.contentVariation = body.contentVariation;
     return options;
 }
 
@@ -1335,12 +1339,17 @@ app.get('/api/instances/:id/antiban-v2/config', (req, res) => {
  *
  * Body shapes (all optional):
  *   { enabled?: boolean,
+ *     enhancedMode?: boolean,
  *     preset?: 'conservative' | 'moderate' | 'aggressive',
  *     overrides?: { maxPerMinute, maxPerHour, maxPerDay, minDelayMs, maxDelayMs, ... },
- *     modules?: { warmup: { enabled }, replyRatio: { enabled }, ... },
+ *     modules?: { warmup: { enabled }, humanEntropy: { enabled }, contentVariator: { enabled }, ... },
  *     alertsWebhook?: 'https://...' | null }
  *
- * Hot-reloads rate limits when possible. Other fields take effect on next reconnect.
+ * Hot-reloads rate limits when possible. Wrap-affecting modules rebuild the socket wrap live.
+ *
+ * Per-send content variation (marketing blasts) does not require the global module:
+ *   POST /api/instances/:id/send { message, contentVariation: true }
+ *   or { contentVariation: { zeroWidthChars: true, punctuationVariation: true, synonyms: false } }
  */
 app.put('/api/instances/:id/antiban-v2/config', async (req, res) => {
     try {
@@ -1352,6 +1361,41 @@ app.put('/api/instances/:id/antiban-v2/config', async (req, res) => {
     }
 });
 
+/**
+ * GET /api/instances/:id/antiban-v2/modules
+ * Catalog of every antiban subsystem with tooltips, effort/impact, wired flag, and current enabled state.
+ */
+app.get('/api/instances/:id/antiban-v2/modules', (req, res) => {
+    try {
+        const data = instanceManager.getAntibanV2(req.params.id);
+        res.json({
+            success: true,
+            libraryVersion: data?.libraryVersion || null,
+            enabled: data?.enabled !== false,
+            enhancedMode: !!data?.enhancedMode,
+            modules: data?.moduleCatalog || data?.config?.modules || [],
+        });
+    } catch (error) {
+        res.status(404).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/antiban-v2/modules
+ * Global catalog (defaults) — no instance required. Useful for UI tooltips / docs.
+ */
+app.get('/api/antiban-v2/modules', async (req, res) => {
+    try {
+        const mod = await import('./src/utils/antiban-v2.js');
+        res.json({
+            success: true,
+            libraryVersion: mod.ANTIBAN_LIBRARY_VERSION,
+            modules: mod.getModuleCatalogPayload(null),
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
 /**
  * GET /api/instances/:id/antiban-v2/health
  * Compact health view: { risk, score, recommendation, isPaused, reasons }
@@ -2328,13 +2372,13 @@ app.get('/api/instances/:id/handoff/settings', (req, res) => {
 /**
  * PUT /api/instances/:id/handoff/settings
  * Update handoff settings
- * Body: { resumeKeywords?: string[], resumeMessage?: string }
+ * Body: { resumeKeywords?: string[], resumeMessage?: string, blockApiSendsDuringHandoff?: boolean }
  */
 app.put('/api/instances/:id/handoff/settings', async (req, res) => {
     const instance = instanceManager.getInstance(req.params.id);
     if (!instance) return res.status(404).json({ error: 'Instance not found' });
 
-    const { resumeKeywords, resumeMessage } = req.body;
+    const { resumeKeywords, resumeMessage, blockApiSendsDuringHandoff } = req.body;
     if (resumeKeywords !== undefined) {
         if (!Array.isArray(resumeKeywords) || resumeKeywords.length === 0) {
             return res.status(400).json({ error: 'resumeKeywords must be a non-empty array of strings' });
@@ -2344,9 +2388,16 @@ app.put('/api/instances/:id/handoff/settings', async (req, res) => {
     if (resumeMessage !== undefined) {
         instance.handoffSettings.resumeMessage = String(resumeMessage);
     }
+    if (blockApiSendsDuringHandoff !== undefined) {
+        instance.handoffSettings.blockApiSendsDuringHandoff = !!blockApiSendsDuringHandoff;
+    }
 
     await instanceManager._saveInstances();
-    instance._log(`Handoff settings updated: keywords=[${instance.handoffSettings.resumeKeywords.join(', ')}]`, 'info');
+    instance._log(
+        `Handoff settings updated: keywords=[${instance.handoffSettings.resumeKeywords.join(', ')}] `
+        + `blockApiSends=${instance.handoffSettings.blockApiSendsDuringHandoff !== false}`,
+        'info'
+    );
     res.json({ success: true, settings: instance.handoffSettings });
 });
 
@@ -2484,6 +2535,50 @@ app.get('/api/status', (req, res) => {
             phone: i.connectedPhone
         }))
     });
+});
+
+const SIDEBAR_ORDER_FILE = path.join(__dirname, 'instances', 'sidebar-order.json');
+
+function normalizeSidebarOrder(value) {
+    if (!Array.isArray(value)) return [];
+    return value.filter((id) => typeof id === 'string' && id.trim()).map((id) => id.trim());
+}
+
+/**
+ * GET /api/ui/instance-order
+ * Persisted left-bar instance order (shared across browsers for this worker).
+ */
+app.get('/api/ui/instance-order', async (req, res) => {
+    try {
+        if (!fsSync.existsSync(SIDEBAR_ORDER_FILE)) {
+            return res.json({ success: true, order: [] });
+        }
+        const raw = await fs.readFile(SIDEBAR_ORDER_FILE, 'utf8');
+        const parsed = JSON.parse(raw);
+        res.json({ success: true, order: normalizeSidebarOrder(parsed?.order) });
+    } catch (error) {
+        console.error('[API] instance-order read:', error.message);
+        res.json({ success: true, order: [] });
+    }
+});
+
+/**
+ * PUT /api/ui/instance-order
+ * Save left-bar instance order for this worker.
+ */
+app.put('/api/ui/instance-order', async (req, res) => {
+    try {
+        const order = normalizeSidebarOrder(req.body?.order);
+        await fs.mkdir(path.dirname(SIDEBAR_ORDER_FILE), { recursive: true });
+        await fs.writeFile(
+            SIDEBAR_ORDER_FILE,
+            JSON.stringify({ order, updatedAt: new Date().toISOString() }, null, 2)
+        );
+        res.json({ success: true, order });
+    } catch (error) {
+        console.error('[API] instance-order write:', error.message);
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 /**
@@ -2881,6 +2976,8 @@ API Endpoints:
   
   GET    /api/health                    Health check
   GET    /api/status                    System status
+  GET    /api/ui/instance-order         Sidebar instance order
+  PUT    /api/ui/instance-order         Save sidebar instance order
 
 Initializing...
     `);

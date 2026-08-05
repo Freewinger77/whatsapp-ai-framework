@@ -711,8 +711,21 @@ export function instanceMediaPreviewUrl(instanceId: string, mediaId: string) {
 
 export type AntibanV2Status = {
   enabled?: boolean;
+  enhancedMode?: boolean;
+  libraryVersion?: string;
   running?: boolean;
   preset?: string;
+  moduleCatalog?: Array<{
+    id: string;
+    label: string;
+    group?: string;
+    enabled?: boolean;
+    effort?: string;
+    impact?: string;
+    tooltip?: string;
+    wired?: boolean;
+    perSend?: boolean;
+  }>;
   overrides?: {
     maxPerHour?: number;
     maxPerDay?: number;
@@ -870,9 +883,10 @@ export async function updateInstanceAntibanV2(
   instanceId: string,
   body: {
     enabled?: boolean;
+    enhancedMode?: boolean;
     preset?: "conservative" | "moderate" | "aggressive" | "balanced";
     overrides?: { maxPerHour?: number; maxPerDay?: number };
-    modules?: { warmup?: { enabled?: boolean; day1Limit?: number } };
+    modules?: Record<string, { enabled?: boolean; day1Limit?: number }>;
   },
 ) {
   return api<{ success: boolean; antibanV2?: AntibanV2Status }>(

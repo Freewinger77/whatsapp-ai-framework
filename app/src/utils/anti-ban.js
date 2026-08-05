@@ -517,11 +517,13 @@ async function safeSendMessageDirect(socket, jid, message, incomingText, antiBan
         relayMessage = null
     } = options;
     
-    // Check rate limits
-    const canSend = antiBanManager.canSendMessage(jid);
-    if (!canSend.allowed) {
-        console.log(`[Anti-Ban] BLOCKED: ${canSend.reason}. Wait ${Math.ceil(canSend.waitTime / 1000)}s`);
-        return { sent: false, reason: canSend.reason, waitTime: canSend.waitTime };
+    // Check rate limits (skipped when caller has anti-ban switch off)
+    if (!options.skipRateLimits) {
+        const canSend = antiBanManager.canSendMessage(jid);
+        if (!canSend.allowed) {
+            console.log(`[Anti-Ban] BLOCKED: ${canSend.reason}. Wait ${Math.ceil(canSend.waitTime / 1000)}s`);
+            return { sent: false, reason: canSend.reason, waitTime: canSend.waitTime };
+        }
     }
     
     // ANTI-BAN: Simulate reading the message first (if messageKey provided)
@@ -560,6 +562,7 @@ async function safeSendMessageDirect(socket, jid, message, incomingText, antiBan
 
     // Send the message
     const messageObj = typeof message === 'string' ? { text: message } : message;
+    let sentMsg = null;
     if (messageObj?.__wasupInteractiveContent) {
         await sendInteractiveViaHelper(socket, jid, messageObj.__wasupInteractiveContent);
     } else if (messageObj?.__wasupRelayContent) {
@@ -571,13 +574,20 @@ async function safeSendMessageDirect(socket, jid, message, incomingText, antiBan
         });
     } else {
         const { __wasupMessageText, __wasupRelayContent, __wasupInteractiveContent, ...sendableMessage } = messageObj || {};
-        await socket.sendMessage(jid, sendableMessage);
+        sentMsg = await socket.sendMessage(jid, sendableMessage);
     }
 
     // Record the message for rate limiting
     antiBanManager.recordMessage(jid);
 
-    return { sent: true, delay: delayMs, typingSimulation, delayEnabled };
+    return {
+        sent: true,
+        delay: delayMs,
+        typingSimulation,
+        delayEnabled,
+        key: sentMsg?.key || null,
+        status: sentMsg?.status ?? null
+    };
 }
 
 /**

@@ -5029,6 +5029,16 @@
                                             <label>Auto-reply on resume</label>
                                             <input type="text" id="handoff-resume-msg" placeholder="e.g. AI assistant is back online">
                                         </div>
+                                        <div class="toggle-row" style="margin: 10px 0 14px;">
+                                            <div class="toggle-info">
+                                                <h4>Block API sends during handoff</h4>
+                                                <p>Stops /api/send (n8n/AI) while a chat is in human mode. PN and LID forms are matched. Override per send with forceDespiteHandoff.</p>
+                                            </div>
+                                            <label class="toggle-switch">
+                                                <input type="checkbox" id="handoff-block-api" checked>
+                                                <span class="toggle-slider"></span>
+                                            </label>
+                                        </div>
                                         <button class="btn btn-primary btn-sm" onclick="saveHandoffSettings()">Save Settings</button>
                                     </div>
                                 </div>
@@ -5055,6 +5065,16 @@
                                 </div>
                                 <label class="toggle-switch">
                                     <input type="checkbox" id="v2-enabled" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="toggle-row" style="margin-bottom: 12px;">
+                                <div class="toggle-info">
+                                    <h4>Enhanced mode (v4)</h4>
+                                    <p id="v2-enhanced-hint">Off by default — classic behaviour. On = group-op guard, deaf-session detect, topology + shared IP pool.</p>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="v2-enhanced">
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
@@ -5107,6 +5127,11 @@
                                     <span class="usage-label">Warm-up</span>
                                     <span class="usage-value" id="v2-warmup-status">—</span>
                                 </div>
+                                <div style="margin-top: 14px; border-top: 1px solid var(--zinc-800); padding-top: 12px;">
+                                    <div style="font-size: 12px; color: var(--zinc-300); margin-bottom: 8px;">Module toggles</div>
+                                    <p style="font-size: 11px; color: var(--zinc-500); margin: 0 0 10px;">Hover the info icon for what each module does. Master anti-ban stays off by default; flip modules per instance via API too.</p>
+                                    <div id="v2-module-toggles" style="display:flex; flex-direction:column; gap:8px;"></div>
+                                </div>
                             </details>
                         </div>
 
@@ -5154,6 +5179,16 @@
                                     </div>
                                     <label class="toggle-switch" aria-label="Response delays">
                                         <input type="checkbox" id="toggle-delay">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="toggle-row">
+                                    <div class="toggle-info">
+                                        <h4>Keep phone push (stay offline)</h4>
+                                        <p>Baileys tip: stay presence-unavailable so the phone keeps notifications. Works with Shared Devices.</p>
+                                    </div>
+                                    <label class="toggle-switch" aria-label="Keep phone push stay offline">
+                                        <input type="checkbox" id="toggle-phone-push">
                                         <span class="toggle-slider"></span>
                                     </label>
                                 </div>
@@ -5350,6 +5385,7 @@
             btnSaveBehavior: document.getElementById('btn-save-behavior'),
             toggleTyping: document.getElementById('toggle-typing'),
             toggleDelay: document.getElementById('toggle-delay'),
+            togglePhonePush: document.getElementById('toggle-phone-push'),
             toggleMultiDeviceCoexist: document.getElementById('toggle-multi-device-coexist'),
             toggleWebhookTypingEvents: document.getElementById('toggle-webhook-typing-events'),
             toggleGroupAlertMode: document.getElementById('toggle-group-alert-mode'),
@@ -5548,21 +5584,26 @@
                     case 'init':
                     if ((data.data.instances || []).length > 0) {
                         instances = data.data.instances;
-                        applyInstanceOrder();
-                        renderInstanceList();
-                        startReachoutFleetPolling();
+                        void loadInstanceOrderFromServer().finally(() => {
+                            applyInstanceOrder();
+                            renderInstanceList();
+                            startReachoutFleetPolling();
+                        });
                     } else if (dashboardConfig.allowPublicDashboard || !dashboardConfig.dashboardRequiresApiKey) {
                         void refreshInstancesFromApi().catch((error) => {
                             console.warn('Instance refresh failed:', error.message);
                         });
                     } else {
                         instances = data.data.instances || [];
-                        applyInstanceOrder();
-                        renderInstanceList();
+                        void loadInstanceOrderFromServer().finally(() => {
+                            applyInstanceOrder();
+                            renderInstanceList();
+                        });
                     }
                         break;
                 case 'instance_created':
                     instances.push(data.data);
+                    applyInstanceOrder();
                     renderInstanceList();
                     selectInstance(data.data.id);
                         break;
@@ -5606,6 +5647,7 @@
                     instances[idx].reachoutTimeLock = prevLock;
                 }
             }
+            applyInstanceOrder();
             renderInstanceList();
             if (updated.id === selectedInstanceId) {
                 renderInstanceDetail(instances.find(i => i.id === selectedInstanceId));
@@ -5784,20 +5826,76 @@
         function saveInstanceOrder() {
             const order = instances.map(i => i.id);
             try { localStorage.setItem('wasup_instance_order', JSON.stringify(order)); } catch(e) {}
+            void persistInstanceOrderToServer(order);
+        }
+
+        function connectionSortRank(status) {
+            if (status === 'connected') return 0;
+            if (status === 'connecting' || status === 'reconnecting' || status === 'qr') return 1;
+            return 2;
         }
 
         function applyInstanceOrder() {
+            let saved = [];
             try {
-                const saved = JSON.parse(localStorage.getItem('wasup_instance_order') || '[]');
-                if (!saved.length) return;
-                const orderMap = {};
-                saved.forEach((id, idx) => orderMap[id] = idx);
-                instances.sort((a, b) => {
-                    const aIdx = orderMap[a.id] !== undefined ? orderMap[a.id] : 9999;
-                    const bIdx = orderMap[b.id] !== undefined ? orderMap[b.id] : 9999;
-                    return aIdx - bIdx;
-                });
-            } catch(e) {}
+                saved = JSON.parse(localStorage.getItem('wasup_instance_order') || '[]');
+                if (!Array.isArray(saved)) saved = [];
+            } catch(e) {
+                saved = [];
+            }
+            const orderMap = {};
+            saved.forEach((id, idx) => {
+                if (typeof id === 'string') orderMap[id] = idx;
+            });
+            instances.sort((a, b) => {
+                const rankDiff = connectionSortRank(a.status) - connectionSortRank(b.status);
+                if (rankDiff !== 0) return rankDiff;
+                const aIdx = orderMap[a.id] !== undefined ? orderMap[a.id] : 9999;
+                const bIdx = orderMap[b.id] !== undefined ? orderMap[b.id] : 9999;
+                if (aIdx !== bIdx) return aIdx - bIdx;
+                return String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
+            });
+        }
+
+        let sidebarOrderLoadPromise = null;
+
+        async function persistInstanceOrderToServer(order) {
+            try {
+                await apiCall('/ui/instance-order', 'PUT', { order });
+            } catch (error) {
+                console.warn('Could not persist sidebar order:', error?.message || error);
+            }
+        }
+
+        async function loadInstanceOrderFromServer() {
+            if (sidebarOrderLoadPromise) return sidebarOrderLoadPromise;
+            sidebarOrderLoadPromise = (async () => {
+                try {
+                    const result = await apiCall('/ui/instance-order');
+                    const order = Array.isArray(result?.order) ? result.order.filter((id) => typeof id === 'string') : [];
+                    if (order.length) {
+                        try { localStorage.setItem('wasup_instance_order', JSON.stringify(order)); } catch (e) {}
+                        return order;
+                    }
+                    // Seed server from this browser if it already has a local order.
+                    let local = [];
+                    try {
+                        local = JSON.parse(localStorage.getItem('wasup_instance_order') || '[]');
+                    } catch (e) {
+                        local = [];
+                    }
+                    if (Array.isArray(local) && local.length) {
+                        await persistInstanceOrderToServer(local);
+                    }
+                    return Array.isArray(local) ? local : [];
+                } catch (error) {
+                    console.warn('Could not load sidebar order:', error?.message || error);
+                    return [];
+                } finally {
+                    sidebarOrderLoadPromise = null;
+                }
+            })();
+            return sidebarOrderLoadPromise;
         }
 
         function updatePlaygroundLink(instanceId = selectedInstanceId) {
@@ -5986,7 +6084,7 @@
             // Countdown is local; MEX probe is throttled server-side and polled rarely.
             reachoutFleetPollTimer = setInterval(() => {
                 refreshReachoutLocksForSidebar().catch(() => {});
-            }, 5 * 60 * 1000);
+            }, 15 * 60 * 1000);
             reachoutCountdownTimer = setInterval(() => {
                 updateSidebarReachoutCountdowns();
                 if (!selectedInstanceId) return;
@@ -6021,8 +6119,8 @@
                 }
             };
             tick();
-            // Detail countdown updates locally; probe only every 5m (server also caches 2m).
-            reachoutPollTimer = setInterval(tick, 5 * 60 * 1000);
+            // Detail countdown updates locally; MEX probe at most every 15m (server also throttles).
+            reachoutPollTimer = setInterval(tick, 15 * 60 * 1000);
         }
 
         function renderInstanceDetail(instance) {
@@ -6122,6 +6220,12 @@
                 });
                 el.toggleTyping.checked = instance.behaviorSettings.typingSimulation !== false;
                 el.toggleDelay.checked = instance.behaviorSettings.delayEnabled !== false;
+                if (el.togglePhonePush) {
+                    const bs = instance.behaviorSettings;
+                    el.togglePhonePush.checked = !!bs.phoneNotificationsEnabled
+                        || profile === 'notification-balanced'
+                        || profile === 'notification-max';
+                }
                 if (el.toggleMultiDeviceCoexist) {
                     el.toggleMultiDeviceCoexist.checked = !!instance.behaviorSettings.multiDeviceCoexist;
                 }
@@ -6512,6 +6616,7 @@
                 throw new Error(result.error);
             }
             instances = result.instances || [];
+            await loadInstanceOrderFromServer();
             applyInstanceOrder();
             renderInstanceList();
             startReachoutFleetPolling();
@@ -6850,13 +6955,14 @@
                         behaviorProfile,
                         typingSimulation: el.toggleTyping.checked,
                         delayEnabled: el.toggleDelay.checked,
+                        phoneNotificationsEnabled: !!(el.togglePhonePush && el.togglePhonePush.checked)
+                            || behaviorProfile !== 'bot-native',
                         multiDeviceCoexist: !!(el.toggleMultiDeviceCoexist && el.toggleMultiDeviceCoexist.checked),
                         webhookTypingEvents: !!(el.toggleWebhookTypingEvents && el.toggleWebhookTypingEvents.checked),
                         groupAlertMode: !!(el.toggleGroupAlertMode && el.toggleGroupAlertMode.checked),
-                        phoneNotificationsEnabled: behaviorProfile !== 'bot-native',
                         notificationGraceMs: behaviorProfile === 'notification-max' ? 5000
                             : behaviorProfile === 'notification-balanced' ? 2500
-                                : 0
+                                : ((el.togglePhonePush && el.togglePhonePush.checked) ? 2500 : 0)
                     })
                 });
                 el.btnSaveBehavior.textContent = 'Saved';
@@ -6978,6 +7084,8 @@
             const warmupToggle = document.getElementById('v2-warmup-enabled');
             const enabledToggle = document.getElementById('v2-enabled');
             const enabledHint = document.getElementById('v2-enabled-hint');
+            const enhancedToggle = document.getElementById('v2-enhanced');
+            const enhancedHint = document.getElementById('v2-enhanced-hint');
             const limitsPanel = document.getElementById('v2-limits-panel');
             if (!warmupEl) return;
 
@@ -6989,6 +7097,19 @@
                 enabledHint.textContent = enabled
                     ? (v2?.running ? 'Enforcing send limits on this instance' : 'On — reconnect to fully arm')
                     : 'Off — sends are not rate-limited';
+            }
+            const enhanced = !!v2?.enhancedMode;
+            if (enhancedToggle && document.activeElement !== enhancedToggle) {
+                enhancedToggle.checked = enhanced;
+                enhancedToggle.disabled = !enabled;
+            }
+            if (enhancedHint) {
+                const lib = v2?.libraryVersion ? ` (lib ${v2.libraryVersion})` : '';
+                enhancedHint.textContent = !enabled
+                    ? 'Enable anti-ban protection first'
+                    : enhanced
+                        ? `On — group-op guard, deaf-session, topology, shared IP pool${lib}`
+                        : `Off — classic wrap (instances unaffected)${lib}`;
             }
             if (limitsPanel) {
                 limitsPanel.style.opacity = enabled ? '1' : '0.45';
@@ -7049,6 +7170,55 @@
             document.querySelectorAll('.antiban-preset-btn').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.v2Preset === preset);
             });
+
+            renderAntibanModuleToggles(v2, enabled);
+        }
+
+        function renderAntibanModuleToggles(v2, masterEnabled) {
+            const host = document.getElementById('v2-module-toggles');
+            if (!host) return;
+            const catalog = v2?.moduleCatalog || [];
+            if (!catalog.length) {
+                host.innerHTML = '<div style="color:var(--zinc-500);font-size:11px;">Module catalog loads after instance status refresh.</div>';
+                return;
+            }
+            host.innerHTML = catalog.map((m) => {
+                const checked = m.enabled ? 'checked' : '';
+                const disabled = !masterEnabled && m.id !== 'contentVariator' ? 'disabled' : '';
+                const wired = m.wired === false ? ' <span style="color:var(--zinc-600);">(reserved)</span>' : '';
+                const tip = String(m.tooltip || '').replace(/"/g, '&quot;');
+                return `<div class="toggle-row" style="margin:0; align-items:flex-start;">
+                    <div class="toggle-info" style="flex:1;">
+                        <h4 style="display:flex;align-items:center;gap:6px;font-size:12px;">
+                            ${m.label}${wired}
+                            <span title="${tip}" style="cursor:help; display:inline-flex; width:14px; height:14px; border-radius:50%; border:1px solid var(--zinc-500); color:var(--zinc-400); font-size:10px; align-items:center; justify-content:center; line-height:1;">i</span>
+                        </h4>
+                        <p style="font-size:10px;color:var(--zinc-600);margin:2px 0 0;">${m.group} · effort ${m.effort || '—'} · impact ${m.impact || '—'}</p>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" data-antiban-module="${m.id}" ${checked} ${disabled}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>`;
+            }).join('');
+
+            host.querySelectorAll('input[data-antiban-module]').forEach((input) => {
+                input.onchange = async (event) => {
+                    const id = event.target.getAttribute('data-antiban-module');
+                    const enabled = !!event.target.checked;
+                    try {
+                        const result = await apiCall(`/instances/${selectedInstanceId}/antiban-v2/config`, 'PUT', {
+                            modules: { [id]: { enabled } },
+                        });
+                        if (result.error) throw new Error(result.error);
+                        if (result.antibanV2) applyAntibanV2ToInstance(selectedInstanceId, result.antibanV2);
+                        showToast(`${id} ${enabled ? 'on' : 'off'}`, 'success');
+                    } catch (e) {
+                        event.target.checked = !enabled;
+                        showToast('Error: ' + e.message, 'error');
+                    }
+                };
+            });
         }
 
         async function setAntibanV2Enabled(enabled) {
@@ -7057,6 +7227,20 @@
             if (result.error) throw new Error(result.error);
             if (result.antibanV2) applyAntibanV2ToInstance(selectedInstanceId, result.antibanV2);
             showToast(enabled ? 'Anti-ban protection enabled' : 'Anti-ban protection turned off', enabled ? 'success' : 'warning');
+            await refreshInstancesFromApi();
+        }
+
+        async function setAntibanV2Enhanced(enhancedMode) {
+            if (!selectedInstanceId) return;
+            const result = await apiCall(`/instances/${selectedInstanceId}/antiban-v2/config`, 'PUT', { enhancedMode });
+            if (result.error) throw new Error(result.error);
+            if (result.antibanV2) applyAntibanV2ToInstance(selectedInstanceId, result.antibanV2);
+            showToast(
+                enhancedMode
+                    ? 'Enhanced anti-ban ON (group-op / deaf-session / topology / shared pool)'
+                    : 'Enhanced anti-ban OFF — classic behaviour',
+                'success'
+            );
             await refreshInstancesFromApi();
         }
 
@@ -7088,6 +7272,13 @@
             setAntibanV2Enabled(enabled).catch(e => {
                 showToast('Error: ' + e.message, 'error');
                 event.target.checked = !enabled;
+            });
+        });
+        document.getElementById('v2-enhanced')?.addEventListener('change', (event) => {
+            const enhanced = event.target.checked;
+            setAntibanV2Enhanced(enhanced).catch(e => {
+                showToast('Error: ' + e.message, 'error');
+                event.target.checked = !enhanced;
             });
         });
 
@@ -7169,10 +7360,16 @@
             if (!selectedInstanceId) return;
             const keywordsRaw = document.getElementById('handoff-keywords').value;
             const resumeMessage = document.getElementById('handoff-resume-msg').value;
+            const blockApiEl = document.getElementById('handoff-block-api');
             const resumeKeywords = keywordsRaw.split(',').map(k => k.trim()).filter(Boolean);
             if (!resumeKeywords.length) return showToast('Enter at least one resume keyword', 'error');
             try {
-                const result = await apiCall(`/instances/${selectedInstanceId}/handoff/settings`, 'PUT', { resumeKeywords, resumeMessage });
+                const payload = {
+                    resumeKeywords,
+                    resumeMessage,
+                    blockApiSendsDuringHandoff: blockApiEl ? !!blockApiEl.checked : true,
+                };
+                const result = await apiCall(`/instances/${selectedInstanceId}/handoff/settings`, 'PUT', payload);
                 if (result.settings) loadHandoffSettings(result.settings);
                 showToast('Handoff settings saved', 'success');
             } catch (e) { showToast('Error: ' + e.message, 'error'); }
@@ -7182,8 +7379,10 @@
             if (!settings) return;
             const kwEl = document.getElementById('handoff-keywords');
             const msgEl = document.getElementById('handoff-resume-msg');
+            const blockEl = document.getElementById('handoff-block-api');
             if (kwEl) kwEl.value = (settings.resumeKeywords || []).join(', ');
             if (msgEl) msgEl.value = settings.resumeMessage || '';
+            if (blockEl) blockEl.checked = settings.blockApiSendsDuringHandoff !== false;
         }
 
         // Update handoff list + settings when instance detail is rendered

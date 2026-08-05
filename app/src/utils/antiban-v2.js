@@ -14,12 +14,18 @@
  *   - LidResolver + JidCanonicalizer (LID↔PN race fix)
  *   - SessionHealthMonitor (Bad MAC detection)
  *
+ * Enhanced mode (opt-in, default OFF — existing instances unchanged):
+ *   - GroupOperationGuard, DeafSessionDetector
+ *   - TopologyThrottler, InstanceCoordinator (shared worker pool file)
+ *   - DeliveryTracker / ban-recovery already present in 4.x AntiBan core
+ *
  * State is persisted per-instance under instances/<id>/antiban/ via FileStateAdapter.
  */
 
 import path from 'path';
 import fs from 'fs/promises';
 import fsSync from 'fs';
+import { createRequire } from 'module';
 
 import {
     AntiBan,
@@ -32,8 +38,39 @@ import {
     AbortError,
     wrapSocket,
     STEALTH_BROWSER_POOL,
+    InstanceCoordinator,
+    ContentVariator,
+    HumanEntropyService,
 } from 'baileys-antiban';
 
+import {
+    ANTIBAN_MODULE_CATALOG,
+    ENHANCED_PACK_MODULE_IDS,
+    buildDefaultModules,
+    mergeModules,
+    isModuleOn,
+    applyEnhancedModePack,
+    getModuleCatalogPayload,
+} from './antiban-modules.js';
+
+export {
+    ANTIBAN_MODULE_CATALOG,
+    ENHANCED_PACK_MODULE_IDS,
+    mergeModules,
+    isModuleOn,
+    getModuleCatalogPayload,
+    applyEnhancedModePack,
+};
+const require = createRequire(import.meta.url);
+let ANTIBAN_LIBRARY_VERSION = 'unknown';
+try {
+    const resolved = require.resolve('baileys-antiban');
+    // dist/cjs/index.js → ../../package.json
+    const pkgPath = path.join(path.dirname(resolved), '..', '..', 'package.json');
+    ANTIBAN_LIBRARY_VERSION = JSON.parse(fsSync.readFileSync(pkgPath, 'utf8')).version;
+} catch (_) { /* ignore */ }
+
+export { ANTIBAN_LIBRARY_VERSION };
 // ----------------------------------------------------------------------------
 // Defaults & preset mapping
 // ----------------------------------------------------------------------------
@@ -49,18 +86,9 @@ const LEGACY_PRESET_MAP = {
 
 /**
  * Default v2 module flags. Every module can be flipped off per-instance.
+ * Source of truth: antiban-modules.js catalog.
  */
-export const DEFAULT_V2_MODULES = {
-    warmup:            { enabled: true, warmupDays: 7, day1Limit: 20, growthFactor: 1.8 },
-    replyRatio:        { enabled: true, minRatio: 0.10, minMessagesBeforeEnforce: 5, cooldownHoursOnViolation: 24 },
-    contactGraph:      { enabled: true, requireHandshakeBeforeGroupSend: true, handshakeMinDelayMs: 3600000, groupLurkPeriodMs: 43200000, maxStrangerMessagesPerDay: 5 },
-    presence:          { enabled: true, enableCircadianRhythm: true, circadianProfile: 'default', timezone: 'Europe/London', enableTypingModel: true, typingWPM: 45, typingWPMStdDev: 15 },
-    retryTracker:      { enabled: true, maxRetries: 5, spiralThreshold: 3 },
-    reconnectThrottle: { enabled: true, rampDurationMs: 60000, initialRateMultiplier: 0.1, rampSteps: 6 },
-    lidResolver:       { enabled: true, canonical: 'pn' },
-    sessionStability:  { enabled: true, badMacThreshold: 3, badMacWindowMs: 60000 },
-    stealthConnect:    { enabled: true, presenceRampMinMs: 45000, presenceRampMaxMs: 120000 },
-};
+export const DEFAULT_V2_MODULES = buildDefaultModules();
 
 /**
  * Map a legacy `antiBanSettings` object to a v2 config.
@@ -70,32 +98,74 @@ export const DEFAULT_V2_MODULES = {
 export function legacyToV2Config(legacy = {}) {
     const preset = LEGACY_PRESET_MAP[legacy.preset] || 'moderate';
     return {
-        enabled: true,
+        // Match wasup2 production defaults for new/demo instances (Ayaz etc.):
+        // antiban OFF until an operator explicitly enables it.
+        enabled: false,
+        // Convenience pack for advanced modules — OFF by default.
+        enhancedMode: false,
         preset,
         overrides: {
             ...(legacy.messagesPerHour ? { maxPerHour: legacy.messagesPerHour } : {}),
             ...(legacy.messagesPerDay ? { maxPerDay: legacy.messagesPerDay } : {}),
         },
-        modules: { ...DEFAULT_V2_MODULES },
+        modules: buildDefaultModules(),
         alertsWebhook: null,
         createdAt: new Date().toISOString(),
     };
+}
+
+/** True when operator opted into the enhanced convenience pack (or any advanced module). */
+export function isEnhancedAntibanMode(v2config) {
+    if (v2config?.enhancedMode) return true;
+    return ENHANCED_PACK_MODULE_IDS.some((id) => isModuleOn(v2config, id));
+}
+
+/**
+ * Shared worker-level token-bucket file for InstanceCoordinator (enhanced mode).
+ * One pool per VM so multiple instances on wasup3/etc. share an IP-level budget.
+ */
+export function sharedInstanceCoordinatorPath(instancesFolder) {
+    return path.join(instancesFolder, '_shared', 'antiban-instance-pool.json');
+}
+
+/**
+ * wrapSocket 4.x options — driven by individual module toggles.
+ * 4.x defaults groupOpGuard + legitimacySignals to ON; we pass false unless enabled.
+ */
+export function buildWrapOptions(v2config) {
+    const modules = mergeModules(v2config?.modules);
+    const opts = {
+        groupOpGuard: isModuleOn(v2config, 'groupOpGuard')
+            ? (modules.groupOpGuard || {})
+            : false,
+        legitimacySignals: isModuleOn(v2config, 'legitimacySignals')
+            ? (modules.legitimacySignals || {})
+            : false,
+    };
+    if (isModuleOn(v2config, 'deafSession')) {
+        opts.deafSession = {
+            timeoutMs: modules.deafSession?.timeoutMs ?? 5 * 60_000,
+            minUptimeMs: modules.deafSession?.minUptimeMs ?? 2 * 60_000,
+            autoReconnect: modules.deafSession?.autoReconnect !== false,
+        };
+    }
+    return opts;
 }
 
 /**
  * Build legacy nested config for wrapSocket/AntiBan from our v2 shape.
  * Module flags in v2config.modules are actually enforced (flat-only config ignored them).
  */
-export function buildLegacyAntibanInput(v2config) {
+export function buildLegacyAntibanInput(v2config, { instancesFolder } = {}) {
     if (!v2config || !v2config.enabled) return undefined;
 
     const preset = v2config.preset || 'moderate';
     const overrides = v2config.overrides || {};
-    const modules = { ...DEFAULT_V2_MODULES, ...(v2config.modules || {}) };
+    const modules = mergeModules(v2config.modules);
     const base = V2_PRESET_LIMITS[preset] || V2_PRESET_LIMITS.moderate;
-    const modOn = (name) => modules[name]?.enabled !== false;
+    const modOn = (name) => isModuleOn(v2config, name);
 
-    return {
+    const input = {
         logging: false,
         rateLimiter: {
             maxPerMinute: overrides.maxPerMinute ?? base.maxPerMinute,
@@ -148,11 +218,116 @@ export function buildLegacyAntibanInput(v2config) {
             badMacWindowMs: modules.sessionStability?.badMacWindowMs ?? 60_000,
         },
     };
+
+    if (modOn('topologyThrottler')) {
+        input.topologyThrottler = {
+            maxNewContactsPerHour: modules.topologyThrottler?.maxNewContactsPerHour ?? 5,
+            maxNewContactsPerDay: modules.topologyThrottler?.maxNewContactsPerDay ?? 20,
+            minReplyRatioForNewContacts: modules.topologyThrottler?.minReplyRatioForNewContacts ?? 0.3,
+            maxSameGroupContacts: modules.topologyThrottler?.maxSameGroupContacts ?? 10,
+        };
+    }
+    if (modOn('instanceCoordinator') && instancesFolder) {
+        input.instanceCoordinator = modules.instanceCoordinator?.sharedFilePath
+            || sharedInstanceCoordinatorPath(instancesFolder);
+        input.instancePoolMaxPerMinute = modules.instanceCoordinator?.maxPerMinute
+            ?? overrides.maxPerMinute
+            ?? base.maxPerMinute;
+        input.instancePoolMaxPerHour = modules.instanceCoordinator?.maxPerHour
+            ?? overrides.maxPerHour
+            ?? overrides.messagesPerHour
+            ?? base.maxPerHour;
+    }
+
+    return input;
+}
+
+/**
+ * Apply content variation to outbound text.
+ * @param {string} text
+ * @param {boolean|object} variation - true = use defaults; object = ContentVariator config
+ * @param {object} [globalMod] - modules.contentVariator for defaults
+ */
+export function applyContentVariation(text, variation, globalMod = {}) {
+    if (!text || typeof text !== 'string') return text;
+    if (!variation) return text;
+    const cfg = variation === true
+        ? {
+            zeroWidthChars: globalMod.zeroWidthChars !== false,
+            punctuationVariation: globalMod.punctuationVariation !== false,
+            synonyms: !!globalMod.synonyms,
+            emojiPadding: !!globalMod.emojiPadding,
+        }
+        : {
+            zeroWidthChars: variation.zeroWidthChars !== false,
+            punctuationVariation: variation.punctuationVariation !== false,
+            synonyms: !!variation.synonyms,
+            emojiPadding: !!variation.emojiPadding,
+        };
+    try {
+        return new ContentVariator(cfg).vary(text);
+    } catch (_) {
+        return text;
+    }
+}
+
+/**
+ * WaSP-shaped bridge so library HumanEntropyService can drive a Baileys socket.
+ */
+export function createBaileysEntropyBridge(getSocket) {
+    const handlers = new Map();
+    return {
+        on(event, cb) {
+            if (!handlers.has(event)) handlers.set(event, []);
+            handlers.get(event).push(cb);
+        },
+        emit(event, payload) {
+            for (const cb of handlers.get(event) || []) {
+                try { cb(payload); } catch (_) { /* ignore */ }
+            }
+        },
+        getProvider() {
+            return { socket: typeof getSocket === 'function' ? getSocket() : getSocket };
+        },
+    };
+}
+
+export function startHumanEntropy({ getSocket, instanceId, moduleConfig = {}, onLog = () => {} }) {
+    const bridge = createBaileysEntropyBridge(getSocket);
+    const svc = new HumanEntropyService(bridge, instanceId, {
+        enabled: true,
+        minIntervalMs: moduleConfig.minIntervalMs,
+        maxIntervalMs: moduleConfig.maxIntervalMs,
+    });
+    svc.start();
+    onLog('Human entropy started', 'info');
+    return {
+        service: svc,
+        bridge,
+        stop() {
+            try { svc.stop(); } catch (_) {}
+        },
+        trackInbound(msg) {
+            try {
+                bridge.emit('MESSAGE_RECEIVED', {
+                    sessionId: instanceId,
+                    data: {
+                        fromMe: !!msg?.key?.fromMe,
+                        from: msg?.key?.remoteJid,
+                        chatId: msg?.key?.remoteJid,
+                        id: msg?.key?.id,
+                        key: msg?.key,
+                        isGroup: String(msg?.key?.remoteJid || '').endsWith('@g.us'),
+                    },
+                });
+            } catch (_) { /* ignore */ }
+        },
+    };
 }
 
 /** @deprecated alias — use buildLegacyAntibanInput */
-function buildAntiBanInput(v2config) {
-    return buildLegacyAntibanInput(v2config);
+function buildAntiBanInput(v2config, opts) {
+    return buildLegacyAntibanInput(v2config, opts);
 }
 
 // ----------------------------------------------------------------------------
@@ -223,8 +398,12 @@ export async function buildAntibanContext(opts) {
         return null;
     }
 
+    const instancesFolder = path.dirname(instanceFolder);
     const stateDir = antibanStatePath(instanceFolder);
     await fs.mkdir(stateDir, { recursive: true });
+    if (isModuleOn(v2config, 'instanceCoordinator')) {
+        await fs.mkdir(path.join(instancesFolder, '_shared'), { recursive: true }).catch(() => {});
+    }
     const adapter = new FileStateAdapter(stateDir);
 
     // --- Load persisted state (async, parallel) ---
@@ -285,15 +464,17 @@ export async function buildAntibanContext(opts) {
         onLog('Pre-v2 instance: warmup auto-marked complete (graduated)', 'info');
     }
 
-    // --- Build the AntiBan instance ---
-    const antibanInput = buildAntiBanInput(v2config);
-    const antiban = new AntiBan(antibanInput, savedWarmup);
+    // --- Build a seed AntiBan for pre-wrap status; wrapSocket creates the live one.
+    const antibanInput = buildAntiBanInput(v2config, { instancesFolder });
+    const wrapOptions = buildWrapOptions(v2config);
+    let liveAntiban = new AntiBan(antibanInput, savedWarmup);
+    attachInstanceCoordinator(liveAntiban, antibanInput, v2config, onLog);
 
     // --- Wire health risk change callback ---
-    let lastRisk = antiban.getStats().health?.risk;
+    let lastRisk = liveAntiban.getStats().health?.risk;
     const checkRisk = () => {
         try {
-            const stats = antiban.getStats();
+            const stats = liveAntiban.getStats();
             const risk = stats.health?.risk;
             if (risk && risk !== lastRisk) {
                 onRiskChange({ from: lastRisk, to: risk, status: stats.health, full: stats });
@@ -333,7 +514,7 @@ export async function buildAntibanContext(opts) {
     // --- Periodic state save ---
     const saveAll = async () => {
         try {
-            const warmupState = antiban.exportWarmUpState?.();
+            const warmupState = liveAntiban.exportWarmUpState?.();
             if (warmupState) await adapter.save('warmup', warmupState);
         } catch (err) {
             console.warn(`[antiban-v2 ${instanceId}] state save failed: ${err.message}`);
@@ -346,27 +527,68 @@ export async function buildAntibanContext(opts) {
         clearInterval(riskInterval);
         clearInterval(saveInterval);
         try { await saveAll(); } catch (_) {}
-        try { antiban.destroy?.(); } catch (_) {}
+        try { liveAntiban.destroy?.(); } catch (_) {}
     };
 
     // --- wrap() takes the raw socket and returns the wrapped one ---
     const wrap = (rawSock) => {
-        return wrapSocket(rawSock, antibanInput, savedWarmup);
+        // 4th arg is WrapSocketOptions (baileys-antiban 4.x). When enhancedMode is off
+        // we explicitly disable groupOpGuard + legitimacySignals (4.x defaults them ON).
+        const wrapped = wrapSocket(rawSock, antibanInput, savedWarmup, wrapOptions);
+        // wrapSocket constructs its own AntiBan — that is the one that enforces sends.
+        liveAntiban = wrapped.antiban;
+        attachInstanceCoordinator(liveAntiban, antibanInput, v2config, onLog);
+        // baileys-antiban 4.x bug: wrapped sendMessage(jid, content) with no 3rd arg
+        // throws "Cannot read properties of undefined (reading 'circuitBreaker')" because
+        // the library shadows wrapOptions with the Baileys send opts parameter.
+        const libSend = wrapped.sendMessage.bind(wrapped);
+        wrapped.sendMessage = (jid, content, opts) => libSend(jid, content, opts ?? {});
+        return wrapped;
     };
 
-    onLog(`Anti-ban v2 ready: preset=${antibanInput?.preset || 'default'}, modules=${Object.keys(v2config?.modules || {}).filter(k => v2config.modules[k]?.enabled !== false).join(',')}`, 'info');
+    const enhanced = isEnhancedAntibanMode(v2config);
+    onLog(
+        `Anti-ban v2 ready (lib ${ANTIBAN_LIBRARY_VERSION}): preset=${antibanInput?.preset || 'default'}, `
+        + `enhancedMode=${enhanced ? 'ON' : 'OFF'}, `
+        + `modules=${Object.keys(v2config?.modules || {}).filter(k => v2config.modules[k]?.enabled !== false).join(',')}`,
+        'info'
+    );
 
     return {
-        antiban,
+        get antiban() { return liveAntiban; },
         lidResolver,
         jidCanonicalizer,
         adapter,
         wrap,
+        wrapOptions,
+        enhancedMode: enhanced,
+        libraryVersion: ANTIBAN_LIBRARY_VERSION,
         saveAll,
         destroy,
         // Surface the chosen config for status endpoints
         config: v2config,
     };
+}
+
+function attachInstanceCoordinator(antiban, antibanInput, v2config, onLog) {
+    if (
+        !isModuleOn(v2config, 'instanceCoordinator')
+        || !antibanInput?.instanceCoordinator
+        || !antiban
+        || antiban.instanceCoordinator
+    ) {
+        return;
+    }
+    try {
+        antiban.instanceCoordinator = new InstanceCoordinator({
+            sharedFilePath: antibanInput.instanceCoordinator,
+            poolMaxPerMinute: antibanInput.instancePoolMaxPerMinute,
+            poolMaxPerHour: antibanInput.instancePoolMaxPerHour,
+        });
+        onLog(`Instance coordinator attached: ${antibanInput.instanceCoordinator}`, 'info');
+    } catch (err) {
+        onLog(`Instance coordinator failed: ${err.message}`, 'warning');
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -378,21 +600,46 @@ export async function buildAntibanContext(opts) {
  * Returns { shouldReconnect, backoffMs, message, category }.
  */
 export function planReconnect(statusCode, fallbackBackoffMs = 5000) {
+    // Baileys DisconnectReason.forbidden — WA rejected this companion. Never hammer reconnect.
+    if (statusCode === 403) {
+        return {
+            shouldReconnect: false,
+            backoffMs: fallbackBackoffMs,
+            message: 'Forbidden (403) — WhatsApp rejected this companion session; stop auto-reconnect and wait before re-pairing',
+            category: 'forbidden',
+            raw: null,
+        };
+    }
+    // 405 Method Not Allowed — baileys-antiban marks this fatal, but in practice it often
+    // follows a 503/stream blip with auth intact. Manual reconnect works; auto-retry too.
+    if (statusCode === 405) {
+        return {
+            shouldReconnect: true,
+            backoffMs: Math.max(fallbackBackoffMs, 15_000),
+            message: 'Method not allowed (405) — transient connection rejection; retrying with saved auth',
+            category: 'recoverable',
+            raw: null,
+        };
+    }
     try {
         const c = classifyDisconnect(statusCode);
+        const category = c.category || 'unknown';
+        const forbidden = statusCode === 403 || category === 'forbidden';
         return {
-            shouldReconnect: !!c.shouldReconnect,
+            shouldReconnect: forbidden ? false : !!c.shouldReconnect,
             backoffMs: c.backoffMs ?? fallbackBackoffMs,
-            message: c.message || 'Unknown disconnect',
-            category: c.category || 'unknown',
+            message: forbidden
+                ? (c.message || 'Forbidden — WhatsApp rejected this companion session')
+                : (c.message || 'Unknown disconnect'),
+            category: forbidden ? 'forbidden' : category,
             raw: c,
         };
     } catch (_) {
         return {
-            shouldReconnect: true,
+            shouldReconnect: statusCode !== 403 && statusCode !== 401,
             backoffMs: fallbackBackoffMs,
             message: `Disconnect ${statusCode}`,
-            category: 'unknown',
+            category: statusCode === 403 ? 'forbidden' : 'unknown',
             raw: null,
         };
     }

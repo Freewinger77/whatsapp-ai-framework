@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   ActivityIcon,
+  AlertTriangleIcon,
   BellIcon,
   CameraIcon,
   CheckIcon,
@@ -38,8 +39,8 @@ import { instanceGradient } from "@/polymet/data/instance-colors";
 import { InlineProvisioningSpinner, useWorkspaceState } from "@/polymet/hooks/use-workspace-state";
 import { InstanceDetailSkeleton } from "@/polymet/components/page-skeletons";
 import { createAuthenticatedPairingClient, InstanceConnectPanel } from "@/polymet/components/instance-connect-panel";
-import { ReachoutTimelockBanner } from "@/polymet/components/reachout-timelock-banner";
-import { connectInstance, createInstancePairingLink, deleteInstance, getDeepDive, getInstance, getInstanceAntibanV2, getInstanceReachoutTimelock, resolveAntibanLimitDay, resolveAntibanLimitHour, updateInstanceAntibanV2, updateInstanceSettings } from "@/polymet/lib/control-plane-api";
+import { ReachoutTimelockBanner, useReachoutCountdown } from "@/polymet/components/reachout-timelock-banner";
+import { connectInstance, createInstancePairingLink, deleteInstance, getDeepDive, getInstance, getInstanceAntibanV2, getInstanceBehavior, getInstanceReachoutTimelock, resolveAntibanLimitDay, resolveAntibanLimitHour, updateInstanceAntibanV2, updateInstanceBehavior, updateInstanceSettings } from "@/polymet/lib/control-plane-api";
 import { copyWithToast } from "@/polymet/lib/copy-to-clipboard";
 import { cn } from "@/lib/utils";
 import type { ReachoutTimeLock } from "@/polymet/data/dashboard-data";
@@ -111,6 +112,14 @@ export function InstanceDetailPage() {
   const [typing, setTyping] = useState(inst.behaviorProfile !== "Notification max");
   const [readReceipts, setReadReceipts] = useState(inst.behaviorProfile !== "Notification max");
   const [responseDelays, setResponseDelays] = useState(false);
+  const [multiDeviceCoexist, setMultiDeviceCoexist] = useState(false);
+  const [phonePushEnabled, setPhonePushEnabled] = useState(false);
+  const [phonePushSaving, setPhonePushSaving] = useState(false);
+  const [multiDeviceSaving, setMultiDeviceSaving] = useState(false);
+  const [webhookTypingEvents, setWebhookTypingEvents] = useState(false);
+  const [webhookTypingSaving, setWebhookTypingSaving] = useState(false);
+  const [groupAlertMode, setGroupAlertMode] = useState(false);
+  const [groupAlertSaving, setGroupAlertSaving] = useState(false);
   const [handoffsCleared, setHandoffsCleared] = useState(false);
   const [pictureRemoved, setPictureRemoved] = useState(false);
   const [openSettingsCards, setOpenSettingsCards] = useState<Record<MainSettingsCard, boolean>>(
@@ -134,6 +143,16 @@ export function InstanceDetailPage() {
 
   const statusLabel = inst.status === "provisioning" ? "provisioning" : inst.status === "connecting" ? "connecting" : connected ? "active" : "disconnected";
   const health = getInstanceHealth(connected, inst.status, inst.qualityScore, reachoutTimeLock?.isActive);
+  const reachoutCountdown = useReachoutCountdown(
+    reachoutTimeLock?.isActive ? reachoutTimeLock.timeEnforcementEnds : null,
+  );
+  const uptimeValue = !connected
+    ? "Disconnected"
+    : reachoutTimeLock?.isActive
+      ? reachoutCountdown?.expired
+        ? "Expired"
+        : reachoutCountdown?.shortLabel || reachoutCountdown?.label || "Restricted"
+      : inst.uptime;
 
   const activityItems = useMemo(
     () =>
@@ -238,6 +257,33 @@ export function InstanceDetailPage() {
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
+    getInstanceBehavior(id)
+      .then((payload) => {
+        if (cancelled) return;
+        const settings = payload.behaviorSettings || {};
+        setMultiDeviceCoexist(!!settings.multiDeviceCoexist);
+        const profile = String(settings.behaviorProfile || "");
+        setPhonePushEnabled(
+          !!settings.phoneNotificationsEnabled
+          || profile === "notification-balanced"
+          || profile === "notification-max",
+        );
+        setWebhookTypingEvents(!!settings.webhookTypingEvents);
+        setGroupAlertMode(!!settings.groupAlertMode);
+        if (typeof settings.delayEnabled === "boolean") setResponseDelays(settings.delayEnabled);
+        if (typeof settings.typingSimulation === "boolean") setTyping(settings.typingSimulation);
+      })
+      .catch(() => {
+        /* keep defaults if worker unreachable */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
     const loadReachout = () => {
       getInstanceReachoutTimelock(id)
         .then((payload) => {
@@ -250,7 +296,8 @@ export function InstanceDetailPage() {
     };
     setReachoutTimeLock(inst.reachoutTimeLock ?? null);
     loadReachout();
-    const timer = window.setInterval(loadReachout, 20_000);
+    // Server throttles MEX to 15m; don't hammer the worker/CP either.
+    const timer = window.setInterval(loadReachout, 15 * 60_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -615,7 +662,14 @@ export function InstanceDetailPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:auto-rows-fr md:grid-cols-4">
         {[
           { icon: ActivityIcon, label: "Messages today", value: inst.messagesToday },
-          { icon: ClockIcon, label: "Uptime", value: connected ? inst.uptime : "Disconnected" },
+          {
+            icon: reachoutTimeLock?.isActive ? AlertTriangleIcon : ClockIcon,
+            label: reachoutTimeLock?.isActive ? "Unlocks in" : "Uptime",
+            value: uptimeValue,
+            valueClassName: reachoutTimeLock?.isActive
+              ? "font-mono text-orange-300 tabular-nums"
+              : undefined,
+          },
           { icon: GlobeIcon, label: "Region", value: inst.region },
           {
             icon: BellIcon,
@@ -636,7 +690,8 @@ export function InstanceDetailPage() {
           },
         ].map((stat) => {
           const Icon = stat.icon;
-          const clickable = typeof stat.onClick === "function";
+          const clickable = typeof (stat as { onClick?: () => void }).onClick === "function";
+          const valueClassName = (stat as { valueClassName?: string }).valueClassName;
           return (
             <div
               key={stat.label}
@@ -662,7 +717,7 @@ export function InstanceDetailPage() {
                 <Icon className="h-4 w-4 shrink-0" />
                 {stat.label}
               </div>
-              <div className="mt-3 text-2xl font-semibold tracking-tight">{stat.value}</div>
+              <div className={cn("mt-3 text-2xl font-semibold tracking-tight", valueClassName)}>{stat.value}</div>
             </div>
           );
         })}
@@ -783,6 +838,115 @@ export function InstanceDetailPage() {
                 markDirty();
               }}
             />
+            <ToggleRow
+              label="Keep phone push (stay offline)"
+              description="Baileys tip: stay presence-unavailable so the phone keeps notifications. Works with Shared Devices. Saves immediately."
+              checked={phonePushEnabled}
+              disabled={phonePushSaving || inst.status === "provisioning"}
+              onChange={async (value) => {
+                if (!id || phonePushSaving) return;
+                const previous = phonePushEnabled;
+                setPhonePushEnabled(value);
+                setPhonePushSaving(true);
+                try {
+                  const result = await updateInstanceBehavior(id, { phoneNotificationsEnabled: value });
+                  setPhonePushEnabled(
+                    !!result.behaviorSettings?.phoneNotificationsEnabled
+                    || value,
+                  );
+                  toast.success(value ? "Phone push mode on" : "Phone push mode off");
+                } catch (error) {
+                  setPhonePushEnabled(previous);
+                  toast.error(error instanceof Error ? error.message : "Could not update phone push setting");
+                } finally {
+                  setPhonePushSaving(false);
+                }
+              }}
+            />
+            <ToggleRow
+              label="Shared devices (staff Web/Desktop)"
+              description="Stay presence-passive and do not auto-reclaim after WhatsApp conflict when staff keep other linked devices. Saves immediately to the worker."
+              checked={multiDeviceCoexist}
+              disabled={multiDeviceSaving || inst.status === "provisioning"}
+              onChange={async (value) => {
+                if (!id || multiDeviceSaving) return;
+                const previous = multiDeviceCoexist;
+                setMultiDeviceCoexist(value);
+                setMultiDeviceSaving(true);
+                try {
+                  const result = await updateInstanceBehavior(id, { multiDeviceCoexist: value });
+                  setMultiDeviceCoexist(!!result.behaviorSettings?.multiDeviceCoexist || value);
+                  toast.success(value ? "Shared-devices mode on" : "Shared-devices mode off", {
+                    description: value
+                      ? "Wasup will stand down on conflict and stay presence-passive."
+                      : "Stealth presence and conflict reclaim restored for this instance.",
+                  });
+                } catch (error) {
+                  setMultiDeviceCoexist(previous);
+                  toast.error("Could not update shared-devices mode", {
+                    description: error instanceof Error ? error.message : "Please try again shortly.",
+                  });
+                } finally {
+                  setMultiDeviceSaving(false);
+                }
+              }}
+            />
+            <ToggleRow
+              label="Webhook typing events"
+              description="Forward contact typing / recording / paused to the instance webhook so n8n can hold or cancel a pending AI reply. Off by default. Saves immediately."
+              checked={webhookTypingEvents}
+              disabled={webhookTypingSaving || inst.status === "provisioning"}
+              onChange={async (value) => {
+                if (!id || webhookTypingSaving) return;
+                const previous = webhookTypingEvents;
+                setWebhookTypingEvents(value);
+                setWebhookTypingSaving(true);
+                try {
+                  const result = await updateInstanceBehavior(id, { webhookTypingEvents: value });
+                  setWebhookTypingEvents(!!result.behaviorSettings?.webhookTypingEvents || value);
+                  toast.success(value ? "Typing webhooks on" : "Typing webhooks off", {
+                    description: value
+                      ? "Presence updates (composing / recording / paused) will POST to this instance webhook."
+                      : "Contact typing will no longer be forwarded to the webhook.",
+                  });
+                } catch (error) {
+                  setWebhookTypingEvents(previous);
+                  toast.error("Could not update typing webhooks", {
+                    description: error instanceof Error ? error.message : "Please try again shortly.",
+                  });
+                } finally {
+                  setWebhookTypingSaving(false);
+                }
+              }}
+            />
+            <ToggleRow
+              label="Group alert mode"
+              description="For numbers that sit in many groups (TyreJobs etc.). Off = classic handoff (webhook skipped while human mode is on). On = groups never arm handoff maps, and inbound webhooks keep flowing during handoff. Saves immediately."
+              checked={groupAlertMode}
+              disabled={groupAlertSaving || inst.status === "provisioning"}
+              onChange={async (value) => {
+                if (!id || groupAlertSaving) return;
+                const previous = groupAlertMode;
+                setGroupAlertMode(value);
+                setGroupAlertSaving(true);
+                try {
+                  const result = await updateInstanceBehavior(id, { groupAlertMode: value });
+                  setGroupAlertMode(!!result.behaviorSettings?.groupAlertMode || value);
+                  toast.success(value ? "Group alert mode on" : "Group alert mode off", {
+                    description: value
+                      ? "Group handoffs cleared; webhooks keep flowing for group/alert traffic."
+                      : "Classic handoff restored — human mode skips the webhook again.",
+                  });
+                } catch (error) {
+                  setGroupAlertMode(previous);
+                  toast.error("Could not update group alert mode", {
+                    description: error instanceof Error ? error.message : "Please try again shortly.",
+                  });
+                } finally {
+                  setGroupAlertSaving(false);
+                }
+              }}
+            />
             <EditableTextRow label="Notification grace (s)" value={notificationGrace} onSave={setNotificationGrace} onDirty={markDirty} monospace />
           </SettingsAccordionCard>
 
@@ -818,6 +982,53 @@ export function InstanceDetailPage() {
                 }
               }}
             />
+            <ToggleRow
+              label="Enhanced mode (v4)"
+              description="Off by default — existing instances stay classic. On enables the advanced pack (group-op guard, deaf-session, topology, shared IP pool). Individual modules below can still be flipped."
+              checked={!!antibanV2?.enhancedMode}
+              disabled={antibanSaving || antibanLoading || !id || antibanV2?.enabled === false}
+              onChange={async (value) => {
+                if (!id) return;
+                setAntibanSaving(true);
+                try {
+                  const result = await updateInstanceAntibanV2(id, { enhancedMode: value });
+                  toast.success(value ? "Enhanced anti-ban on" : "Enhanced anti-ban off (classic)");
+                  if (result.antibanV2) setAntibanV2(result.antibanV2);
+                  else setAntibanV2(await getInstanceAntibanV2(id));
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Could not update enhanced mode");
+                } finally {
+                  setAntibanSaving(false);
+                }
+              }}
+            />
+            {(antibanV2?.moduleCatalog || [])
+              .filter((m) => m.group === "advanced" || m.group === "wasup" || m.id === "contentVariator" || m.id === "humanEntropy" || m.id === "presenceCycling" || m.id === "conflict428Recover")
+              .map((mod) => (
+                <ToggleRow
+                  key={mod.id}
+                  label={mod.label}
+                  description={`${mod.tooltip || ""}${mod.wired === false ? " (reserved — flag saved for rollout)" : ""}${mod.perSend ? " Also: POST /send with contentVariation for one blast." : ""} · effort ${mod.effort || "—"} · impact ${mod.impact || "—"}`}
+                  checked={!!mod.enabled}
+                  disabled={antibanSaving || antibanLoading || !id || (antibanV2?.enabled === false && mod.id !== "contentVariator")}
+                  onChange={async (value) => {
+                    if (!id) return;
+                    setAntibanSaving(true);
+                    try {
+                      const result = await updateInstanceAntibanV2(id, {
+                        modules: { [mod.id]: { enabled: value } },
+                      });
+                      toast.success(`${mod.label} ${value ? "on" : "off"}`);
+                      if (result.antibanV2) setAntibanV2(result.antibanV2);
+                      else setAntibanV2(await getInstanceAntibanV2(id));
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : `Could not update ${mod.id}`);
+                    } finally {
+                      setAntibanSaving(false);
+                    }
+                  }}
+                />
+              ))}
             <StaticRow
               label="Status"
               value={
@@ -1412,25 +1623,32 @@ function SelectRow<TValue extends string>({
 
 function ToggleRow({
   label,
+  description,
   checked,
   onChange,
   disabled = false,
 }: {
   label: string;
+  description?: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between gap-6 border-b border-border/60 px-4 py-4 last:border-b-0 sm:px-5">
-      <div className="text-sm text-muted-foreground">{label}</div>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm text-muted-foreground">{label}</div>
+        {description ? (
+          <p className="mt-1 text-xs text-muted-foreground/80">{description}</p>
+        ) : null}
+      </div>
       <button
         role="switch"
         aria-checked={checked}
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={cn(
-          "relative inline-flex h-6 w-11 items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+          "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50",
           checked ? "border-foreground bg-foreground" : "border-border bg-muted",
         )}
       >
