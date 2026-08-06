@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Handoffs — Wasup</title>
+    <meta name="theme-color" content="#09090b">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%230d1512'/%3E%3Cpath d='M18 18h28v18c0 8-6.3 14-14 14s-14-6-14-14V18Z' fill='%235cc8a7'/%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #09090b;
+            --panel: #121214;
+            --line: rgba(63, 63, 70, 0.55);
+            --text: #fafafa;
+            --muted: #a1a1aa;
+            --dim: #71717a;
+            --green: #34d399;
+            --green-dim: rgba(52, 211, 153, 0.12);
+            --amber: #fbbf24;
+            --amber-dim: rgba(251, 191, 36, 0.12);
+            --red: #f87171;
+            --red-dim: rgba(248, 113, 113, 0.12);
+            --input: #18181b;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background:
+                radial-gradient(900px 420px at 10% -10%, rgba(52, 211, 153, 0.08), transparent 55%),
+                radial-gradient(700px 380px at 90% 0%, rgba(92, 200, 167, 0.05), transparent 50%),
+                var(--bg);
+            color: var(--text);
+            min-height: 100dvh;
+            font-size: 14px;
+            line-height: 1.45;
+        }
+
+        .wrap {
+            max-width: 880px;
+            margin: 0 auto;
+            padding: 28px 20px 64px;
+        }
+
+        header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 28px;
+        }
+
+        .brand {
+            font-size: 13px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--green);
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+        }
+
+        .sub {
+            color: var(--muted);
+            margin-top: 4px;
+            font-size: 14px;
+        }
+
+        .meta {
+            text-align: right;
+            color: var(--dim);
+            font-size: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            align-items: flex-end;
+        }
+
+        .live {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--green);
+            font-weight: 500;
+        }
+
+        .live::before {
+            content: '';
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--green);
+            box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.5);
+            animation: pulse 1.8s ease-out infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.45); }
+            70% { box-shadow: 0 0 0 8px rgba(52, 211, 153, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+        }
+
+        .toolbar {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 10px;
+            margin-bottom: 18px;
+        }
+
+        select, input[type="text"], input[type="password"] {
+            width: 100%;
+            background: var(--input);
+            border: 1px solid var(--line);
+            color: var(--text);
+            border-radius: 10px;
+            padding: 11px 12px;
+            font: inherit;
+            outline: none;
+        }
+
+        select:focus, input:focus {
+            border-color: rgba(52, 211, 153, 0.55);
+        }
+
+        .auth-row {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 8px;
+            margin-bottom: 22px;
+        }
+
+        .auth-row.hidden { display: none; }
+
+        button {
+            border: 0;
+            border-radius: 10px;
+            padding: 10px 14px;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--muted);
+            border: 1px solid var(--line);
+        }
+
+        .btn-ghost:hover:not(:disabled) { color: var(--text); }
+
+        .btn-pause {
+            background: var(--amber-dim);
+            color: var(--amber);
+        }
+
+        .btn-pause:hover:not(:disabled) { filter: brightness(1.08); }
+
+        .btn-resume {
+            background: var(--green-dim);
+            color: var(--green);
+        }
+
+        .btn-resume:hover:not(:disabled) { filter: brightness(1.08); }
+
+        .btn-danger {
+            background: var(--red-dim);
+            color: var(--red);
+        }
+
+        section {
+            margin-bottom: 28px;
+        }
+
+        .section-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+
+        .section-head h2 {
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--dim);
+        }
+
+        .count {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .list {
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            background: rgba(18, 18, 20, 0.72);
+            overflow: hidden;
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 12px;
+            align-items: center;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .row:last-child { border-bottom: 0; }
+
+        .phone {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 15px;
+            font-weight: 500;
+            letter-spacing: -0.02em;
+        }
+
+        .phone a {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .phone a:hover { color: var(--green); }
+
+        .detail {
+            color: var(--dim);
+            font-size: 12px;
+            margin-top: 3px;
+        }
+
+        .detail span + span::before {
+            content: '·';
+            margin: 0 6px;
+            color: var(--zinc-600, #52525b);
+        }
+
+        .badge {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            padding: 3px 7px;
+            border-radius: 999px;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        .badge.paused {
+            background: var(--amber-dim);
+            color: var(--amber);
+        }
+
+        .actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .empty {
+            padding: 28px 16px;
+            text-align: center;
+            color: var(--dim);
+        }
+
+        .compose {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 8px;
+        }
+
+        .error {
+            background: var(--red-dim);
+            color: var(--red);
+            border: 1px solid rgba(248, 113, 113, 0.25);
+            border-radius: 10px;
+            padding: 10px 12px;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .error.show { display: block; }
+
+        .footer-nav {
+            margin-top: 8px;
+            color: var(--dim);
+            font-size: 13px;
+        }
+
+        .footer-nav a {
+            color: var(--muted);
+            text-decoration: none;
+        }
+
+        .footer-nav a:hover { color: var(--green); }
+
+        @media (max-width: 640px) {
+            header { flex-direction: column; }
+            .meta { align-items: flex-start; text-align: left; }
+            .toolbar, .auth-row, .compose { grid-template-columns: 1fr; }
+            .row { grid-template-columns: 1fr; }
+            .actions { justify-content: flex-start; }
+            h1 { font-size: 24px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <header>
+            <div>
+                <div class="brand">Wasup</div>
+                <h1>Handoffs</h1>
+                <p class="sub">Pause or resume AI on live chats. Numbers from recent activity.</p>
+            </div>
+            <div class="meta">
+                <span class="live" id="live-label">Live</span>
+                <span id="updated">—</span>
+            </div>
+        </header>
+
+        <div class="error" id="error"></div>
+
+        <div class="auth-row" id="auth-row">
+            <input type="password" id="api-key" placeholder="API key (same as main dashboard)" autocomplete="off">
+            <button class="btn-ghost" id="save-key" type="button">Save</button>
+        </div>
+
+        <div class="toolbar">
+            <select id="instance-select" aria-label="Instance">
+                <option value="">Loading instances…</option>
+            </select>
+            <button class="btn-ghost" id="refresh-btn" type="button">Refresh</button>
+        </div>
+
+        <section>
+            <div class="section-head">
+                <h2>Paused now</h2>
+                <span class="count" id="paused-count">0</span>
+            </div>
+            <div class="list" id="paused-list">
+                <div class="empty">No handoffs yet</div>
+            </div>
+            <div style="margin-top:10px; display:flex; justify-content:flex-end;">
+                <button class="btn-danger" id="clear-all" type="button" disabled>Resume all</button>
+            </div>
+        </section>
+
+        <section>
+            <div class="section-head">
+                <h2>Pause a number</h2>
+            </div>
+            <div class="compose">
+                <input type="text" id="phone-input" placeholder="+44 7931 233814 or paste from chat" autocomplete="tel">
+                <button class="btn-pause" id="pause-btn" type="button">Pause AI</button>
+            </div>
+        </section>
+
+        <section>
+            <div class="section-head">
+                <h2>Recent chats</h2>
+                <span class="count" id="recent-count">0</span>
+            </div>
+            <div class="list" id="recent-list">
+                <div class="empty">Waiting for recent activity…</div>
+            </div>
+        </section>
+
+        <p class="footer-nav"><a href="/">Control plane</a></p>
+    </div>
+
+    <script>
+        const API_KEY_STORAGE_KEY = 'wasup_api_key';
+        const REFRESH_MS = 4000;
+
+        const el = {
+            error: document.getElementById('error'),
+            authRow: document.getElementById('auth-row'),
+            apiKey: document.getElementById('api-key'),
+            saveKey: document.getElementById('save-key'),
+            instanceSelect: document.getElementById('instance-select'),
+            refreshBtn: document.getElementById('refresh-btn'),
+            updated: document.getElementById('updated'),
+            pausedList: document.getElementById('paused-list'),
+            pausedCount: document.getElementById('paused-count'),
+            recentList: document.getElementById('recent-list'),
+            recentCount: document.getElementById('recent-count'),
+            phoneInput: document.getElementById('phone-input'),
+            pauseBtn: document.getElementById('pause-btn'),
+            clearAll: document.getElementById('clear-all'),
+        };
+
+        let instances = [];
+        let pausedByInstance = new Map(); // instanceId -> chats[]
+        let busy = false;
+        let timer = null;
+
+        function getApiKey() {
+            try { return localStorage.getItem(API_KEY_STORAGE_KEY) || ''; } catch (_) { return ''; }
+        }
+
+        function setApiKey(value) {
+            try {
+                if (value) localStorage.setItem(API_KEY_STORAGE_KEY, value);
+                else localStorage.removeItem(API_KEY_STORAGE_KEY);
+            } catch (_) {}
+        }
+
+        function headers(json = false) {
+            const h = {};
+            if (json) h['Content-Type'] = 'application/json';
+            const key = getApiKey();
+            if (key) h['X-API-Key'] = key;
+            return h;
+        }
+
+        function showError(msg) {
+            if (!msg) {
+                el.error.classList.remove('show');
+                el.error.textContent = '';
+                return;
+            }
+            el.error.textContent = msg;
+            el.error.classList.add('show');
+        }
+
+        /** Digits only, strip leading + and spaces/dashes/parens */
+        function normalizePhone(raw) {
+            if (!raw) return '';
+            let s = String(raw).trim();
+            // Prefer WhatsApp JID local part
+            const jid = s.match(/^(\d{6,15})@(?:s\.whatsapp\.net|lid|c\.us)\b/i);
+            if (jid) return jid[1];
+            s = s.replace(/^[+]/, '');
+            s = s.replace(/[\s().\-]/g, '');
+            // wa.me / api.whatsapp.com links
+            const link = s.match(/(?:wa\.me\/|phone=)(\d{6,15})/i);
+            if (link) return link[1];
+            const digits = s.replace(/\D/g, '');
+            return digits.length >= 6 && digits.length <= 15 ? digits : '';
+        }
+
+        /** Pretty international display — UK-aware, otherwise grouped */
+        function formatPhone(raw) {
+            const d = normalizePhone(raw);
+            if (!d) return String(raw || '').trim() || '—';
+
+            if (d.startsWith('44') && d.length >= 12) {
+                const rest = d.slice(2);
+                if (rest.length === 10) {
+                    return `+44 ${rest.slice(0, 4)} ${rest.slice(4, 7)} ${rest.slice(7)}`;
+                }
+                return `+44 ${rest}`;
+            }
+            if (d.startsWith('1') && d.length === 11) {
+                return `+1 (${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7)}`;
+            }
+            if (d.startsWith('60') && d.length >= 10) {
+                const rest = d.slice(2);
+                return `+60 ${rest.slice(0, 2)}-${rest.slice(2, 5)} ${rest.slice(5)}`.trim();
+            }
+            if (d.startsWith('358') && d.length >= 10) {
+                return `+358 ${d.slice(3)}`;
+            }
+            // Generic: +CC then groups of 3–4
+            const m = d.match(/^(\d{1,3})(\d+)$/);
+            if (!m) return `+${d}`;
+            const groups = m[2].match(/.{1,4}/g) || [m[2]];
+            return `+${m[1]} ${groups.join(' ')}`;
+        }
+
+        function extractPhonesFromText(text) {
+            const found = new Set();
+            if (!text) return found;
+            const re = /(\+?\d[\d\s().\-]{6,18}\d)(?:@(?:s\.whatsapp\.net|lid|c\.us))?/gi;
+            let m;
+            while ((m = re.exec(text)) !== null) {
+                const n = normalizePhone(m[1]);
+                if (n) found.add(n);
+            }
+            // Bare JIDs without spaces
+            const jidRe = /\b(\d{8,15})@(?:s\.whatsapp\.net|lid|c\.us)\b/gi;
+            while ((m = jidRe.exec(text)) !== null) found.add(m[1]);
+            return found;
+        }
+
+        function relativeTime(iso) {
+            if (!iso) return '';
+            const t = new Date(iso).getTime();
+            if (Number.isNaN(t)) return '';
+            const sec = Math.round((Date.now() - t) / 1000);
+            if (sec < 10) return 'just now';
+            if (sec < 60) return `${sec}s ago`;
+            if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+            if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+            return `${Math.floor(sec / 86400)}d ago`;
+        }
+
+        function selectedInstanceIds() {
+            const v = el.instanceSelect.value;
+            if (!v || v === '__all__') {
+                return instances.filter((i) => i.status === 'connected').map((i) => i.id);
+            }
+            return [v];
+        }
+
+        function instanceLabel(inst) {
+            const phone = inst.phoneNumber || inst.connectedPhone || '';
+            const nice = phone ? formatPhone(phone) : '';
+            const status = inst.status || 'unknown';
+            return `${inst.name || inst.id}${nice ? ` · ${nice}` : ''} (${status})`;
+        }
+
+        async function api(path, options = {}) {
+            const res = await fetch(path, {
+                ...options,
+                headers: { ...headers(!!options.body), ...(options.headers || {}) },
+            });
+            let data = null;
+            try { data = await res.json(); } catch (_) {}
+            if (!res.ok) {
+                const msg = data?.message || data?.error || `${res.status} ${res.statusText}`;
+                const err = new Error(msg);
+                err.status = res.status;
+                throw err;
+            }
+            return data;
+        }
+
+        function renderInstanceSelect() {
+            const prev = el.instanceSelect.value;
+            const connected = instances.filter((i) => i.status === 'connected');
+            const parts = [];
+            parts.push(`<option value="__all__">All connected (${connected.length})</option>`);
+            for (const inst of instances) {
+                parts.push(`<option value="${inst.id}">${escapeHtml(instanceLabel(inst))}</option>`);
+            }
+            el.instanceSelect.innerHTML = parts.join('') || '<option value="">No instances</option>';
+            if (prev && [...el.instanceSelect.options].some((o) => o.value === prev)) {
+                el.instanceSelect.value = prev;
+            } else {
+                el.instanceSelect.value = '__all__';
+            }
+        }
+
+        function escapeHtml(s) {
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function isPaused(instanceId, phone) {
+            const chats = pausedByInstance.get(instanceId) || [];
+            return chats.some((c) => normalizePhone(c.phone || c.jid) === phone);
+        }
+
+        function findInstanceName(id) {
+            return instances.find((i) => i.id === id)?.name || id;
+        }
+
+        function renderPaused() {
+            const rows = [];
+            for (const [instanceId, chats] of pausedByInstance) {
+                for (const chat of chats) {
+                    const phone = normalizePhone(chat.phone || chat.jid);
+                    if (!phone) continue;
+                    rows.push({
+                        instanceId,
+                        phone,
+                        taggedAt: chat.taggedAt,
+                        taggedBy: chat.taggedBy,
+                        lastActivity: chat.lastActivity,
+                    });
+                }
+            }
+            rows.sort((a, b) => {
+                const ta = new Date(b.lastActivity || b.taggedAt || 0).getTime();
+                const tb = new Date(a.lastActivity || a.taggedAt || 0).getTime();
+                return ta - tb;
+            });
+
+            el.pausedCount.textContent = String(rows.length);
+            el.clearAll.disabled = rows.length === 0 || selectedInstanceIds().length !== 1;
+
+            if (!rows.length) {
+                el.pausedList.innerHTML = '<div class="empty">No handoffs — AI is answering everyone</div>';
+                return;
+            }
+
+            el.pausedList.innerHTML = rows.map((r) => `
+                <div class="row">
+                    <div>
+                        <div class="phone">
+                            <a href="https://wa.me/${r.phone}" target="_blank" rel="noopener">${escapeHtml(formatPhone(r.phone))}</a>
+                            <span class="badge paused">Paused</span>
+                        </div>
+                        <div class="detail">
+                            <span>${escapeHtml(findInstanceName(r.instanceId))}</span>
+                            <span>${escapeHtml(r.taggedBy || 'handoff')}</span>
+                            <span>${escapeHtml(relativeTime(r.lastActivity || r.taggedAt) || '—')}</span>
+                        </div>
+                    </div>
+                    <div class="actions">
+                        <button class="btn-resume" data-resume="${escapeHtml(r.instanceId)}|${escapeHtml(r.phone)}" type="button">Resume AI</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderRecent(items) {
+            el.recentCount.textContent = String(items.length);
+            if (!items.length) {
+                el.recentList.innerHTML = '<div class="empty">No recent numbers in logs yet</div>';
+                return;
+            }
+
+            el.recentList.innerHTML = items.map((r) => {
+                const paused = isPaused(r.instanceId, r.phone);
+                const action = paused
+                    ? `<button class="btn-resume" data-resume="${escapeHtml(r.instanceId)}|${escapeHtml(r.phone)}" type="button">Resume</button>`
+                    : `<button class="btn-pause" data-pause="${escapeHtml(r.instanceId)}|${escapeHtml(r.phone)}" type="button">Pause</button>`;
+                return `
+                <div class="row">
+                    <div>
+                        <div class="phone">
+                            <a href="https://wa.me/${r.phone}" target="_blank" rel="noopener">${escapeHtml(formatPhone(r.phone))}</a>
+                            ${paused ? '<span class="badge paused">Paused</span>' : ''}
+                        </div>
+                        <div class="detail">
+                            <span>${escapeHtml(findInstanceName(r.instanceId))}</span>
+                            <span>${escapeHtml(r.hint || 'chat')}</span>
+                            <span>${escapeHtml(relativeTime(r.at) || '—')}</span>
+                        </div>
+                    </div>
+                    <div class="actions">${action}</div>
+                </div>`;
+            }).join('');
+        }
+
+        async function loadInstances() {
+            const data = await api('/api/instances');
+            instances = data.instances || data || [];
+            if (!Array.isArray(instances)) instances = [];
+            renderInstanceSelect();
+        }
+
+        async function loadHandoffsFor(instanceId) {
+            const data = await api(`/api/instances/${instanceId}/handoff`);
+            return data.humanModeChats || [];
+        }
+
+        async function loadRecentFor(instanceId) {
+            const seen = new Map(); // phone -> { phone, instanceId, at, hint }
+
+            const absorb = (phone, at, hint) => {
+                const n = normalizePhone(phone);
+                if (!n || n.length < 8) return;
+                // Skip obvious non-chat noise (short codes already filtered)
+                const prev = seen.get(n);
+                const ts = at ? new Date(at).getTime() : 0;
+                if (prev && prev._ts >= ts) return;
+                seen.set(n, { phone: n, instanceId, at, hint, _ts: ts });
+            };
+
+            // Messages are the cleanest source
+            try {
+                const msgData = await api(`/api/instances/${instanceId}/messages?limit=80`);
+                for (const m of msgData.messages || []) {
+                    const peer = m.direction === 'outbound' ? m.to : m.from;
+                    absorb(peer, m.timestamp, m.direction === 'outbound' ? 'outbound' : 'inbound');
+                }
+            } catch (_) {
+                // messages may require auth even when logs are public
+            }
+
+            // Logs as fallback / enrichment
+            try {
+                const logData = await api(`/api/instances/${instanceId}/logs?limit=120`);
+                for (const entry of logData.logs || []) {
+                    const phones = extractPhonesFromText(entry.message || '');
+                    let hint = 'log';
+                    const msg = entry.message || '';
+                    if (/handoff/i.test(msg)) hint = 'handoff log';
+                    else if (/replied to/i.test(msg)) hint = 'reply';
+                    else if (/webhook/i.test(msg)) hint = 'webhook';
+                    else if (/inbound|message from|received/i.test(msg)) hint = 'inbound';
+                    for (const p of phones) absorb(p, entry.timestamp, hint);
+                }
+            } catch (_) {}
+
+            return [...seen.values()]
+                .sort((a, b) => b._ts - a._ts)
+                .slice(0, 40)
+                .map(({ _ts, ...rest }) => rest);
+        }
+
+        async function refresh() {
+            if (busy) return;
+            busy = true;
+            el.refreshBtn.disabled = true;
+            try {
+                showError('');
+                if (!instances.length) await loadInstances();
+
+                const ids = selectedInstanceIds();
+                const nextPaused = new Map();
+                const recentAll = [];
+
+                await Promise.all(ids.map(async (id) => {
+                    try {
+                        const chats = await loadHandoffsFor(id);
+                        nextPaused.set(id, chats);
+                    } catch (err) {
+                        if (err.status === 401) throw err;
+                        nextPaused.set(id, pausedByInstance.get(id) || []);
+                    }
+                    try {
+                        const recent = await loadRecentFor(id);
+                        recentAll.push(...recent);
+                    } catch (_) {}
+                }));
+
+                pausedByInstance = nextPaused;
+
+                // Dedupe recent across instances (keep newest)
+                const merged = new Map();
+                for (const r of recentAll) {
+                    const key = `${r.instanceId}:${r.phone}`;
+                    const prev = merged.get(key);
+                    if (!prev || new Date(r.at || 0) > new Date(prev.at || 0)) merged.set(key, r);
+                }
+                const recentSorted = [...merged.values()]
+                    .sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0))
+                    .slice(0, 50);
+
+                renderPaused();
+                renderRecent(recentSorted);
+                el.updated.textContent = new Date().toLocaleTimeString();
+            } catch (err) {
+                if (err.status === 401) {
+                    el.authRow.classList.remove('hidden');
+                    showError('API key required — paste the same key used on the main dashboard.');
+                } else {
+                    showError(err.message || 'Refresh failed');
+                }
+            } finally {
+                busy = false;
+                el.refreshBtn.disabled = false;
+            }
+        }
+
+        async function setHandoff(instanceId, phone, active) {
+            const n = normalizePhone(phone);
+            if (!n) {
+                showError('Could not parse that phone number');
+                return;
+            }
+            if (!instanceId) {
+                showError('Pick a single instance first');
+                return;
+            }
+            try {
+                showError('');
+                await api(`/api/instances/${instanceId}/handoff`, {
+                    method: 'POST',
+                    body: JSON.stringify({ phone: n, active: !!active }),
+                });
+                await refresh();
+            } catch (err) {
+                showError(err.message || 'Handoff update failed');
+            }
+        }
+
+        async function clearAllForSelected() {
+            const ids = selectedInstanceIds();
+            if (ids.length !== 1) {
+                showError('Select one instance to resume all');
+                return;
+            }
+            if (!confirm('Resume AI for every paused chat on this instance?')) return;
+            try {
+                await api(`/api/instances/${ids[0]}/handoff`, { method: 'DELETE' });
+                await refresh();
+            } catch (err) {
+                showError(err.message || 'Clear failed');
+            }
+        }
+
+        // Event wiring
+        el.apiKey.value = getApiKey();
+        el.saveKey.addEventListener('click', () => {
+            setApiKey(el.apiKey.value.trim());
+            showError('');
+            refresh();
+        });
+        el.apiKey.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') el.saveKey.click();
+        });
+
+        el.refreshBtn.addEventListener('click', () => refresh());
+        el.instanceSelect.addEventListener('change', () => refresh());
+        el.clearAll.addEventListener('click', () => clearAllForSelected());
+
+        el.pauseBtn.addEventListener('click', async () => {
+            const ids = selectedInstanceIds();
+            if (ids.length !== 1) {
+                showError('Select one instance to pause a number');
+                return;
+            }
+            const phone = el.phoneInput.value;
+            await setHandoff(ids[0], phone, true);
+            el.phoneInput.value = '';
+        });
+
+        el.phoneInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') el.pauseBtn.click();
+        });
+
+        // Pretty-format on blur
+        el.phoneInput.addEventListener('blur', () => {
+            const n = normalizePhone(el.phoneInput.value);
+            if (n) el.phoneInput.value = formatPhone(n);
+        });
+
+        document.addEventListener('click', (e) => {
+            const resume = e.target.closest('[data-resume]');
+            if (resume) {
+                const [instanceId, phone] = resume.getAttribute('data-resume').split('|');
+                setHandoff(instanceId, phone, false);
+                return;
+            }
+            const pause = e.target.closest('[data-pause]');
+            if (pause) {
+                const [instanceId, phone] = pause.getAttribute('data-pause').split('|');
+                setHandoff(instanceId, phone, true);
+            }
+        });
+
+        // Hide API key row if public dashboard / no key needed after first successful load
+        async function boot() {
+            try {
+                const cfg = await fetch('/api/dashboard-config').then((r) => r.json()).catch(() => null);
+                if (cfg && cfg.allowPublicDashboard && !cfg.dashboardRequiresApiKey) {
+                    el.authRow.classList.add('hidden');
+                } else if (getApiKey()) {
+                    // keep visible but prefilled — user can still change
+                }
+            } catch (_) {}
+
+            try {
+                await loadInstances();
+                await refresh();
+            } catch (err) {
+                if (err.status === 401) {
+                    el.authRow.classList.remove('hidden');
+                    showError('API key required — paste the same key used on the main dashboard.');
+                } else {
+                    showError(err.message || 'Could not load instances');
+                }
+            }
+
+            timer = setInterval(refresh, REFRESH_MS);
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    if (timer) { clearInterval(timer); timer = null; }
+                } else if (!timer) {
+                    refresh();
+                    timer = setInterval(refresh, REFRESH_MS);
+                }
+            });
+        }
+
+        boot();
+    </script>
+</body>
+</html>
