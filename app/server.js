@@ -100,6 +100,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Named page routes
 app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/handoff', (req, res) => res.sendFile(path.join(__dirname, 'public', 'handoff.html')));
 app.get('/test', (req, res) => res.sendFile(path.join(__dirname, 'public', 'test.html')));
 app.get('/docs', (req, res) => res.sendFile(path.join(__dirname, 'public', 'docs.html')));
 app.get('/playground', (req, res) => res.redirect(301, '/test'));
@@ -185,7 +186,7 @@ function isPublicDashboardRead(req) {
         path === '/instances' ||
         path === '/ui/instance-order' ||
         /^\/instances\/[^/]+$/.test(path) ||
-        /^\/instances\/[^/]+\/(qr|connection|logs|reachout-timelock)$/.test(path)
+        /^\/instances\/[^/]+\/(qr|connection|logs|reachout-timelock|handoff|messages)$/.test(path)
     );
 }
 
