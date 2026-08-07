@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
-    <title>Harley — live handoffs</title>
+    <title>Harley</title>
     <meta name="theme-color" content="#09090b">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -43,30 +43,14 @@
             padding-bottom: calc(var(--dock-h) + var(--safe-b) + 12px);
             overscroll-behavior-y: contain;
         }
-        .wrap { max-width: 820px; margin: 0 auto; padding: calc(16px + var(--safe-t)) 14px 24px; }
+        .wrap { max-width: 820px; margin: 0 auto; padding: calc(18px + var(--safe-t)) 14px 24px; }
 
         header {
-            display: flex; justify-content: space-between; align-items: flex-start;
-            gap: 12px; margin-bottom: 14px;
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 12px; margin-bottom: 16px;
         }
-        .brand { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--green); font-weight: 600; }
-        h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.03em; margin-top: 2px; }
-        .sub { display: none; color: var(--muted); margin-top: 4px; font-size: 13px; }
-        .meta {
-            text-align: right; color: var(--dim); font-size: 11px;
-            font-family: 'JetBrains Mono', monospace;
-            display: flex; flex-direction: column; gap: 4px; align-items: flex-end; padding-top: 2px;
-        }
-        .live { display: inline-flex; align-items: center; gap: 6px; color: var(--green); font-weight: 500; }
-        .live::before {
-            content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--green);
-            animation: pulse 1.8s ease-out infinite;
-        }
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.45); }
-            70% { box-shadow: 0 0 0 8px rgba(52, 211, 153, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
-        }
+        h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.03em; }
+
         @keyframes flash {
             0% { background: rgba(52, 211, 153, 0.22); }
             100% { background: transparent; }
@@ -80,8 +64,7 @@
 
         .status-bar {
             display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-            margin-bottom: 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px;
-            background: rgba(18, 18, 20, 0.75);
+            margin-bottom: 16px;
         }
         .pill {
             font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
@@ -89,16 +72,13 @@
         }
         .pill.on { background: var(--green-dim); color: var(--green); }
         .pill.off { background: var(--amber-dim); color: var(--amber); }
-        .pill.conn { background: var(--green-dim); color: var(--green); }
-        .pill.down { background: var(--red-dim); color: var(--red); }
-        .status-bar .detail { color: var(--dim); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
         .status-bar .spacer { flex: 1; min-width: 4px; }
 
         button {
             border: 0; border-radius: 12px; padding: 12px 14px; font: inherit; font-weight: 700;
             cursor: pointer; white-space: nowrap; min-height: 48px; touch-action: manipulation;
             -webkit-tap-highlight-color: transparent; user-select: none;
-            transition: transform 80ms ease, filter 80ms ease, opacity 120ms ease;
+            transition: transform 80ms ease, opacity 120ms ease;
         }
         button:active:not(:disabled) { transform: scale(0.97); }
         button:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -107,14 +87,8 @@
         .btn-pause { background: var(--amber-dim); color: var(--amber); min-width: 96px; }
         .btn-resume { background: var(--green-dim); color: var(--green); min-width: 96px; }
         .btn-danger { background: var(--red-dim); color: var(--red); }
-        .btn-icon {
-            min-width: 40px; width: 40px; padding: 0; display: inline-grid; place-items: center;
-            font-size: 16px; line-height: 1;
-        }
 
         section { margin-bottom: 20px; }
-        .section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
-        .section-head h2 { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
         .count { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); }
 
         .list {
@@ -123,11 +97,11 @@
         }
         .row {
             display: grid; grid-template-columns: minmax(0, 1fr) auto;
-            gap: 10px; align-items: center; padding: 12px 12px;
+            gap: 10px; align-items: center; padding: 12px;
             border-bottom: 1px solid var(--line); min-height: 64px;
         }
         .row:last-child { border-bottom: 0; }
-        .phone { font-family: 'JetBrains Mono', monospace; font-size: 15px; font-weight: 500; }
+        .phone { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; letter-spacing: -0.01em; }
         .phone a { color: inherit; text-decoration: none; }
         .detail { color: var(--dim); font-size: 12px; margin-top: 3px; }
         .detail span + span::before { content: '·'; margin: 0 6px; }
@@ -152,11 +126,34 @@
         input[type="text"], input[type="password"], input[type="tel"] {
             width: 100%; background: var(--input); border: 1px solid var(--line); color: var(--text);
             border-radius: 12px; padding: 12px 14px; font: inherit; outline: none; min-height: 48px;
-            font-size: 16px; /* avoids iOS zoom */
+            font-size: 16px;
         }
         input:focus { border-color: rgba(52, 211, 153, 0.55); }
 
-        /* Sticky quick-action dock */
+        .compose-field { position: relative; min-width: 0; }
+
+        .suggest {
+            display: none;
+            position: absolute; left: 0; right: 0; z-index: 45;
+            border: 1px solid var(--line); border-radius: 12px;
+            background: #141416; overflow: hidden;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.55);
+            max-height: 240px; overflow-y: auto;
+        }
+        .suggest.show { display: block; }
+        .suggest.above { bottom: calc(100% + 6px); }
+        .suggest.below { top: calc(100% + 6px); }
+        .suggest-item {
+            width: 100%; min-height: 48px; border-radius: 0; text-align: left;
+            background: transparent; color: var(--text); font-weight: 500;
+            display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            padding: 10px 14px; border-bottom: 1px solid var(--line);
+        }
+        .suggest-item:last-child { border-bottom: 0; }
+        .suggest-item:active, .suggest-item.active { background: rgba(52, 211, 153, 0.1); }
+        .suggest-item .num { font-family: 'JetBrains Mono', monospace; font-size: 15px; }
+        .suggest-item .hint { color: var(--dim); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+
         .dock {
             position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
             padding: 10px 14px calc(10px + var(--safe-b));
@@ -183,9 +180,6 @@
         .toast.ok { border-color: rgba(52, 211, 153, 0.35); color: var(--green); }
         .toast.warn { border-color: rgba(251, 191, 36, 0.35); color: var(--amber); }
 
-        .foot { margin-top: 4px; color: var(--dim); font-size: 11px; }
-        .foot a { color: var(--muted); }
-
         .tabs {
             display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
             margin-bottom: 12px; padding: 4px; border: 1px solid var(--line);
@@ -198,18 +192,16 @@
         .tab.active { background: rgba(52, 211, 153, 0.12); color: var(--green); }
         .panel[hidden] { display: none !important; }
 
+        .compose-desktop { display: none; }
+
         @media (min-width: 720px) {
             .wrap { padding: 28px 20px 40px; }
             body { padding-bottom: 28px; }
             .dock { display: none; }
-            .sub { display: block; }
-            h1 { font-size: 28px; }
-            .compose-desktop { display: grid !important; grid-template-columns: 1fr auto; gap: 8px; margin-bottom: 20px; }
-        }
-        @media (max-width: 719px) {
-            .compose-desktop { display: none !important; }
-            .status-bar .detail { display: none; }
-            .btn-ghost#refresh-btn { display: none; }
+            h1 { font-size: 30px; }
+            .compose-desktop {
+                display: grid !important; grid-template-columns: 1fr auto; gap: 8px; margin-bottom: 20px;
+            }
         }
     </style>
 </head>
@@ -217,15 +209,8 @@
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <div class="wrap">
         <header>
-            <div>
-                <div class="brand">Wasup · Harley</div>
-                <h1>Handoffs</h1>
-                <p class="sub">Tap pause / resume — updates instantly. WhatsApp stays connected.</p>
-            </div>
-            <div class="meta">
-                <span class="live">Live</span>
-                <span id="updated">—</span>
-            </div>
+            <h1>Harley</h1>
+            <button class="btn-danger" id="ai-toggle" type="button">AI off</button>
         </header>
 
         <div class="error" id="error"></div>
@@ -235,13 +220,17 @@
         </div>
 
         <div class="status-bar">
-            <span class="pill" id="conn-pill">…</span>
             <span class="pill" id="ai-pill">…</span>
-            <span class="detail" id="phone-label">—</span>
             <span class="spacer"></span>
-            <button class="btn-ghost btn-icon" id="refresh-btn" type="button" aria-label="Refresh" title="Refresh">↻</button>
-            <button class="btn-danger" id="ai-toggle" type="button">AI off</button>
         </div>
+
+        <section class="compose-desktop" aria-label="Pause a number">
+            <div class="compose-field">
+                <input type="tel" id="phone-input-desktop" placeholder="07… or 020…" autocomplete="off" inputmode="tel">
+                <div class="suggest below" id="suggest-desktop"></div>
+            </div>
+            <button class="btn-pause" id="pause-btn-desktop" type="button">Pause</button>
+        </section>
 
         <div class="tabs" role="tablist">
             <button class="tab active" type="button" data-tab="paused" id="tab-paused">Paused <span class="count" id="paused-count">0</span></button>
@@ -258,18 +247,14 @@
         <section class="panel" id="panel-recent" hidden>
             <div class="list" id="recent-list"><div class="empty">Waiting…</div></div>
         </section>
-
-        <section class="compose-desktop" aria-label="Pause a number">
-            <input type="tel" id="phone-input-desktop" placeholder="+44 7931 233814" autocomplete="tel" inputmode="tel">
-            <button class="btn-pause" id="pause-btn-desktop" type="button">Pause AI</button>
-        </section>
-
-        <p class="foot">wasup2 · Harley · <a href="https://wasup2.northeurope.cloudapp.azure.com/" target="_blank" rel="noopener">control plane</a></p>
     </div>
 
     <div class="dock" aria-label="Quick pause">
         <div class="dock-inner">
-            <input type="tel" id="phone-input" placeholder="Number to pause" autocomplete="tel" inputmode="tel">
+            <div class="compose-field">
+                <input type="tel" id="phone-input" placeholder="07… or 020…" autocomplete="off" inputmode="tel">
+                <div class="suggest above" id="suggest-mobile"></div>
+            </div>
             <button class="btn-pause" id="pause-btn" type="button">Pause</button>
         </div>
     </div>
@@ -288,11 +273,7 @@
             authRow: document.getElementById('auth-row'),
             apiKey: document.getElementById('api-key'),
             saveKey: document.getElementById('save-key'),
-            updated: document.getElementById('updated'),
-            connPill: document.getElementById('conn-pill'),
             aiPill: document.getElementById('ai-pill'),
-            phoneLabel: document.getElementById('phone-label'),
-            refreshBtn: document.getElementById('refresh-btn'),
             aiToggle: document.getElementById('ai-toggle'),
             pausedList: document.getElementById('paused-list'),
             pausedCount: document.getElementById('paused-count'),
@@ -302,6 +283,8 @@
             phoneInputDesktop: document.getElementById('phone-input-desktop'),
             pauseBtn: document.getElementById('pause-btn'),
             pauseBtnDesktop: document.getElementById('pause-btn-desktop'),
+            suggestMobile: document.getElementById('suggest-mobile'),
+            suggestDesktop: document.getElementById('suggest-desktop'),
             clearAll: document.getElementById('clear-all'),
             panelPaused: document.getElementById('panel-paused'),
             panelRecent: document.getElementById('panel-recent'),
@@ -314,12 +297,14 @@
         let aiOn = false;
         let refreshInFlight = false;
         let recentInFlight = false;
-        let pending = new Set(); // phones currently mutating
+        let pending = new Set();
+        let optimisticActive = new Map();
         let flashPhone = null;
         let flashKind = null;
         let fastTimer = null;
         let slowTimer = null;
         let toastTimer = null;
+        let activeSuggest = null; // { box, items, index, input }
 
         function getApiKey() {
             try { return localStorage.getItem(API_KEY_STORAGE_KEY) || ''; } catch (_) { return ''; }
@@ -354,30 +339,104 @@
         function escapeHtml(s) {
             return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
         }
+
+        /** Digits-only international (no +). UK locals 07… / 020… → 44… */
         function normalizePhone(raw) {
             if (!raw) return '';
             let s = String(raw).trim();
-            const jid = s.match(/^(\d{6,15})@(?:s\.whatsapp\.net|lid|c\.us)\b/i);
-            if (jid) return jid[1];
-            const link = s.match(/(?:wa\.me\/|phone=)(\d{6,15})/i);
-            if (link) return link[1];
-            s = s.replace(/^[+]/, '').replace(/[\s().\-]/g, '');
-            const digits = s.replace(/\D/g, '');
-            return digits.length >= 6 && digits.length <= 15 ? digits : '';
+
+            const jid = s.match(/^(\d{6,18})@(?:s\.whatsapp\.net|lid|c\.us)\b/i);
+            if (jid) return canonicalizeUk(jid[1]);
+
+            const link = s.match(/(?:wa\.me\/|phone=)(\+?\d[\d\s().\-]{6,20}\d)/i);
+            if (link) s = link[1];
+
+            s = s.replace(/^[+]/, '');
+            // keep leading 0 for UK local detection before stripping non-digits carefully
+            let digits = s.replace(/[^\d]/g, '');
+            if (!digits) return '';
+
+            // 0044…
+            if (digits.startsWith('0044')) digits = digits.slice(2);
+
+            // UK local national: 07… / 01… / 02… / 03… (10–11 digits)
+            if (digits.startsWith('0') && digits.length >= 10 && digits.length <= 11) {
+                digits = '44' + digits.slice(1);
+            }
+
+            // bare UK mobile without 0: 7xxxxxxxxx (10 digits) → 447…
+            if (/^7\d{9}$/.test(digits)) digits = '44' + digits;
+
+            // London without 0: 20xxxxxxxx
+            if (/^20\d{8}$/.test(digits)) digits = '44' + digits;
+
+            if (digits.length < 8 || digits.length > 15) return '';
+            return digits;
         }
+
+        function canonicalizeUk(digits) {
+            let d = String(digits || '').replace(/\D/g, '');
+            if (d.startsWith('0044')) d = d.slice(2);
+            if (d.startsWith('0') && d.length >= 10 && d.length <= 11) d = '44' + d.slice(1);
+            if (/^7\d{9}$/.test(d)) d = '44' + d;
+            if (/^20\d{8}$/.test(d)) d = '44' + d;
+            return d;
+        }
+
+        /** Display UK numbers as 07… / 020… — API still gets 447… */
         function formatPhone(raw) {
             const d = normalizePhone(raw);
             if (!d) return String(raw || '').trim() || '—';
-            if (d.startsWith('44') && d.length >= 12) {
-                const rest = d.slice(2);
-                if (rest.length === 10) return `+44 ${rest.slice(0, 4)} ${rest.slice(4, 7)} ${rest.slice(7)}`;
-                return `+44 ${rest}`;
+
+            if (d.startsWith('44') && d.length >= 11) {
+                const national = '0' + d.slice(2);
+
+                // Mobile 07xxx xxx xxx
+                if (/^07\d{9}$/.test(national)) {
+                    return `${national.slice(0, 5)} ${national.slice(5, 8)} ${national.slice(8)}`;
+                }
+
+                // London 020 xxxx xxxx
+                if (/^020\d{8}$/.test(national)) {
+                    return `${national.slice(0, 3)} ${national.slice(3, 7)} ${national.slice(7)}`;
+                }
+
+                // 01xxx / 02xxx / 03xxx landlines — common 5+6 or 4+3+4
+                if (/^0[123]\d{8,9}$/.test(national)) {
+                    if (national.length === 11 && /^(011|01\d1)/.test(national)) {
+                        return `${national.slice(0, 4)} ${national.slice(4, 7)} ${national.slice(7)}`;
+                    }
+                    if (national.length === 11) {
+                        return `${national.slice(0, 5)} ${national.slice(5)}`;
+                    }
+                    if (national.length === 10) {
+                        return `${national.slice(0, 4)} ${national.slice(4)}`;
+                    }
+                }
+
+                // fallback national with light grouping
+                return national.replace(/(\d{4})(\d{3})(\d+)/, '$1 $2 $3');
             }
-            if (d.startsWith('1') && d.length === 11) return `+1 (${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7)}`;
+
+            if (d.startsWith('1') && d.length === 11) {
+                return `+1 (${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7)}`;
+            }
             const m = d.match(/^(\d{1,3})(\d+)$/);
             if (!m) return `+${d}`;
             return `+${m[1]} ${(m[2].match(/.{1,4}/g) || [m[2]]).join(' ')}`;
         }
+
+        function matchKey(phone) {
+            const d = normalizePhone(phone);
+            const uk = formatPhone(d).replace(/\s/g, '');
+            return {
+                d,
+                digits: d,
+                ukDigits: uk.replace(/\D/g, ''),
+                display: formatPhone(d),
+            };
+        }
+
         function extractPhonesFromText(text) {
             const found = new Set();
             if (!text) return found;
@@ -388,9 +447,13 @@
                 if (n) found.add(n);
             }
             const jidRe = /\b(\d{8,15})@(?:s\.whatsapp\.net|lid|c\.us)\b/gi;
-            while ((m = jidRe.exec(text)) !== null) found.add(m[1]);
+            while ((m = jidRe.exec(text)) !== null) {
+                const n = normalizePhone(m[1]);
+                if (n) found.add(n);
+            }
             return found;
         }
+
         function relativeTime(iso) {
             if (!iso) return '';
             const sec = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
@@ -428,17 +491,11 @@
             el.panelRecent.hidden = pausedTab;
         }
 
-        function renderStatus(inst) {
-            const connected = (inst?.status || '') === 'connected';
-            el.connPill.textContent = connected ? 'Connected' : (inst?.status || 'Unknown');
-            el.connPill.className = `pill ${connected ? 'conn' : 'down'}`;
-            aiOn = !!(inst?.webhookUrl);
+        function renderStatus() {
             el.aiPill.textContent = aiOn ? 'AI on' : 'AI off';
             el.aiPill.className = `pill ${aiOn ? 'on' : 'off'}`;
             el.aiToggle.textContent = aiOn ? 'AI off' : 'AI on';
             el.aiToggle.className = aiOn ? 'btn-danger' : 'btn-resume';
-            const phone = inst?.connectedPhone || inst?.phoneNumber || '';
-            el.phoneLabel.textContent = phone ? formatPhone(phone) : INSTANCE_ID;
         }
 
         function actionButton(phone, pausedNow) {
@@ -462,7 +519,7 @@
             el.pausedCount.textContent = String(rows.length);
             el.clearAll.disabled = rows.length === 0 || pending.size > 0;
             if (!rows.length) {
-                el.pausedList.innerHTML = '<div class="empty">Nobody paused — AI is live</div>';
+                el.pausedList.innerHTML = '<div class="empty">Nobody paused</div>';
                 return;
             }
             el.pausedList.innerHTML = rows.map((r) => {
@@ -513,6 +570,79 @@
         function paint() {
             renderPaused();
             renderRecent();
+            // refresh open suggestions if typing
+            if (document.activeElement === el.phoneInput) updateSuggestions(el.phoneInput, el.suggestMobile);
+            if (document.activeElement === el.phoneInputDesktop) updateSuggestions(el.phoneInputDesktop, el.suggestDesktop);
+        }
+
+        function suggestionPool() {
+            const map = new Map();
+            for (const r of recent) {
+                const n = normalizePhone(r.phone);
+                if (!n) continue;
+                map.set(n, { phone: n, hint: isPaused(n) ? 'paused' : (r.hint || 'recent'), at: r.at });
+            }
+            for (const c of paused) {
+                const n = normalizePhone(c.phone || c.jid);
+                if (!n) continue;
+                const prev = map.get(n);
+                map.set(n, {
+                    phone: n,
+                    hint: 'paused',
+                    at: c.lastActivity || c.taggedAt || prev?.at,
+                });
+            }
+            return [...map.values()].sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
+        }
+
+        function filterSuggestions(query) {
+            const qRaw = String(query || '').trim();
+            if (!qRaw) return suggestionPool().slice(0, 6);
+            const qDigits = qRaw.replace(/\D/g, '');
+            const qNorm = normalizePhone(qRaw);
+            return suggestionPool().filter((item) => {
+                const m = matchKey(item.phone);
+                if (qNorm && m.digits === qNorm) return true;
+                if (qDigits && (m.digits.includes(qDigits) || m.ukDigits.includes(qDigits))) return true;
+                const disp = m.display.replace(/\s/g, '').toLowerCase();
+                if (disp.includes(qRaw.replace(/\s/g, '').toLowerCase())) return true;
+                return false;
+            }).slice(0, 8);
+        }
+
+        function hideSuggestions(box) {
+            if (!box) {
+                el.suggestMobile.classList.remove('show');
+                el.suggestDesktop.classList.remove('show');
+                activeSuggest = null;
+                return;
+            }
+            box.classList.remove('show');
+            box.innerHTML = '';
+            if (activeSuggest?.box === box) activeSuggest = null;
+        }
+
+        function updateSuggestions(input, box) {
+            const items = filterSuggestions(input.value);
+            if (!items.length) {
+                hideSuggestions(box);
+                return;
+            }
+            box.innerHTML = items.map((item, idx) => `
+                <button type="button" class="suggest-item${idx === 0 ? ' active' : ''}" data-suggest="${escapeHtml(item.phone)}">
+                    <span class="num">${escapeHtml(formatPhone(item.phone))}</span>
+                    <span class="hint">${escapeHtml(item.hint || 'recent')}</span>
+                </button>
+            `).join('');
+            box.classList.add('show');
+            activeSuggest = { box, items, index: 0, input };
+        }
+
+        function pickSuggestion(phone, input) {
+            hideSuggestions();
+            input.value = formatPhone(phone);
+            setHandoff(phone, true);
+            input.blur();
         }
 
         async function loadRecent() {
@@ -552,7 +682,6 @@
         async function refresh({ includeRecent = false, quiet = false } = {}) {
             if (refreshInFlight) return;
             refreshInFlight = true;
-            if (!quiet) el.refreshBtn.classList.add('busy');
             try {
                 if (!quiet) showError('');
                 const [list, ho] = await Promise.all([
@@ -560,20 +689,18 @@
                     api(`/api/instances/${INSTANCE_ID}/handoff`),
                 ]);
                 const inst = (list.instances || []).find((i) => i.id === INSTANCE_ID) || null;
-                if (!inst) throw new Error('Harley instance not found on wasup2');
-                renderStatus(inst);
+                if (!inst) throw new Error('Harley not found');
+                aiOn = !!(inst.webhookUrl);
+                renderStatus();
 
-                // Don't clobber optimistic local pending phones
                 const serverPaused = ho.humanModeChats || [];
                 const pendingPhones = [...pending];
                 paused = serverPaused.filter((c) => {
                     const p = normalizePhone(c.phone || c.jid);
-                    // keep server truth unless we have an in-flight opposite action
                     return !pendingPhones.includes(p);
                 });
-                // Re-apply optimistic pauses that aren't on server yet
                 for (const p of pendingPhones) {
-                    if (!paused.some((c) => normalizePhone(c.phone || c.jid) === p) && optimisticActive.get(p)) {
+                    if (optimisticActive.get(p) && !paused.some((c) => normalizePhone(c.phone || c.jid) === p)) {
                         paused.unshift({
                             jid: `${p}@s.whatsapp.net`,
                             phone: p,
@@ -586,7 +713,6 @@
 
                 if (includeRecent) await loadRecent();
                 paint();
-                el.updated.textContent = new Date().toLocaleTimeString();
             } catch (err) {
                 if (err.status === 401) {
                     el.authRow.classList.add('show');
@@ -596,11 +722,8 @@
                 }
             } finally {
                 refreshInFlight = false;
-                el.refreshBtn.classList.remove('busy');
             }
         }
-
-        const optimisticActive = new Map(); // phone -> desired active bool
 
         async function setHandoff(phone, active) {
             const n = normalizePhone(phone);
@@ -614,7 +737,6 @@
             flashKind = active ? 'pause' : 'resume';
             buzz(active ? 10 : 16);
 
-            // Optimistic local mutate
             if (active) {
                 if (!isPaused(n)) {
                     paused.unshift({
@@ -625,7 +747,6 @@
                         lastActivity: new Date().toISOString(),
                     });
                 }
-                // ensure in recent
                 if (!recent.some((r) => r.phone === n)) {
                     recent.unshift({ phone: n, at: new Date().toISOString(), hint: 'manual' });
                 }
@@ -640,15 +761,10 @@
 
             try {
                 showError('');
-                const data = await api(`/api/instances/${INSTANCE_ID}/handoff`, {
+                await api(`/api/instances/${INSTANCE_ID}/handoff`, {
                     method: 'POST',
                     body: JSON.stringify({ phone: n, active: !!active }),
                 });
-                if (Array.isArray(data.humanModeChats) && !pending.has(n)) {
-                    // already cleared below
-                } else if (Array.isArray(data.humanModeChats)) {
-                    // merge server result once this phone leaves pending
-                }
             } catch (err) {
                 paused = prevPaused;
                 paint();
@@ -658,7 +774,6 @@
             } finally {
                 pending.delete(n);
                 optimisticActive.delete(n);
-                // sync lightly without blocking UI
                 refresh({ quiet: true }).catch(() => {});
             }
         }
@@ -667,13 +782,9 @@
             try {
                 showError('');
                 const nextOn = !aiOn;
-                if (!nextOn && !confirm('Turn AI off for Harley? WhatsApp stays connected.')) return;
-                // optimistic status
+                if (!nextOn && !confirm('Turn AI off for Harley?')) return;
                 aiOn = nextOn;
-                el.aiPill.textContent = aiOn ? 'AI on' : 'AI off';
-                el.aiPill.className = `pill ${aiOn ? 'on' : 'off'}`;
-                el.aiToggle.textContent = aiOn ? 'AI off' : 'AI on';
-                el.aiToggle.className = aiOn ? 'btn-danger' : 'btn-resume';
+                renderStatus();
                 toast(aiOn ? 'AI on' : 'AI off', aiOn ? 'ok' : 'warn');
                 buzz(14);
                 await api(`/api/instances/${INSTANCE_ID}`, {
@@ -688,14 +799,60 @@
         }
 
         function pauseFromInput(inputEl) {
+            if (activeSuggest?.items?.length && activeSuggest.input === inputEl && activeSuggest.index >= 0) {
+                const phone = activeSuggest.items[activeSuggest.index]?.phone;
+                if (phone) {
+                    pickSuggestion(phone, inputEl);
+                    return;
+                }
+            }
             const v = inputEl.value;
             inputEl.value = '';
+            hideSuggestions();
             setHandoff(v, true);
+        }
+
+        function wireSuggest(input, box) {
+            input.addEventListener('input', () => updateSuggestions(input, box));
+            input.addEventListener('focus', () => updateSuggestions(input, box));
+            input.addEventListener('blur', () => {
+                // allow tap on suggestion
+                setTimeout(() => {
+                    if (!box.contains(document.activeElement)) hideSuggestions(box);
+                }, 140);
+            });
+            input.addEventListener('keydown', (e) => {
+                if (!activeSuggest || activeSuggest.box !== box || !activeSuggest.items.length) {
+                    if (e.key === 'Enter') { e.preventDefault(); pauseFromInput(input); }
+                    return;
+                }
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    activeSuggest.index = Math.min(activeSuggest.index + 1, activeSuggest.items.length - 1);
+                    [...box.querySelectorAll('.suggest-item')].forEach((n, i) => n.classList.toggle('active', i === activeSuggest.index));
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    activeSuggest.index = Math.max(activeSuggest.index - 1, 0);
+                    [...box.querySelectorAll('.suggest-item')].forEach((n, i) => n.classList.toggle('active', i === activeSuggest.index));
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const phone = activeSuggest.items[activeSuggest.index]?.phone;
+                    if (phone) pickSuggestion(phone, input);
+                    else pauseFromInput(input);
+                } else if (e.key === 'Escape') {
+                    hideSuggestions(box);
+                }
+            });
+            box.addEventListener('mousedown', (e) => e.preventDefault());
+            box.addEventListener('click', (e) => {
+                const item = e.target.closest('[data-suggest]');
+                if (!item) return;
+                pickSuggestion(item.getAttribute('data-suggest'), input);
+            });
         }
 
         el.apiKey.value = getApiKey();
         el.saveKey.addEventListener('click', () => { setApiKey(el.apiKey.value.trim()); showError(''); refresh({ includeRecent: true }); });
-        el.refreshBtn.addEventListener('click', () => refresh({ includeRecent: true }));
         el.aiToggle.addEventListener('click', () => toggleAi());
         el.clearAll.addEventListener('click', async () => {
             if (!confirm('Resume AI for every paused chat?')) return;
@@ -716,13 +873,12 @@
 
         el.pauseBtn.addEventListener('click', () => pauseFromInput(el.phoneInput));
         el.pauseBtnDesktop.addEventListener('click', () => pauseFromInput(el.phoneInputDesktop));
-        el.phoneInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') pauseFromInput(el.phoneInput); });
-        el.phoneInputDesktop.addEventListener('keydown', (e) => { if (e.key === 'Enter') pauseFromInput(el.phoneInputDesktop); });
+        wireSuggest(el.phoneInput, el.suggestMobile);
+        wireSuggest(el.phoneInputDesktop, el.suggestDesktop);
 
         el.tabPaused.addEventListener('click', () => setTab('paused'));
         el.tabRecent.addEventListener('click', () => { setTab('recent'); if (!recent.length) loadRecent().then(paint); });
 
-        // Pointer-fast: act on pointerup for snappier mobile feel (avoid 300ms patterns)
         document.addEventListener('click', (e) => {
             const resume = e.target.closest('[data-resume]');
             if (resume) { e.preventDefault(); setHandoff(resume.getAttribute('data-resume'), false); return; }
