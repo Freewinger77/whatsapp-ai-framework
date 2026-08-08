@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Webshare Proxy Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg0: #0f1412;
+      --bg1: #171e1b;
+      --bg2: #1f2924;
+      --line: #2d3b34;
+      --text: #e7efe9;
+      --muted: #93a59b;
+      --accent: #3dd68c;
+      --accent-dim: #1f8a56;
+      --warn: #e8b84a;
+      --danger: #e86a5a;
+      --info: #6ab0e8;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+      --radius: 14px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: "Sora", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(1200px 600px at 10% -10%, rgba(61, 214, 140, 0.16), transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, rgba(106, 176, 232, 0.12), transparent 50%),
+        linear-gradient(180deg, #101614 0%, var(--bg0) 40%, #0c100e 100%);
+    }
+
+    .wrap {
+      width: min(1280px, calc(100% - 2rem));
+      margin: 0 auto;
+      padding: 1.5rem 0 3rem;
+    }
+
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 1.25rem;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: clamp(1.5rem, 2.5vw, 2rem);
+      letter-spacing: -0.03em;
+    }
+
+    .brand p {
+      margin: 0.35rem 0 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .toolbar, .filters, .stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      align-items: center;
+    }
+
+    .stats {
+      margin-bottom: 1rem;
+    }
+
+    .stat {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0.4rem 0.8rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    .stat strong {
+      color: var(--text);
+      font-weight: 600;
+      margin-right: 0.25rem;
+    }
+
+    button, select, input, textarea {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: var(--bg2);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 0.55rem 0.85rem;
+      cursor: pointer;
+      transition: border-color .15s, background .15s, transform .15s;
+    }
+
+    button:hover {
+      border-color: var(--accent-dim);
+      background: #24312b;
+    }
+
+    button:active { transform: translateY(1px); }
+    button.primary {
+      background: linear-gradient(180deg, #2fb875, #1f8a56);
+      border-color: transparent;
+      color: #04140c;
+      font-weight: 600;
+    }
+
+    button.ghost {
+      background: transparent;
+    }
+
+    .filters {
+      margin-bottom: 1rem;
+      padding: 0.85rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(23, 30, 27, 0.85);
+      backdrop-filter: blur(8px);
+    }
+
+    .filters input, .filters select {
+      background: var(--bg0);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0.55rem 0.75rem;
+      min-width: 160px;
+    }
+
+    .filters input[type="search"] { flex: 1; min-width: 220px; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 0.9rem;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(31,41,36,0.95), rgba(20,26,23,0.98));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      animation: rise .35s ease both;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      align-items: flex-start;
+    }
+
+    .endpoint {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.95rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-top: 0.2rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      border-radius: 999px;
+      padding: 0.25rem 0.55rem;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .badge.free { background: rgba(61,214,140,.12); color: var(--accent); border-color: rgba(61,214,140,.25); }
+    .badge.assigned { background: rgba(106,176,232,.12); color: var(--info); border-color: rgba(106,176,232,.25); }
+    .badge.testing { background: rgba(232,184,74,.12); color: var(--warn); border-color: rgba(232,184,74,.25); }
+    .badge.blocked { background: rgba(232,106,90,.12); color: var(--danger); border-color: rgba(232,106,90,.25); }
+
+    .proto {
+      display: flex;
+      gap: 0.35rem;
+      flex-wrap: wrap;
+    }
+
+    .proto span {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.72rem;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.15rem 0.4rem;
+    }
+
+    .creds {
+      display: grid;
+      gap: 0.4rem;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.78rem;
+      background: rgba(0,0,0,.22);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0.65rem;
+    }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .row code { color: var(--text); word-break: break-all; }
+    .row button {
+      padding: 0.25rem 0.5rem;
+      font-size: 0.72rem;
+      border-radius: 7px;
+    }
+
+    label.field {
+      display: grid;
+      gap: 0.3rem;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    label.field input,
+    label.field select,
+    label.field textarea {
+      width: 100%;
+      background: var(--bg0);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0.55rem 0.7rem;
+    }
+
+    label.field textarea {
+      min-height: 72px;
+      resize: vertical;
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      margin-top: auto;
+    }
+
+    .toast {
+      position: fixed;
+      right: 1rem;
+      bottom: 1rem;
+      background: #123224;
+      border: 1px solid var(--accent-dim);
+      color: var(--text);
+      padding: 0.7rem 0.95rem;
+      border-radius: 10px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+      transition: .2s ease;
+      z-index: 20;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: none;
+    }
+
+    .hint {
+      margin-top: 1rem;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    @media (max-width: 640px) {
+      .wrap { width: calc(100% - 1.25rem); }
+      .grid { grid-template-columns: 1fr; }
+      .toolbar { width: 100%; }
+      .toolbar button { flex: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <h1>Webshare Proxy Tracker</h1>
+        <p>12 Direct proxies · HTTP + SOCKS5 · notes & assignment</p>
+      </div>
+      <div class="toolbar">
+        <button class="ghost" id="exportBtn">Export</button>
+        <button class="ghost" id="importBtn">Import</button>
+        <button class="ghost" id="resetBtn">Reset tracking</button>
+        <input type="file" id="importFile" accept="application/json" hidden />
+      </div>
+    </header>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="filters">
+      <input type="search" id="search" placeholder="Search host, assignee, notes…" />
+      <select id="statusFilter">
+        <option value="all">All statuses</option>
+        <option value="free">Free</option>
+        <option value="assigned">Assigned</option>
+        <option value="testing">Testing</option>
+        <option value="blocked">Blocked</option>
+      </select>
+      <select id="assigneeFilter">
+        <option value="all">All assignees</option>
+      </select>
+    </div>
+
+    <div class="grid" id="grid"></div>
+    <p class="hint">Tracking data saves in this browser (localStorage). Use Export/Import to share or backup assignments and notes.</p>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const STORAGE_KEY = "webshare-proxy-tracker-v1";
+    const STATUSES = ["free", "assigned", "testing", "blocked"];
+
+    /** @type {Array<any>} */
+    let proxies = [];
+    /** @type {Record<string, {status:string, assignee:string, notes:string, updatedAt:string}>} */
+    let tracking = {};
+
+    const grid = document.getElementById("grid");
+    const statsEl = document.getElementById("stats");
+    const searchEl = document.getElementById("search");
+    const statusFilter = document.getElementById("statusFilter");
+    const assigneeFilter = document.getElementById("assigneeFilter");
+    const toastEl = document.getElementById("toast");
+
+    function toast(msg) {
+      toastEl.textContent = msg;
+      toastEl.classList.add("show");
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => toastEl.classList.remove("show"), 1600);
+    }
+
+    function loadTracking() {
+      try {
+        tracking = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") || {};
+      } catch {
+        tracking = {};
+      }
+    }
+
+    function saveTracking() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(tracking));
+    }
+
+    function ensureTracking(id) {
+      if (!tracking[id]) {
+        tracking[id] = {
+          status: "free",
+          assignee: "",
+          notes: "",
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return tracking[id];
+    }
+
+    function endpoint(p) {
+      return `${p.host}:${p.port}`;
+    }
+
+    function httpUrl(p) {
+      return `http://${p.username}:${p.password}@${p.host}:${p.port}`;
+    }
+
+    function socksUrl(p) {
+      return `socks5://${p.username}:${p.password}@${p.host}:${p.port}`;
+    }
+
+    async function copy(text, label) {
+      try {
+        await navigator.clipboard.writeText(text);
+        toast(`Copied ${label}`);
+      } catch {
+        toast("Copy failed");
+      }
+    }
+
+    function uniqueAssignees() {
+      return [...new Set(
+        Object.values(tracking)
+          .map((t) => (t.assignee || "").trim())
+          .filter(Boolean)
+      )].sort((a, b) => a.localeCompare(b));
+    }
+
+    function refreshAssigneeFilter() {
+      const current = assigneeFilter.value;
+      const options = ['<option value="all">All assignees</option>']
+        .concat(uniqueAssignees().map((a) => `<option value="${escapeAttr(a)}">${escapeHtml(a)}</option>`));
+      assigneeFilter.innerHTML = options.join("");
+      if ([...assigneeFilter.options].some((o) => o.value === current)) {
+        assigneeFilter.value = current;
+      }
+    }
+
+    function counts() {
+      const c = { free: 0, assigned: 0, testing: 0, blocked: 0 };
+      for (const p of proxies) {
+        const t = ensureTracking(p.id);
+        c[t.status] = (c[t.status] || 0) + 1;
+      }
+      return c;
+    }
+
+    function renderStats() {
+      const c = counts();
+      statsEl.innerHTML = `
+        <div class="stat"><strong>${proxies.length}</strong> total</div>
+        <div class="stat"><strong>${c.free}</strong> free</div>
+        <div class="stat"><strong>${c.assigned}</strong> assigned</div>
+        <div class="stat"><strong>${c.testing}</strong> testing</div>
+        <div class="stat"><strong>${c.blocked}</strong> blocked</div>
+      `;
+    }
+
+    function matchesFilters(p) {
+      const t = ensureTracking(p.id);
+      const q = searchEl.value.trim().toLowerCase();
+      const status = statusFilter.value;
+      const assignee = assigneeFilter.value;
+
+      if (status !== "all" && t.status !== status) return false;
+      if (assignee !== "all" && (t.assignee || "").trim() !== assignee) return false;
+      if (!q) return true;
+
+      const hay = [
+        p.host, String(p.port), p.username, t.assignee, t.notes, t.status, endpoint(p)
+      ].join(" ").toLowerCase();
+      return hay.includes(q);
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function escapeAttr(s) {
+      return escapeHtml(s).replaceAll("'", "&#39;");
+    }
+
+    function render() {
+      refreshAssigneeFilter();
+      renderStats();
+      const list = proxies.filter(matchesFilters);
+      grid.innerHTML = list.map((p, idx) => {
+        const t = ensureTracking(p.id);
+        return `
+          <article class="card" style="animation-delay:${idx * 20}ms" data-id="${p.id}">
+            <div class="card-top">
+              <div>
+                <div class="endpoint">${escapeHtml(endpoint(p))}</div>
+                <div class="meta">${escapeHtml(p.provider)} · Direct · #${escapeHtml(p.id)}</div>
+              </div>
+              <span class="badge ${escapeAttr(t.status)}">${escapeHtml(t.status)}</span>
+            </div>
+
+            <div class="proto">
+              ${(p.protocols || []).map((x) => `<span>${escapeHtml(x)}</span>`).join("")}
+            </div>
+
+            <div class="creds">
+              <div class="row"><span>user</span><code>${escapeHtml(p.username)}</code>
+                <button type="button" data-copy="${escapeAttr(p.username)}" data-label="user">Copy</button></div>
+              <div class="row"><span>pass</span><code>${escapeHtml(p.password)}</code>
+                <button type="button" data-copy="${escapeAttr(p.password)}" data-label="password">Copy</button></div>
+              <div class="row"><span>http</span><code>http://…@${escapeHtml(endpoint(p))}</code>
+                <button type="button" data-copy="${escapeAttr(httpUrl(p))}" data-label="HTTP URL">Copy</button></div>
+              <div class="row"><span>socks5</span><code>socks5://…@${escapeHtml(endpoint(p))}</code>
+                <button type="button" data-copy="${escapeAttr(socksUrl(p))}" data-label="SOCKS5 URL">Copy</button></div>
+            </div>
+
+            <label class="field">Status
+              <select data-field="status">
+                ${STATUSES.map((s) => `<option value="${s}" ${t.status === s ? "selected" : ""}>${s}</option>`).join("")}
+              </select>
+            </label>
+
+            <label class="field">Assigned to
+              <input data-field="assignee" value="${escapeAttr(t.assignee)}" placeholder="e.g. wasup-prod, nik, n8n" />
+            </label>
+
+            <label class="field">Notes
+              <textarea data-field="notes" placeholder="Where used, bans, rate limits…">${escapeHtml(t.notes)}</textarea>
+            </label>
+
+            <div class="card-actions">
+              <button type="button" class="primary" data-copy="${escapeAttr(httpUrl(p))}" data-label="HTTP URL">Copy HTTP</button>
+              <button type="button" data-copy="${escapeAttr(socksUrl(p))}" data-label="SOCKS5 URL">Copy SOCKS5</button>
+              <button type="button" class="ghost" data-copy="${escapeAttr(endpoint(p))}" data-label="endpoint">Copy host:port</button>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    function onFieldChange(e) {
+      const field = e.target.getAttribute("data-field");
+      if (!field) return;
+      const card = e.target.closest(".card");
+      if (!card) return;
+      const id = card.getAttribute("data-id");
+      const t = ensureTracking(id);
+      t[field] = e.target.value;
+      if (field === "assignee" && t.assignee.trim() && t.status === "free") {
+        t.status = "assigned";
+        const sel = card.querySelector('select[data-field="status"]');
+        if (sel) sel.value = "assigned";
+      }
+      if (field === "status" && t.status === "free") {
+        // keep assignee/notes
+      }
+      t.updatedAt = new Date().toISOString();
+      saveTracking();
+      renderStats();
+      refreshAssigneeFilter();
+      const badge = card.querySelector(".badge");
+      if (badge) {
+        badge.className = `badge ${t.status}`;
+        badge.textContent = t.status;
+      }
+    }
+
+    grid.addEventListener("input", onFieldChange);
+    grid.addEventListener("change", onFieldChange);
+    grid.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-copy]");
+      if (!btn) return;
+      copy(btn.getAttribute("data-copy"), btn.getAttribute("data-label") || "value");
+    });
+
+    searchEl.addEventListener("input", render);
+    statusFilter.addEventListener("change", render);
+    assigneeFilter.addEventListener("change", render);
+
+    document.getElementById("exportBtn").addEventListener("click", () => {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        proxies,
+        tracking,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `proxy-tracker-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      toast("Exported");
+    });
+
+    document.getElementById("importBtn").addEventListener("click", () => {
+      document.getElementById("importFile").click();
+    });
+
+    document.getElementById("importFile").addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const data = JSON.parse(await file.text());
+        if (data.tracking && typeof data.tracking === "object") {
+          tracking = data.tracking;
+          saveTracking();
+          render();
+          toast("Imported tracking");
+        } else {
+          toast("Invalid file");
+        }
+      } catch {
+        toast("Import failed");
+      }
+      e.target.value = "";
+    });
+
+    document.getElementById("resetBtn").addEventListener("click", () => {
+      if (!confirm("Clear all assignments and notes in this browser?")) return;
+      tracking = {};
+      saveTracking();
+      render();
+      toast("Tracking reset");
+    });
+
+    async function boot() {
+      loadTracking();
+      const res = await fetch("./proxies.json", { cache: "no-store" });
+      proxies = await res.json();
+      for (const p of proxies) ensureTracking(p.id);
+      saveTracking();
+      render();
+    }
+
+    boot().catch((err) => {
+      grid.innerHTML = `<p class="hint">Failed to load proxies.json: ${escapeHtml(err.message)}</p>`;
+    });
+  </script>
+</body>
+</html>

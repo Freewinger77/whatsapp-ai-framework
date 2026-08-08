@@ -1,0 +1,110 @@
+[
+  {
+    "id": "p01",
+    "host": "212.212.19.162",
+    "port": 6313,
+    "username": "rktwwipc",
+    "password": "baq3spf64bhx",
+    "provider": "Webshare",
+    "protocols": ["http", "socks5"]
+  },
+  {
+    "id": "p02",
+    "host": "87.86.25.131",
+    "port": 5282,
+    "username": "rktwwipc",
+    "password": "baq3spf64bhx",
+    "provider": "Webshare",
+    "protocols": ["http", "socks5"]
+  },
+  {
+    "id": "p03",
+    "host": "82.26.114.130",
+    "port": 6832,
+    "username": "rktwwipc",
+    "password": "baq3spf64bhx",
+    "provider": "Webshare",
+    "protocols": ["http", "socks5"]
+  },
+  {
+    "id": "p04",
+    "host": "87.86.24.159",
+    "port": 5810,
+    "username": "rktwwipc",
+    "password": "baq3spf64bhx",
+    "provider": "Webshare",
+    "protocols": ["http", "socks5"]
+  },
+  {
+    "id": "p05",
+    "host": "212.212.18.198",
+    "port": 6849,
+    "username": "rktwwipc",
+    "password": "baq3spf64bhx",
+    "provider": "Webshare",
+    "protocols": ["http", "socks5"]
+  },
+  {
+    "id": "p06",
+    "host": "212.212.18.227",
+    "port": 6878,
+    "username": "rktwwipc",
+    "password": "baq3spf64bhx",
+    "provider": "Webshare",
+    "protocols": ["http", "socks5"]
+  },
+  {
+    "id": "p07",
+    "host": "212.212.19.147",
+    "port": 6298,
+    "username": "rktwwipc",
+    "password": "baq3spf64bhx",
+    "provider": "Webshare",
+    "protocols": ["http", "socks5"]
+  },
+  {
+    "id": "p08",
+    "host": "195.40.128.104",
+    "port": 6824,
+    "username": "rktwwipc",
+    "password": "baq3spf64bhx",
+    "provider": "Webshare",
+    "protocols": ["http", "socks5"]
+  },
+  {
+    "id": "p09",
+    "host": "195.40.128.106",
+    "port": 6826,
+    "username": "rktwwipc",
+    "password": "baq3spf64bhx",
+    "provider": "Webshare",
+    "protocols": ["http", "socks5"]
+  },
+  {
+    "id": "p10",
+    "host": "87.86.25.229",
+    "port": 5380,
+    "username": "rktwwipc",
+    "password": "baq3spf64bhx",
+    "provider": "Webshare",
+    "protocols": ["http", "socks5"]
+  },
+  {
+    "id": "p11",
+    "host": "195.40.142.230",
+    "port": 5450,
+    "username": "rktwwipc",
+    "password": "baq3spf64bhx",
+    "provider": "Webshare",
+    "protocols": ["http", "socks5"]
+  },
+  {
+    "id": "p12",
+    "host": "82.26.114.9",
+    "port": 6711,
+    "username": "rktwwipc",
+    "password": "baq3spf64bhx",
+    "provider": "Webshare",
+    "protocols": ["http", "socks5"]
+  }
+]
