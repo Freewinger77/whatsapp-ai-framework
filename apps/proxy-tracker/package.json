@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "npx --yes serve -l 4173 .",
-    "build": "mkdir -p dist && cp index.html proxies.json vercel.json dist/ && cp -r public dist/public 2>/dev/null || true",
+    "build": "mkdir -p public && cp index.html proxies.json public/",
+    "vercel-build": "npm run build",
     "start": "npx --yes serve -l 4173 ."
   }
 }
