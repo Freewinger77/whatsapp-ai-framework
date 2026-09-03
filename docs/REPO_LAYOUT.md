@@ -17,6 +17,7 @@ This monorepo combines the WhatsApp worker, SaaS control plane, dashboard, and A
 │   ├── k8s/                 # Helm charts (future worker/control-plane on K8s)
 │   └── docker/              # Placeholder for future container images
 ├── docs/                    # Guides, runbooks, feature inventory
+├── n8n-agent/               # CLI + client for the live n8n Public API (cloud agent)
 ├── scripts/                 # Convenience entrypoints → deploy/scripts/
 ├── supabase/                # Database migrations
 └── n8n-workflows/           # Exported n8n automation flows

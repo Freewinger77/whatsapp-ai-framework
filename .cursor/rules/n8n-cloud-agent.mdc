@@ -1,0 +1,33 @@
+---
+description: How cloud agents manage the live n8n instance
+alwaysApply: true
+---
+
+# n8n Cloud Agent
+
+This repo is the home for the n8n cloud agent. Use `n8n-agent/` to change live workflows on Azure n8n.
+
+## Instance
+
+- Base URL: `https://n8n-rapid-czbff9cnafhkhmhf.eastus-01.azurewebsites.net`
+- Auth header: `X-N8N-API-KEY`
+- Credentials come from `N8N_BASE_URL` + `N8N_API_KEY` (environment secrets or `n8n-agent/.env`)
+- Never commit, log, or paste the API key
+
+## Commands
+
+```bash
+node n8n-agent/src/cli.js health
+node n8n-agent/src/cli.js workflows list --search "<name>"
+node n8n-agent/src/cli.js workflows export <id> --out n8n-workflows/<name>.json
+node n8n-agent/src/cli.js workflows update <id> --file n8n-workflows/<name>.json
+```
+
+Programmatic import: `import { createClient, loadConfig } from './n8n-agent/src/index.js'`
+
+## Safety
+
+- Export before update. The GET payload has read-only fields; the client sanitizes them for PUT/PATCH.
+- Do not activate, deactivate, archive, or delete a production workflow unless the user explicitly asked.
+- Prefer inactive copies for experiments.
+- Confirm the workflow id by name search before writing.
