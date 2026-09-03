@@ -1,0 +1,7 @@
+# UK pool — proxies 1-5 → wasup-uk-south
+# Format: host:port:username:password  (one per line, # for comments)
+104.252.62.154:5525:rktwwipc:baq3spf64bhx
+104.252.62.132:5503:rktwwipc:baq3spf64bhx
+87.86.25.138:5289:rktwwipc:baq3spf64bhx
+87.86.24.159:5810:rktwwipc:baq3spf64bhx
+104.252.81.217:6088:rktwwipc:baq3spf64bhx

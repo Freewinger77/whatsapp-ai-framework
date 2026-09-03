@@ -1,0 +1,26 @@
+{
+  "username": "rktwwipc",
+  "passwordEnv": "PROXY_CATALOG_PASS",
+  "entries": [
+    { "label": "FR1", "country": "FR", "host": "31.98.4.2", "port": 7680 },
+    { "label": "FR2", "country": "FR", "host": "46.203.86.238", "port": 5738 },
+    { "label": "FR3", "country": "FR", "host": "82.23.57.62", "port": 7316 },
+    { "label": "FR4", "country": "FR", "host": "31.98.7.239", "port": 6417 },
+    { "label": "FR5", "country": "FR", "host": "46.203.20.87", "port": 6588 },
+    { "label": "FR6", "country": "FR", "host": "46.203.86.158", "port": 5658 },
+    { "label": "FR7", "country": "FR", "host": "46.203.60.204", "port": 7204 },
+    { "label": "FR8", "country": "FR", "host": "159.148.239.184", "port": 6736 },
+    { "label": "FR9", "country": "FR", "host": "96.62.193.28", "port": 7737 },
+    { "label": "FR10", "country": "FR", "host": "159.148.236.80", "port": 6286 },
+    { "label": "UK1", "country": "UK", "host": "87.86.24.159", "port": 5810 },
+    { "label": "UK2", "country": "UK", "host": "212.212.18.198", "port": 6849 },
+    { "label": "UK3", "country": "UK", "host": "212.212.18.227", "port": 6878 },
+    { "label": "UK4", "country": "UK", "host": "212.212.19.147", "port": 6298 },
+    { "label": "UK5", "country": "UK", "host": "195.40.128.104", "port": 6824 },
+    { "label": "UK6", "country": "UK", "host": "195.40.128.106", "port": 6826 },
+    { "label": "UK7", "country": "UK", "host": "87.86.25.229", "port": 5380 },
+    { "label": "UK8", "country": "UK", "host": "195.40.142.230", "port": 5450 },
+    { "label": "UK9", "country": "UK", "host": "212.212.19.162", "port": 6313 },
+    { "label": "UK10", "country": "UK", "host": "87.86.25.131", "port": 5282 }
+  ]
+}

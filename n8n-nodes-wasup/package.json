@@ -1,0 +1,55 @@
+{
+  "name": "n8n-nodes-wasup",
+  "version": "0.1.8",
+  "description": "n8n community node for Wasup — multi-instance WhatsApp API with proprietary anti-ban protection. Send text, media, CTA URL buttons, quick replies, lists, locations and reactions; manage instances, profiles, webhooks, handoff and account-safety controls. Works with any Wasup deployment via Base URL + API key.",
+  "keywords": [
+    "n8n-community-node-package",
+    "n8n",
+    "wasup",
+    "whatsapp",
+    "whatsapp-api",
+    "whatsapp-automation",
+    "chatbot",
+    "messaging",
+    "anti-ban"
+  ],
+  "license": "MIT",
+  "homepage": "https://dev.wasup.co",
+  "author": {
+    "name": "Arslan Badr"
+  },
+  "engines": {
+    "node": ">=18.10"
+  },
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc && gulp build:icons",
+    "dev": "tsc --watch",
+    "format": "prettier nodes credentials --write",
+    "lint": "eslint nodes credentials package.json",
+    "lintfix": "eslint nodes credentials package.json --fix",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/credentials/WasupApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/Wasup/Wasup.node.js"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "gulp": "^4.0.2",
+    "n8n-workflow": "*",
+    "prettier": "^3.2.0",
+    "typescript": "^5.4.0"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}

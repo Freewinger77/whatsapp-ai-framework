@@ -50,6 +50,7 @@ export function InstanceConnectPanel({
   const [qrRefreshRestartCount, setQrRefreshRestartCount] = useState(0);
   const [pairingStatus, setPairingStatus] = useState("");
   const qrRefreshInFlight = useRef(false);
+  const logoutClearAttempted = useRef(false);
 
   const requestFreshQr = async () => {
     if (qrRefreshInFlight.current) return;
@@ -76,11 +77,13 @@ export function InstanceConnectPanel({
         if (cancelled) return;
 
         if (latest.status === "connected") {
+          logoutClearAttempted.current = false;
           onConnected();
           return;
         }
 
         if (latest.qrCode) {
+          logoutClearAttempted.current = false;
           const expiresInMs = getQrExpiresInMs(latest.qrCodeUpdatedAt, latest.qrExpiresInMs);
           if (typeof expiresInMs === "number" && expiresInMs <= 0) {
             setQrCode(null);
@@ -105,29 +108,47 @@ export function InstanceConnectPanel({
         }
 
         if (latest.linkingGraceActive || latest.connectionIssue?.message) {
-          setQrCode(null);
-          setLoading(false);
-          setPairingStatus(latest.connectionIssue?.message || "Scan received, finishing WhatsApp link...");
-          setConnectError("");
-          return;
+          const logoutMsg = latest.connectionIssue?.message || "";
+          const needsFreshAuth = /logged\s*out|QR code required/i.test(logoutMsg)
+            || latest.connectionIssue?.requiresAuthClear === true;
+          // Still linking after scan — don't treat as dead session.
+          if (latest.linkingGraceActive || !needsFreshAuth) {
+            setQrCode(null);
+            setLoading(false);
+            setPairingStatus(latest.connectionIssue?.message || "Scan received, finishing WhatsApp link...");
+            setConnectError("");
+            return;
+          }
         }
 
         if (latest.status === "disconnected") {
+          const logoutMsg = latest.connectionIssue?.message || latest.message || "";
+          const needsFreshAuth = /logged\s*out|QR code required/i.test(logoutMsg)
+            || latest.connectionIssue?.requiresAuthClear === true;
           setLoading(true);
-          setPairingStatus("Refreshing QR...");
+          setPairingStatus(needsFreshAuth ? "Resetting dead session for fresh QR..." : "Refreshing QR...");
           setConnectError("");
-          requestFreshQr().catch((error) => {
-            if (!cancelled) {
-              setLoading(false);
-              setConnectError(
-                error instanceof Error
-                  ? error.message
-                  : latest.connectionIssue?.message ||
-                      latest.message ||
-                      "QR pairing stopped. Retrying automatically...",
-              );
+          if (qrRefreshInFlight.current) return;
+          (async () => {
+            try {
+              if (needsFreshAuth && !logoutClearAttempted.current) {
+                logoutClearAttempted.current = true;
+                await client.clearAuth();
+              }
+              await requestFreshQr();
+            } catch (error) {
+              if (!cancelled) {
+                setLoading(false);
+                setConnectError(
+                  error instanceof Error
+                    ? error.message
+                    : latest.connectionIssue?.message ||
+                        latest.message ||
+                        "QR pairing stopped. Retrying automatically...",
+                );
+              }
             }
-          });
+          })();
           return;
         }
 
@@ -158,6 +179,7 @@ export function InstanceConnectPanel({
     setPairingStatus("");
     setConnectError("");
     setLoading(true);
+    logoutClearAttempted.current = false;
     let keepPreparing = false;
     try {
       await requestFreshQr();

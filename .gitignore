@@ -54,3 +54,5 @@ deploy/azure/proxies/
 deploy/azure/keys.env
 deploy/azure/*.log
 deploy/azure/.build/
+
+.env.n8n.local

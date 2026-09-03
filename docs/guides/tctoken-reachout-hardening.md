@@ -1,5 +1,8 @@
 # tctoken / 463 / reachout hardening (Wasup)
 
+Companion flaps, 428/401, and PM2 reload risk: **[WhatsApp companion risk playbook](./whatsapp-companion-risk-playbook.md)**.  
+TyreJobs trial/ATK/ATK2: leftover LID files and `Mirrored tctoken @lid → PN` are **not** a live token on a new companion — **[sacred scroll](./tyrejobs-sacred-scroll.md)**.
+
 WhatsApp now enforces privacy tokens (`tctoken`) on companion/linked-device sends. Token-less cold DMs accumulate a **reachout timelock** (`RESTRICT_ALL_COMPANIONS`) and return **463**. Official clients already attach tokens; Baileys-linked sessions historically did not.
 
 This guide is the production hardening policy for shared workers (`wasup`, `wasup-dev`, `wasup2`–`wasup5`) and every org VM provisioned by wasup-dev / control-plane.

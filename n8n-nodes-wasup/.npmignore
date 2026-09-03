@@ -1,0 +1,8 @@
+dist/tsconfig.tsbuildinfo
+**/*.map
+**/*.spec.*
+.editorconfig
+.eslintrc.js
+.prettierrc
+tsconfig.json
+gulpfile.js

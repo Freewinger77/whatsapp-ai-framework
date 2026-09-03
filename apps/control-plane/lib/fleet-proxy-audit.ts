@@ -4,6 +4,7 @@ import {
   listWorkerInstances,
 } from './worker-client';
 import {
+  getOrgFleetWorkers,
   getSharedFleetWorkers,
   getWorkerSharedSecret,
   type FleetWorkerDefinition,
@@ -227,44 +228,6 @@ async function auditOneWorker(worker: FleetWorkerDefinition & { orgId?: string |
   }
 }
 
-async function loadOrgDeploymentWorkers(): Promise<Array<FleetWorkerDefinition & { orgId: string | null; orgSlug: string | null }>> {
-  const supabase = getSupabaseAdmin() as any;
-  const { data, error } = await supabase
-    .from('org_deployments')
-    .select('id, org_id, status, base_url, public_ip, vm_name, organizations(slug, name)')
-    .in('status', ['ready', 'dns_pending', 'provisioned'])
-    .not('base_url', 'is', null)
-    .limit(200);
-
-  if (error) {
-    console.warn('[fleet-proxy-audit] org_deployments query failed:', error.message);
-    return [];
-  }
-
-  const sharedUrls = new Set(
-    getSharedFleetWorkers().map((w) => w.baseUrl.replace(/\/$/, '').toLowerCase())
-  );
-
-  return (data || [])
-    .map((row: any) => {
-      const baseUrl = String(row.base_url || '').replace(/\/$/, '');
-      if (!baseUrl) return null;
-      if (sharedUrls.has(baseUrl.toLowerCase())) return null;
-      const org = Array.isArray(row.organizations) ? row.organizations[0] : row.organizations;
-      const slug = org?.slug || row.vm_name || row.id;
-      return {
-        id: `org:${slug || row.id}`,
-        kind: 'org' as const,
-        label: `org/${slug || row.id}${org?.name ? ` (${org.name})` : ''}`,
-        baseUrl,
-        publicIp: row.public_ip || null,
-        orgId: row.org_id || null,
-        orgSlug: org?.slug || null,
-      };
-    })
-    .filter(Boolean) as Array<FleetWorkerDefinition & { orgId: string | null; orgSlug: string | null }>;
-}
-
 async function loadControlPlanePoolSummary(): Promise<ControlPlaneProxySummary> {
   const supabase = getSupabaseAdmin() as any;
   const { data, error } = await supabase.from('proxy_pool_summary').select('*');
@@ -317,7 +280,7 @@ export async function buildFleetProxyAudit(options: AuditOptions = {}): Promise<
     workers.push(...getSharedFleetWorkers(options.workerIds));
   }
   if (includeOrg) {
-    workers.push(...(await loadOrgDeploymentWorkers()));
+    workers.push(...(await getOrgFleetWorkers()));
   }
 
   const [controlPlanePool, audits] = await Promise.all([

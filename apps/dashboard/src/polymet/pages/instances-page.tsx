@@ -65,10 +65,19 @@ export function InstancesPage() {
   };
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       void refresh({ silent: true });
-    }, 15_000);
-    return () => window.clearInterval(timer);
+    };
+    const timer = window.setInterval(tick, 30_000);
+    const onVisibility = () => {
+      if (!document.hidden) void refresh({ silent: true });
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [refresh]);
 
   return (

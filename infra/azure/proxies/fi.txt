@@ -1,0 +1,8 @@
+# FR pool (was FI/SE6-10) — proxies FR6-10 → wasup-fi / Nordic EU egress
+# Format: host:port:username:password  (one per line, # for comments)
+# Source: Webshare France 2026-08-19 (replaced dead SE/FI 82.26.114.*)
+46.203.86.158:5658:rktwwipc:baq3spf64bhx
+46.203.60.204:7204:rktwwipc:baq3spf64bhx
+159.148.239.184:6736:rktwwipc:baq3spf64bhx
+96.62.193.28:7737:rktwwipc:baq3spf64bhx
+159.148.236.80:6286:rktwwipc:baq3spf64bhx

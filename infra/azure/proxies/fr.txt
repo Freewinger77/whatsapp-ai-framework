@@ -1,0 +1,12 @@
+# France (FR1-10) — Webshare 2026-08-19
+# Format: host:port:username:password  (one per line, # for comments)
+31.98.4.2:7680:rktwwipc:baq3spf64bhx
+46.203.86.238:5738:rktwwipc:baq3spf64bhx
+82.23.57.62:7316:rktwwipc:baq3spf64bhx
+31.98.7.239:6417:rktwwipc:baq3spf64bhx
+46.203.20.87:6588:rktwwipc:baq3spf64bhx
+46.203.86.158:5658:rktwwipc:baq3spf64bhx
+46.203.60.204:7204:rktwwipc:baq3spf64bhx
+159.148.239.184:6736:rktwwipc:baq3spf64bhx
+96.62.193.28:7737:rktwwipc:baq3spf64bhx
+159.148.236.80:6286:rktwwipc:baq3spf64bhx

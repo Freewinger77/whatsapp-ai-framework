@@ -887,6 +887,31 @@
             color: white;
         }
 
+        .proxy-quick-attach {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 8px;
+            align-items: stretch;
+        }
+        .proxy-quick-attach select {
+            width: 100%;
+            min-height: 38px;
+            border: 1px solid rgba(63, 63, 70, 0.8);
+            background: rgba(39, 39, 42, 0.75);
+            color: #e4e4e7;
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 13px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .proxy-quick-attach select:focus {
+            outline: none;
+            border-color: rgba(16, 185, 129, 0.7);
+        }
+        .proxy-quick-attach select option:disabled {
+            color: #71717a;
+        }
+
         /* Behavior Card */
         .toggle-list {
             display: flex;
@@ -4978,13 +5003,23 @@
                                 <input type="text" id="info-proxy-effective" readonly placeholder="—">
                             </div>
                             <div class="form-group">
-                                <label>Webshare / Proxy Link</label>
+                                <label>Quick attach</label>
+                                <div class="proxy-quick-attach">
+                                    <select id="select-proxy-catalog" aria-label="Quick attach proxy">
+                                        <option value="">Select SE / UK proxy…</option>
+                                    </select>
+                                    <button class="btn btn-primary" id="btn-attach-catalog" type="button">Attach</button>
+                                </div>
+                                <div class="form-hint" id="proxy-binding-line" style="margin-top:8px;"></div>
+                            </div>
+                            <div class="form-group">
+                                <label>Custom Webshare / Proxy Link</label>
                                 <input type="text" id="input-proxy-shorthand" placeholder="host:port:user:pass or http://user:pass@host:port">
-                                <div class="form-hint">Paste a Webshare line or full proxy URL to attach to this instance.</div>
+                                <div class="form-hint">Paste a custom line if you need a proxy not in the catalog.</div>
                             </div>
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
-                                <button class="btn btn-primary" id="btn-attach-proxy">Attach</button>
-                                <button class="btn btn-secondary" id="btn-detach-proxy">Detach</button>
+                                <button class="btn btn-primary" id="btn-attach-proxy">Attach custom</button>
+                                <button class="btn btn-secondary" id="btn-detach-proxy">Detach → direct</button>
                             </div>
                             <button class="btn btn-secondary" style="width: 100%;" id="btn-verify-proxy">Verify egress IP</button>
                             <div class="form-hint" id="proxy-verify-result" style="margin-top: 8px;"></div>
@@ -5204,6 +5239,16 @@
                                 </div>
                                 <div class="toggle-row">
                                     <div class="toggle-info">
+                                        <h4>Don't wait for WhatsApp ACK</h4>
+                                        <p>Off by default. On = mark sent as soon as the message leaves the socket (no 60s ACK wait). Still one-shot — n8n will not retry. Companion sockets often never ACK.</p>
+                                    </div>
+                                    <label class="toggle-switch" aria-label="Don't wait for WhatsApp ACK">
+                                        <input type="checkbox" id="toggle-skip-outbound-ack-wait">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="toggle-row">
+                                    <div class="toggle-info">
                                         <h4>Webhook Typing Events</h4>
                                         <p>Forward contact typing / recording / paused to the instance webhook (for n8n hold/cancel)</p>
                                     </div>
@@ -5219,6 +5264,26 @@
                                     </div>
                                     <label class="toggle-switch" aria-label="Group alert mode">
                                         <input type="checkbox" id="toggle-group-alert-mode">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="toggle-row">
+                                    <div class="toggle-info">
+                                        <h4>Proactive tctoken Capture</h4>
+                                        <p>Store inbound &lt;tctoken&gt; on messages (Baileys #2752 / #2698). Off by default — does not help pure cold outbound</p>
+                                    </div>
+                                    <label class="toggle-switch" aria-label="Proactive tctoken capture">
+                                        <input type="checkbox" id="toggle-proactive-tctoken">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="toggle-row">
+                                    <div class="toggle-info">
+                                        <h4>One-shot opt-in CTA</h4>
+                                        <p>Off by default. On = one staggered save-number variation per new fitter (30–60 min gap), then hold. Jobs still never send without a tctoken. Blocked for 5 days after a limit.</p>
+                                    </div>
+                                    <label class="toggle-switch" aria-label="One-shot opt-in CTA">
+                                        <input type="checkbox" id="toggle-opt-in-cta-once">
                                         <span class="toggle-slider"></span>
                                     </label>
                                 </div>
@@ -5380,6 +5445,9 @@
             btnDetachProxy: document.getElementById('btn-detach-proxy'),
             btnVerifyProxy: document.getElementById('btn-verify-proxy'),
             proxyVerifyResult: document.getElementById('proxy-verify-result'),
+            selectProxyCatalog: document.getElementById('select-proxy-catalog'),
+            btnAttachCatalog: document.getElementById('btn-attach-catalog'),
+            proxyBindingLine: document.getElementById('proxy-binding-line'),
             btnEditInstance: document.getElementById('btn-edit-instance'),
             btnDeleteInstance: document.getElementById('btn-delete-instance'),
             btnSaveBehavior: document.getElementById('btn-save-behavior'),
@@ -5387,8 +5455,11 @@
             toggleDelay: document.getElementById('toggle-delay'),
             togglePhonePush: document.getElementById('toggle-phone-push'),
             toggleMultiDeviceCoexist: document.getElementById('toggle-multi-device-coexist'),
+            toggleSkipOutboundAckWait: document.getElementById('toggle-skip-outbound-ack-wait'),
             toggleWebhookTypingEvents: document.getElementById('toggle-webhook-typing-events'),
             toggleGroupAlertMode: document.getElementById('toggle-group-alert-mode'),
+            toggleProactiveTcToken: document.getElementById('toggle-proactive-tctoken'),
+            toggleOptInCtaOnce: document.getElementById('toggle-opt-in-cta-once'),
             behaviorProfileInputs: document.querySelectorAll('input[name="behavior-profile"]'),
             modalCreate: document.getElementById('modal-create'),
             modalClose: document.getElementById('modal-close'),
@@ -5413,6 +5484,33 @@
         };
 
         const API_KEY_STORAGE_KEY = 'wasup_api_key';
+        const LAST_PAIR_PHONE_KEY = 'wasup_last_pair_phone_';
+        const LAST_KNOWN_PHONES = {
+            wa_mt7k88um_46lo7: '447503742842', // TyreJobs-ATK2
+            wa_mrkslqeb_0b6og: '447503741818', // TyreJobs-ATK
+            wa_mrscw48u_xfqds: '447503207364', // trial-Tyrejobs
+        };
+        const lastShownPairingCode = {};
+
+        function formatPairingCode(code) {
+            const raw = String(code || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+            if (raw.length === 8) return raw.slice(0, 4) + '-' + raw.slice(4);
+            return raw || '';
+        }
+
+        function rememberPairPhone(instanceId, phone) {
+            const digits = String(phone || '').replace(/[^0-9]/g, '');
+            if (!instanceId || digits.length < 10) return;
+            try { localStorage.setItem(LAST_PAIR_PHONE_KEY + instanceId, digits); } catch (e) {}
+        }
+
+        function rememberedPairPhone(instanceId) {
+            try {
+                const stored = localStorage.getItem(LAST_PAIR_PHONE_KEY + instanceId);
+                if (stored) return stored;
+            } catch (e) {}
+            return LAST_KNOWN_PHONES[instanceId] || '';
+        }
         let dashboardConfig = {
             allowPublicDashboard: false,
             dashboardRequiresApiKey: true
@@ -6156,6 +6254,7 @@
 
             // Phone info
             const phone = instance.connectedPhone || '';
+            if (phone) rememberPairPhone(instance.id, phone);
             el.infoPhone.textContent = phone ? '+' + phone.replace(/(\d{2})(\d{4})(\d+)/, '$1 $2 $3') : '—';
             el.infoConnected.textContent = instance.connectedAt 
                 ? new Date(instance.connectedAt).toLocaleString('en-GB', { 
@@ -6169,12 +6268,16 @@
 
             // Connection display (QR Code or Pairing Code)
             el.pairingCodeDisplay.style.display = 'none';
-            
-            if (instance.pairingCode) {
+            const livePairingCode = instance.pairingCode
+                || (instance.status === 'connecting' ? lastShownPairingCode[instance.id] : null);
+            if (instance.pairingCode) lastShownPairingCode[instance.id] = instance.pairingCode;
+            if (instance.status === 'connected') delete lastShownPairingCode[instance.id];
+
+            if (livePairingCode && instance.status !== 'connected') {
                 el.qrCode.style.display = 'none';
                 el.qrPlaceholder.style.display = 'none';
                 el.pairingCodeDisplay.style.display = 'block';
-                el.pairingCodeValue.textContent = instance.pairingCode;
+                el.pairingCodeValue.textContent = formatPairingCode(livePairingCode);
             } else if (instance.qrCode) {
                 el.qrCode.src = instance.qrCode;
                 el.qrCode.style.display = 'block';
@@ -6201,10 +6304,14 @@
             } else {
                 el.qrCode.style.display = 'none';
                 el.qrPlaceholder.style.display = 'flex';
-                el.qrPlaceholder.innerHTML = `
-                    <svg class="device-placeholder" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="14" y="5" width="20" height="38" rx="5"/><path d="M21 11h6"/><path d="M22 37h4"/></svg>
-                    <p style="font-size: 12px; color: var(--zinc-500);">Click QR Code or Pair Code to connect</p>
-                `;
+                const issue = instance.connectionIssue && instance.connectionIssue.message
+                    ? instance.connectionIssue.message
+                    : '';
+                const fatalLogout = /logged\s*out|QR code required|403|Forbidden/i.test(issue);
+                el.qrPlaceholder.innerHTML = fatalLogout
+                    ? `<p style="font-size: 12px; color: var(--zinc-400); max-width: 280px; text-align: center;">${issue}<br><span style="color: var(--zinc-500);">Companion session is dead — Pair Code (or QR) to link again. A normal Disconnect keeps creds; use QR Code to resume, no number needed.</span></p>`
+                    : `<svg class="device-placeholder" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="14" y="5" width="20" height="38" rx="5"/><path d="M21 11h6"/><path d="M22 37h4"/></svg>
+                    <p style="font-size: 12px; color: var(--zinc-500);">Disconnected with creds kept — click QR Code to resume. Pair Code only if WhatsApp logged this device out.</p>`;
             }
 
             if (instance.antiBanHealth?.stats) {
@@ -6229,15 +6336,25 @@
                 if (el.toggleMultiDeviceCoexist) {
                     el.toggleMultiDeviceCoexist.checked = !!instance.behaviorSettings.multiDeviceCoexist;
                 }
+                if (el.toggleSkipOutboundAckWait) {
+                    el.toggleSkipOutboundAckWait.checked = !!instance.behaviorSettings.skipOutboundAckWait;
+                }
                 if (el.toggleWebhookTypingEvents) {
                     el.toggleWebhookTypingEvents.checked = !!instance.behaviorSettings.webhookTypingEvents;
                 }
                 if (el.toggleGroupAlertMode) {
                     el.toggleGroupAlertMode.checked = !!instance.behaviorSettings.groupAlertMode;
                 }
+                if (el.toggleProactiveTcToken) {
+                    el.toggleProactiveTcToken.checked = !!instance.behaviorSettings.proactiveTcTokenCapture;
+                }
+                if (el.toggleOptInCtaOnce) {
+                    el.toggleOptInCtaOnce.checked = !!instance.behaviorSettings.optInCtaOnce;
+                }
             }
 
             renderProxyPanel(instance);
+            void renderProxyCatalogDropdown(instance.id);
         }
 
         function formatProxyEndpoint(proxy) {
@@ -6276,6 +6393,12 @@
             }
         }
 
+        let proxyCatalogCache = null;
+
+        function instanceNameById(id) {
+            return instances.find(i => i.id === id)?.name || id;
+        }
+
         async function refreshProxyStatus(instanceId = selectedInstanceId) {
             if (!instanceId || !el.infoProxyStatus) return;
             try {
@@ -6283,20 +6406,165 @@
                 const idx = instances.findIndex(i => i.id === instanceId);
                 if (idx !== -1 && data.proxy) {
                     instances[idx] = { ...instances[idx], proxy: data.proxy };
-                    if (selectedInstanceId === instanceId) {
-                        renderProxyPanel(instances[idx]);
-                    }
+                }
+                if (selectedInstanceId === instanceId) {
+                    const row = idx !== -1 ? instances[idx] : { id: instanceId, proxy: data.proxy };
+                    renderProxyPanel(row);
+                    await renderProxyCatalogDropdown(instanceId);
                 }
             } catch (e) {
                 console.warn('Proxy status refresh failed:', e.message);
             }
         }
 
+        async function loadProxyCatalog(force = false) {
+            if (proxyCatalogCache && !force) return proxyCatalogCache;
+            try {
+                const data = await apiCall('/proxy/catalog');
+                proxyCatalogCache = data.catalog || null;
+            } catch (_) {
+                proxyCatalogCache = null;
+            }
+            return proxyCatalogCache;
+        }
+
+        function catalogOptionLabel(entry, selectedId) {
+            const mine = entry.assignedTo === selectedId;
+            if (mine) return `${entry.label || entry.id} · ${entry.host}:${entry.port} · this instance`;
+            if (entry.fleetOccupiedBy || entry.fleetInUse) {
+                const who = entry.fleetOccupiedBy || entry.assignedName || 'used elsewhere';
+                const conn = entry.fleetConnected ? 'connected' : 'in use';
+                return `${entry.label || entry.id} · ${entry.host}:${entry.port} · ${who} (${conn})`;
+            }
+            if (entry.inUse) {
+                return `${entry.label || entry.id} · ${entry.host}:${entry.port} · ${entry.assignedName || 'used'}`;
+            }
+            return `${entry.label || entry.id} · ${entry.host}:${entry.port} · free`;
+        }
+
+        function fillCatalogOptgroup(select, label, entries, selectedId, currentLabel) {
+            if (!entries?.length) return;
+            const group = document.createElement('optgroup');
+            group.label = label;
+            for (const entry of entries) {
+                if (!entry.label) continue;
+                const opt = document.createElement('option');
+                opt.value = entry.label;
+                opt.textContent = catalogOptionLabel(entry, selectedId);
+                const mine = entry.assignedTo === selectedId;
+                const usedElsewhere = !mine && (entry.fleetInUse || entry.inUse);
+                if (usedElsewhere) {
+                    opt.disabled = true;
+                }
+                if (mine || (currentLabel && entry.label === currentLabel)) {
+                    opt.selected = true;
+                }
+                group.appendChild(opt);
+            }
+            if (group.children.length) select.appendChild(group);
+        }
+
+        async function renderProxyCatalogDropdown(instanceId = selectedInstanceId) {
+            const select = el.selectProxyCatalog;
+            if (!select) return;
+            const prev = select.value;
+            const catalog = await loadProxyCatalog(true);
+            const by = catalog?.byCountry || {};
+            const inst = instances.find(i => i.id === instanceId);
+            const ov = inst?.proxy?.override || inst?.proxy?.effective;
+            const currentLabel = (ov?.label || '').toUpperCase();
+
+            select.innerHTML = '';
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = 'Select SE / UK proxy…';
+            select.appendChild(placeholder);
+
+            fillCatalogOptgroup(select, 'Sweden (SE)', by.SE || [], instanceId, currentLabel);
+            fillCatalogOptgroup(select, 'United Kingdom (UK)', by.UK || [], instanceId, currentLabel);
+
+            const other = (catalog?.entries || []).filter(
+                (e) => e.label && e.country !== 'SE' && e.country !== 'UK'
+            );
+            fillCatalogOptgroup(select, 'Other', other, instanceId, currentLabel);
+
+            if (!select.value && prev && [...select.options].some((o) => o.value === prev && !o.disabled)) {
+                select.value = prev;
+            }
+
+            if (!select.querySelector('optgroup')) {
+                placeholder.textContent = 'No catalog yet — seed pool or paste custom';
+            }
+
+            if (el.proxyBindingLine) {
+                const host = ov?.host || '';
+                if (inst?.proxy?.source === 'disabled' || inst?.proxy?.source === 'none' || !host) {
+                    el.proxyBindingLine.textContent = `${inst?.name || instanceId} → direct egress`;
+                } else {
+                    el.proxyBindingLine.textContent =
+                        `${inst?.name || instanceId} → ${currentLabel || 'custom'} (${host}${ov?.port ? ':' + ov.port : ''})`;
+                }
+            }
+        }
+
+        async function applyProxyResult(targetId, data, toastMsg) {
+            if (selectedInstanceId !== targetId) {
+                showToast(`${toastMsg} (for ${data.instanceName || instanceNameById(targetId)}; selection changed)`, 'success');
+                return;
+            }
+            showToast(`${toastMsg}: ${data.instanceName || instanceNameById(targetId)}`, 'success');
+            if (el.proxyVerifyResult) el.proxyVerifyResult.textContent = '';
+            const idx = instances.findIndex(i => i.id === targetId);
+            if (idx !== -1 && data.proxy) {
+                instances[idx] = { ...instances[idx], proxy: data.proxy };
+                renderProxyPanel(instances[idx]);
+            }
+            await renderProxyCatalogDropdown(targetId);
+            await refreshProxyStatus(targetId);
+        }
+
+        async function attachCatalogProxy(label, pinnedId) {
+            const targetId = pinnedId || selectedInstanceId;
+            if (!targetId || !label) return;
+            const name = instanceNameById(targetId);
+            if (!confirm(`Attach ${label} to ${name} only?`)) return;
+            if (el.btnAttachCatalog) el.btnAttachCatalog.disabled = true;
+            try {
+                let data = await apiCall(`/instances/${targetId}/proxy/attach-catalog`, 'POST', { label });
+                if (data.code === 'PROXY_SHARED_EGRESS' || /already used/i.test(data.error || '')) {
+                    if (!confirm(`${data.error}\n\nForce attach anyway? (bad WhatsApp signal)`)) {
+                        throw new Error(data.error || 'Shared egress blocked');
+                    }
+                    data = await apiCall(`/instances/${targetId}/proxy/attach-catalog`, 'POST', { label, forceShared: true });
+                }
+                if (data.error) throw new Error(data.error);
+                proxyCatalogCache = null;
+                await applyProxyResult(targetId, data, `Attached ${label}`);
+            } catch (e) {
+                showToast(`Attach ${label} failed: ${e.message}`, 'error');
+            } finally {
+                if (el.btnAttachCatalog) el.btnAttachCatalog.disabled = false;
+            }
+        }
+
+        async function attachSelectedCatalogProxy() {
+            const targetId = selectedInstanceId;
+            const label = el.selectProxyCatalog?.value;
+            if (!targetId) return;
+            if (!label) {
+                showToast('Pick a SE/UK proxy from the dropdown first', 'error');
+                return;
+            }
+            await attachCatalogProxy(label, targetId);
+        }
+
         async function attachInstanceProxy() {
-            if (!selectedInstanceId) return;
+            const targetId = selectedInstanceId;
+            if (!targetId) return;
+            const name = instanceNameById(targetId);
             const shorthand = el.inputProxyShorthand.value.trim();
             if (!shorthand) {
-                showToast('Paste a proxy link first', 'error');
+                showToast('Paste a proxy link first (or pick one from Quick attach)', 'error');
                 return;
             }
             el.btnAttachProxy.disabled = true;
@@ -6304,61 +6572,69 @@
                 const body = shorthand.includes('://')
                     ? { url: shorthand }
                     : { shorthand };
-                const data = await apiCall(`/instances/${selectedInstanceId}/proxy`, 'PUT', body);
-                if (data.error) throw new Error(data.error);
-                showToast('Proxy attached — reconnecting if online', 'success');
-                el.proxyVerifyResult.textContent = '';
-                await refreshInstancesFromApi();
-                const idx = instances.findIndex(i => i.id === selectedInstanceId);
-                if (idx !== -1) {
-                    if (data.proxy) instances[idx] = { ...instances[idx], proxy: data.proxy };
-                    renderProxyPanel(instances[idx]);
-                } else if (data.proxy) {
-                    renderProxyPanel({ id: selectedInstanceId, proxy: data.proxy });
+                let data = await apiCall(`/instances/${targetId}/proxy`, 'PUT', body);
+                if (data.code === 'PROXY_SHARED_EGRESS' || /already used/i.test(data.error || '')) {
+                    if (!confirm(`${data.error}\n\nForce attach to ${name} anyway?`)) {
+                        throw new Error(data.error || 'Shared egress blocked');
+                    }
+                    data = await apiCall(`/instances/${targetId}/proxy`, 'PUT', { ...body, forceShared: true });
                 }
-                await refreshProxyStatus(selectedInstanceId);
+                if (data.error) throw new Error(data.error);
+                if (selectedInstanceId !== targetId) {
+                    showToast(`Proxy attached to ${name} (selection changed — not refreshing other rows)`, 'success');
+                    return;
+                }
+                await applyProxyResult(targetId, data, 'Custom proxy attached');
             } catch (e) {
-                showToast('Attach failed: ' + e.message, 'error');
+                showToast(`Attach failed for ${name}: ${e.message}`, 'error');
             } finally {
                 el.btnAttachProxy.disabled = false;
             }
         }
 
         async function detachInstanceProxy() {
-            if (!selectedInstanceId) return;
+            const targetId = selectedInstanceId;
+            if (!targetId) return;
+            const name = instanceNameById(targetId);
+            if (!confirm(`Detach proxy from ${name} and use DIRECT egress?\n\nOnly this instance will change.`)) return;
             el.btnDetachProxy.disabled = true;
             try {
-                const data = await apiCall(`/instances/${selectedInstanceId}/proxy`, 'DELETE');
-                showToast('Proxy detached', 'success');
-                el.inputProxyShorthand.value = '';
-                el.proxyVerifyResult.textContent = '';
-                await refreshInstancesFromApi();
-                if (data.proxy) renderProxyPanel({ id: selectedInstanceId, proxy: data.proxy });
+                const data = await apiCall(`/instances/${targetId}/proxy`, 'DELETE');
+                if (data.error) throw new Error(data.error);
+                if (el.inputProxyShorthand && selectedInstanceId === targetId) el.inputProxyShorthand.value = '';
+                proxyCatalogCache = null;
+                await applyProxyResult(targetId, data, 'Detached → direct');
             } catch (e) {
-                showToast('Detach failed: ' + e.message, 'error');
+                showToast(`Detach failed for ${name}: ${e.message}`, 'error');
             } finally {
                 el.btnDetachProxy.disabled = false;
             }
         }
 
         async function verifyInstanceProxy() {
-            if (!selectedInstanceId) return;
+            const targetId = selectedInstanceId;
+            if (!targetId) return;
+            const name = instanceNameById(targetId);
             el.btnVerifyProxy.disabled = true;
-            el.proxyVerifyResult.textContent = 'Checking egress IP...';
+            el.proxyVerifyResult.textContent = `Checking egress for ${name}...`;
             try {
                 const shorthand = el.inputProxyShorthand.value.trim();
                 const body = shorthand
                     ? (shorthand.includes('://') ? { url: shorthand } : { shorthand })
                     : {};
-                const data = await apiCall(`/instances/${selectedInstanceId}/proxy/verify`, 'POST', body);
+                const data = await apiCall(`/instances/${targetId}/proxy/verify`, 'POST', body);
+                if (selectedInstanceId !== targetId) {
+                    el.proxyVerifyResult.textContent = `Verified ${name} (selection changed): ${data.egressIp || data.error}`;
+                    return;
+                }
                 if (data.success && data.egressIp) {
                     const label = data.dryRun ? 'Preview' : 'Egress IP';
-                    el.proxyVerifyResult.textContent = `${label}: ${data.egressIp} (${data.elapsedMs}ms, source: ${data.proxySource})`;
+                    el.proxyVerifyResult.textContent = `${name} · ${label}: ${data.egressIp} (${data.elapsedMs}ms, source: ${data.proxySource})`;
                 } else {
                     el.proxyVerifyResult.textContent = data.error || 'Verification failed';
                 }
             } catch (e) {
-                el.proxyVerifyResult.textContent = e.message;
+                el.proxyVerifyResult.textContent = `${name}: ${e.message}`;
             } finally {
                 el.btnVerifyProxy.disabled = false;
             }
@@ -6805,17 +7081,23 @@
             if (!selectedInstanceId) return;
             const instance = instances.find(i => i.id === selectedInstanceId);
             if (instance && instance.status !== 'disconnected') return;
-            el.pairPhoneInput.style.display = el.pairPhoneInput.style.display === 'none' ? 'block' : 'none';
-            el.inputPairPhone.focus();
+            const show = el.pairPhoneInput.style.display === 'none';
+            el.pairPhoneInput.style.display = show ? 'block' : 'none';
+            if (show) {
+                const remembered = rememberedPairPhone(selectedInstanceId);
+                if (remembered && !el.inputPairPhone.value.trim()) el.inputPairPhone.value = remembered;
+                el.inputPairPhone.focus();
+            }
         });
 
         el.btnConfirmPair.addEventListener('click', async () => {
             if (!selectedInstanceId) return;
             const phoneNumber = el.inputPairPhone.value.trim().replace(/[^0-9]/g, '');
             if (!phoneNumber || phoneNumber.length < 10) {
-                showToast('Enter a valid phone number with country code, e.g. 447393002183', 'error');
+                showToast('Enter a valid phone number with country code, e.g. 447503742842', 'error');
                 return;
             }
+            rememberPairPhone(selectedInstanceId, phoneNumber);
 
             el.btnConfirmPair.disabled = true;
             el.btnConfirmPair.textContent = 'Requesting...';
@@ -6824,8 +7106,17 @@
                 const result = await apiCall(`/instances/${selectedInstanceId}/pair`, 'POST', { phoneNumber });
                 if (result.error) {
                     showToast('Pairing error: ' + result.error, 'error');
+                } else if (result.pairingCode) {
+                    lastShownPairingCode[selectedInstanceId] = result.pairingCode;
+                    el.pairPhoneInput.style.display = 'none';
+                    el.qrCode.style.display = 'none';
+                    el.qrPlaceholder.style.display = 'none';
+                    el.pairingCodeDisplay.style.display = 'block';
+                    el.pairingCodeValue.textContent = formatPairingCode(result.pairingCode);
+                    showToast('Enter ' + formatPairingCode(result.pairingCode) + ' in WhatsApp now', 'success');
                 } else {
                     el.pairPhoneInput.style.display = 'none';
+                    showToast(result.message || 'Already registered — reconnecting, no new code', 'info');
                 }
             } catch (e) {
                 showToast('Error: ' + e.message, 'error');
@@ -6909,6 +7200,7 @@
             }
         });
 
+        el.btnAttachCatalog?.addEventListener('click', attachSelectedCatalogProxy);
         el.btnAttachProxy?.addEventListener('click', attachInstanceProxy);
         el.btnDetachProxy?.addEventListener('click', detachInstanceProxy);
         el.btnVerifyProxy?.addEventListener('click', verifyInstanceProxy);
@@ -6940,6 +7232,48 @@
             });
         });
 
+        if (el.toggleSkipOutboundAckWait) {
+            el.toggleSkipOutboundAckWait.addEventListener('change', async () => {
+                if (!selectedInstanceId) return;
+                const value = !!el.toggleSkipOutboundAckWait.checked;
+                try {
+                    await fetch(`/api/instances/${selectedInstanceId}/behavior`, {
+                        method: 'PUT',
+                        headers: applyAuthHeaders({ 'Content-Type': 'application/json' }),
+                        body: JSON.stringify({ skipOutboundAckWait: value })
+                    });
+                    showToast(value
+                        ? 'ACK wait off — fire-and-forget (still one-shot)'
+                        : 'ACK wait on — /send holds up to 60s', value ? 'warning' : 'success');
+                } catch (e) {
+                    el.toggleSkipOutboundAckWait.checked = !value;
+                    showToast('Error: ' + e.message, 'error');
+                }
+            });
+        }
+
+        if (el.toggleOptInCtaOnce) {
+            el.toggleOptInCtaOnce.addEventListener('change', async () => {
+                if (!selectedInstanceId) return;
+                const value = !!el.toggleOptInCtaOnce.checked;
+                if (value && !confirm('Turn on one-shot opt-in CTA? Each new fitter gets ONE staggered save-number message (30–60 min between people). Jobs still never send without a tctoken.')) {
+                    el.toggleOptInCtaOnce.checked = false;
+                    return;
+                }
+                try {
+                    await fetch(`/api/instances/${selectedInstanceId}/behavior`, {
+                        method: 'PUT',
+                        headers: applyAuthHeaders({ 'Content-Type': 'application/json' }),
+                        body: JSON.stringify({ optInCtaOnce: value })
+                    });
+                    showToast(value ? 'One-shot CTA on — one variation per new fitter' : 'One-shot CTA off — token-only', value ? 'warning' : 'success');
+                } catch (e) {
+                    el.toggleOptInCtaOnce.checked = !value;
+                    showToast('Error: ' + e.message, 'error');
+                }
+            });
+        }
+
         el.btnSaveBehavior.addEventListener('click', async () => {
             if (!selectedInstanceId) return;
 
@@ -6958,8 +7292,11 @@
                         phoneNotificationsEnabled: !!(el.togglePhonePush && el.togglePhonePush.checked)
                             || behaviorProfile !== 'bot-native',
                         multiDeviceCoexist: !!(el.toggleMultiDeviceCoexist && el.toggleMultiDeviceCoexist.checked),
+                        skipOutboundAckWait: !!(el.toggleSkipOutboundAckWait && el.toggleSkipOutboundAckWait.checked),
                         webhookTypingEvents: !!(el.toggleWebhookTypingEvents && el.toggleWebhookTypingEvents.checked),
                         groupAlertMode: !!(el.toggleGroupAlertMode && el.toggleGroupAlertMode.checked),
+                        proactiveTcTokenCapture: !!(el.toggleProactiveTcToken && el.toggleProactiveTcToken.checked),
+                        optInCtaOnce: !!(el.toggleOptInCtaOnce && el.toggleOptInCtaOnce.checked),
                         notificationGraceMs: behaviorProfile === 'notification-max' ? 5000
                             : behaviorProfile === 'notification-balanced' ? 2500
                                 : ((el.togglePhonePush && el.togglePhonePush.checked) ? 2500 : 0)

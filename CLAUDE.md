@@ -292,21 +292,24 @@ The application is hosted on an **Azure VM** at `wasup.northeurope.cloudapp.azur
 
 ### NEVER restart PM2 to deploy frontend/static changes
 
-Restarting PM2 kills the Node.js process, which **terminates all active WhatsApp (Baileys) sessions**. WhatsApp often **permanently invalidates** the auth credentials on reconnect, forcing users to re-scan QR codes for every single instance. This has happened multiple times and is extremely disruptive.
+`pm2 restart`, `pm2 reload`, crash, and full deploy all **drop every Baileys socket**. WhatsApp treats that as a **linked-device logout + re-login** (high risk score): `428`/`401`, device missing from Linked devices, then a ~6h reach-out lock (24h if the line was also cold-sending). This is **not** HTTP zero-downtime. Do **not** bounce wasup2/wasup3 to ship JS while TyreJobs/customer lines are live.
+
+Regular send/presence/HTML SCP/behavior-from-disk is fine. Process recycle is not.
 
 ### Deployment decision tree
 
 | What changed? | How to deploy | Command |
 |---|---|---|
-| **Static files only** (`public/index.html`, `public/test.html`, `public/docs.html`, `openapi.yaml`) | **SCP the file directly** — no restart needed | `scp app/public/index.html azureuser@20.107.202.157:/opt/whatsapp-ai/app/public/index.html` |
-| **Server code** (`server.js`, `src/utils/*.js`, `package.json`) | **SCP files then graceful PM2 reload** | `scp <files> ... && ssh azureuser@20.107.202.157 'cd /opt/whatsapp-ai && pm2 reload whatsapp-api'` |
-| **New npm dependencies** (`package.json` changed) | **Full deploy script** (last resort) | `bash deploy/deploy-to-vm.sh 20.107.202.157` — then manual PM2 fix if needed |
+| **Static files only** (`public/index.html`, `public/test.html`, `public/docs.html`, `openapi.yaml`) | **SCP the file directly** — no PM2 | `scp app/public/index.html azureuser@20.107.202.157:/opt/whatsapp-ai/app/public/index.html` |
+| **Behavior JSON on disk** | Disk reload endpoint / `kill -HUP` — **no PM2** | `POST /api/system/reload-behavior-from-disk` |
+| **Server code** (`server.js`, `src/utils/*.js`) | SCP and **wait**. `pm2 reload` only on a quiet worker with operator OK | See `.cursor/rules/deployment.mdc` |
+| **New npm dependencies** (`package.json` changed) | **Full deploy script** (last resort, same companion flap) | `bash deploy/deploy-to-vm.sh 20.107.202.157` |
 
 ### Key rules
 
 1. **Always check what files changed** before choosing a deploy method.
 2. **For HTML/CSS/JS frontend changes**: Use `scp` only. Express serves static files from disk on each request — no restart needed.
-3. **For server-side code**: Use `pm2 reload` (graceful, zero-downtime) instead of `pm2 restart` (hard kill). If reload fails, use `pm2 delete whatsapp-api && pm2 start deploy/ecosystem.config.cjs`.
+3. **`pm2 reload` is still a companion flap.** Prefer it over `restart` only if you must bounce a quiet worker. Never bounce to fix a hold/token bug on a hot line.
 4. **NEVER run `deploy/deploy-to-vm.sh` for frontend-only changes** — it runs `npm install` and `pm2 restart` which will disconnect all WhatsApp sessions.
 5. **After any deploy, always verify** instances are still connected: `curl -s https://wasup.northeurope.cloudapp.azure.com/api/instances | python3 -c "import sys,json; [print(f'{i[\"name\"]}: {i[\"status\"]}') for i in json.load(sys.stdin)['instances']]"`
 

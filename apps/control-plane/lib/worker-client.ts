@@ -311,6 +311,62 @@ export async function getWorkerProxyStatus(
   return parseWorkerResponse(response, 'Worker proxy status failed');
 }
 
+export async function getWorkerProxyCatalog(
+  input: Pick<WorkerRequestInput, 'endpoint' | 'publicIp' | 'sharedSecret'>
+) {
+  const response = await requestWorker(input, '/api/proxy/catalog');
+  return parseWorkerResponse(response, 'Worker proxy catalog failed');
+}
+
+export async function probeWorkerCatalogProxy(
+  input: Pick<WorkerRequestInput, 'endpoint' | 'publicIp' | 'sharedSecret'>,
+  label: string
+) {
+  const response = await requestWorker(input, '/api/proxy/catalog/probe', {
+    method: 'POST',
+    body: { label },
+    timeoutMs: 20_000,
+  });
+  return parseWorkerResponse(response, 'Worker catalog probe failed');
+}
+
+export async function attachWorkerCatalogProxy(
+  input: Pick<WorkerRequestInput, 'endpoint' | 'publicIp' | 'sharedSecret'>,
+  instanceId: string,
+  label: string,
+  opts?: { forceShared?: boolean }
+) {
+  const response = await requestWorker(
+    input,
+    `/api/instances/${encodeURIComponent(instanceId)}/proxy/attach-catalog`,
+    { method: 'POST', body: { label, forceShared: !!opts?.forceShared } }
+  );
+  return parseWorkerResponse(response, 'Worker catalog attach failed');
+}
+
+export async function detachWorkerProxyDirect(
+  input: Pick<WorkerRequestInput, 'endpoint' | 'publicIp' | 'sharedSecret'>,
+  instanceId: string
+) {
+  const response = await requestWorker(
+    input,
+    `/api/instances/${encodeURIComponent(instanceId)}/proxy`,
+    { method: 'DELETE' }
+  );
+  return parseWorkerResponse(response, 'Worker proxy detach failed');
+}
+
+export async function testWorkerProxy(
+  input: Pick<WorkerRequestInput, 'endpoint' | 'publicIp' | 'sharedSecret'>,
+  body: Record<string, unknown>
+) {
+  const response = await requestWorker(input, '/api/proxy/test', {
+    method: 'POST',
+    body,
+  });
+  return parseWorkerResponse(response, 'Worker proxy test failed');
+}
+
 export async function getWorkerFingerprintRisk(
   input: Pick<WorkerRequestInput, 'endpoint' | 'publicIp' | 'sharedSecret'>
 ) {
@@ -382,7 +438,7 @@ async function parseWorkerResponse(response: Response, message: string) {
 async function requestWorker(
   input: Pick<WorkerRequestInput, 'endpoint' | 'publicIp' | 'sharedSecret'>,
   path: string,
-  init: { method?: string; body?: unknown } = {}
+  init: { method?: string; body?: unknown; timeoutMs?: number } = {}
 ) {
   if (!input.endpoint || !input.sharedSecret) {
     throw new Error('Worker deployment is not ready yet.');
@@ -390,6 +446,7 @@ async function requestWorker(
 
   const candidates = buildWorkerEndpointCandidates(input.endpoint, input.publicIp);
   const failures: string[] = [];
+  const timeoutMs = init.timeoutMs ?? 10_000;
 
   for (const candidate of candidates) {
     try {
@@ -403,7 +460,7 @@ async function requestWorker(
           ...(candidate.hostHeader ? { Host: candidate.hostHeader } : {})
         },
         body: init.body === undefined ? undefined : JSON.stringify(init.body),
-        signal: AbortSignal.timeout(10_000)
+        signal: AbortSignal.timeout(timeoutMs)
       });
       return response;
     } catch (error) {

@@ -629,6 +629,110 @@ export async function getFleetProxyAudit(options?: {
   return api<FleetProxyAudit>(`/api/v3/proxy/fleet${qs}`, { cache: "no-store" });
 }
 
+export type ProxyOpsGlobalUser = {
+  workerId: string;
+  workerLabel: string;
+  instanceId: string;
+  instanceName: string;
+  status: string;
+  connected: boolean;
+};
+
+export type ProxyOpsBoard = {
+  success: true;
+  generatedAt: string;
+  lastHourlyProbeAt: string | null;
+  hourlyDue: boolean;
+  summary: {
+    workersTotal: number;
+    workersReachable: number;
+    proxiesTotal: number;
+    uniqueHosts: number;
+    free: number;
+    inUse: number;
+    connectedAssigned: number;
+    directConnected: number;
+    sharedRiskHigh: number;
+    crossWorkerConflicts: number;
+  };
+  globalByHost: Array<{
+    hostPort: string;
+    host: string;
+    port: number;
+    label: string | null;
+    users: ProxyOpsGlobalUser[];
+    connectedCount: number;
+    risk: "high" | "amber" | "low";
+  }>;
+  rows: Array<{
+    key: string;
+    workerId: string;
+    workerLabel: string;
+    workerKind?: "shared" | "org";
+    label: string | null;
+    country: string | null;
+    host: string;
+    port: number;
+    inUse: boolean;
+    assignedInstanceId: string | null;
+    assignedInstanceName: string | null;
+    assignedStatus: string | null;
+    antibanEnabled: boolean | null;
+    antibanEnhanced: boolean | null;
+    fingerprintRisk: string | null;
+    sharedWith: number | null;
+    globalUsers?: ProxyOpsGlobalUser[];
+    globalSharedCount?: number;
+    globalConnectedCount?: number;
+    globalRisk?: "high" | "amber" | "low" | null;
+    lastProbe: {
+      latencyMs: number | null;
+      egressIp: string | null;
+      ok: boolean;
+      probedAt: string;
+      error?: string;
+    } | null;
+  }>;
+  attachTargets: Array<{
+    workerId: string;
+    workerLabel: string;
+    instanceId: string;
+    instanceName: string;
+    status: string;
+    hasProxy: boolean;
+  }>;
+};
+
+export async function getProxyOpsBoard() {
+  return api<ProxyOpsBoard>("/api/v3/proxy/ops", { cache: "no-store" });
+}
+
+export async function probeProxyOps(body?: { labels?: string[]; light?: boolean; workerId?: string }) {
+  return api<{ success: true; probed: number; updatedAt: string }>("/api/v3/proxy/ops/probe", {
+    method: "POST",
+    body: JSON.stringify(body || {}),
+  });
+}
+
+export async function attachProxyOps(body: {
+  workerId: string;
+  instanceId: string;
+  label: string;
+  forceShared?: boolean;
+}) {
+  return api<{ success: boolean }>("/api/v3/proxy/ops/attach", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function detachProxyOps(body: { workerId: string; instanceId: string }) {
+  return api<{ success: boolean }>("/api/v3/proxy/ops/attach", {
+    method: "POST",
+    body: JSON.stringify({ ...body, action: "detach" }),
+  });
+}
+
 export async function removeProxyFromPool(proxyId: string, force = false) {
   return api<{ success: boolean }>("/api/v3/proxy/admin", {
     method: "DELETE",
@@ -860,6 +964,11 @@ export type InstanceBehaviorSettings = {
   multiDeviceCoexist?: boolean;
   webhookTypingEvents?: boolean;
   groupAlertMode?: boolean;
+  proactiveTcTokenCapture?: boolean;
+  coldOptInGate?: boolean;
+  blockColdWithoutToken?: boolean;
+  optInCtaOnce?: boolean;
+  skipOutboundAckWait?: boolean;
 };
 
 export async function getInstanceBehavior(instanceId: string) {

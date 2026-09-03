@@ -3,6 +3,7 @@ import { ExternalLinkIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { PlatformProxyPoolPanel } from "@/polymet/components/platform-proxy-pool-panel";
 import { PlatformFleetProxyPanel } from "@/polymet/components/platform-fleet-proxy-panel";
+import { PlatformProxyOpsPanel } from "@/polymet/components/platform-proxy-ops-panel";
 import {
   blockPlatformOrganization,
   deletePlatformOrganization,
@@ -16,7 +17,7 @@ import {
 } from "@/polymet/lib/control-plane-api";
 import { cn } from "@/lib/utils";
 
-type AdminTab = "overview" | "organizations" | "fleet" | "proxies";
+type AdminTab = "overview" | "organizations" | "fleet" | "proxies" | "proxy-ops";
 
 const TIER_STYLES: Record<string, string> = {
   pro: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
@@ -205,6 +206,7 @@ export function AdminPage() {
             ["organizations", "Organizations"],
             ["fleet", "Fleet"],
             ["proxies", "Proxies"],
+            ["proxy-ops", "Proxy Ops"],
           ] as const
         ).map(([key, label]) => (
           <button
@@ -335,6 +337,12 @@ export function AdminPage() {
             </table>
           </div>
           </div>
+        </section>
+      )}
+
+      {tab === "proxy-ops" && (
+        <section className="space-y-4">
+          <PlatformProxyOpsPanel />
         </section>
       )}
 

@@ -1,5 +1,32 @@
 # Fingerprint risk + staggered reconnect (Aug 2026)
 
+Canonical companion / reload / lock model: **[WhatsApp companion risk playbook](./whatsapp-companion-risk-playbook.md)**.
+
+## Risk score: PM2 reload / companion flap (Codebae)
+
+Treat **any Node process recycle** on a live worker as a **high** companion-risk event, same class as a linked-device logout.
+
+| What we do | What WhatsApp sees | Typical outcome |
+|---|---|---|
+| `pm2 reload` / `restart` / crash / OOM / `deploy-to-vm.sh` | Every Baileys socket dies; Linked device (e.g. `airb`) drops and tries to come back | `428` then `401 conflict` → device gone from Linked devices → **DEFAULT reach-out lock ~6h** (stacks to **24h** if the line was cold-sending) |
+| Auto-reconnect 15s after `401 conflict` | Second login fight on a dying session | Turns a kick into **fatal logged out / QR required** |
+| Two flaps in ~1 min (428 recover + deploy reload) | Companion thrash | Lock + logout (ATK 2026-08-25) |
+
+**Not the same as HTTP zero-downtime.** Express may stay up; WhatsApp does not.
+
+### Regular ops — when this is / is not a problem
+
+**Not a problem** while the **same Node process and the same socket stay open**: n8n `/api/send`, opt-in CTAs, presence cycling, keep-alives, SCP of `public/*.html`, `PUT /behavior`, `POST /api/system/reload-behavior-from-disk` / `kill -HUP` behavior reload.
+
+**Is a problem** whenever the companion session is recycled, even in “normal” ops: PM2 bounce, worker crash, VM reboot, disconnect-watchdog force connect, `428` auto-reconnect storms, Connect/QR spam after fatal `401`. Stagger (`WA_STARTUP_RECONNECT_STAGGER_MS`) only avoids *all lines at once*; it does **not** make a reload safe for one hot number.
+
+**Do not reload wasup2/wasup3 to ship hold/token JS.** SCP and wait. A hold bug is cheaper than a 6h/24h lock.
+
+### Incident (2026-08-25, wasup3)
+
+- ATK2: all-day cold jobs to Marshall (no tctoken) + reload at 18:40 UTC + one more cold send → **24h lock** + `401` logout.
+- ATK (`airb`): `428` at 18:39, **our reload at 18:40**, job+contact-save at 18:52, `401 conflict` + auto-reconnect → **airb logged out**, phone showed **~5h51m** lock.
+
 ## Incident pattern (2026-08-03)
 
 Worker restarts caused **mass companion re-login**:

@@ -14,6 +14,8 @@ Complete documentation for the WhatsApp Multi-Instance API.
 | [Authentication](./authentication.md) | Secure your API with API keys |
 | [WebSocket Events](./websocket-events.md) | Real-time updates and events |
 | [wasup2 Smoke Watchdog](./wasup2-smoke-watchdog.md) | Recurring fallback worker health checks |
+| [WhatsApp companion risk playbook](./whatsapp-companion-risk-playbook.md) | 401/428/463, PM2 reload, tctoken, locks, operator trees (canonical) |
+| [TyreJobs sacred scroll](./tyrejobs-sacred-scroll.md) | trial/ATK/ATK2 never-again: pairing, LID vs tctoken, registered+6h, 428 quiet resume, 401 stand-down, Samantha ACK / skipOutboundAckWait |
 | [Reconnect Hardening Runbook](./reconnect-hardening-runbook.md) | Root causes, prevention controls, and old north rollout plan |
 | [Wasup v3 Worker Platform](./wasup-v3-worker-platform.md) | Docker, proxy pool, API keys, `/docs`, control plane integration |
 

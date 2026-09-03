@@ -54,9 +54,49 @@ import {
     circuitKeyForJid,
     createPrivacyTokenMetrics,
     lookupPrivacyToken,
+    mirrorPrivacyTokenToJid,
     shouldBlockColdWithoutToken,
+    storeTcTokenFromMessageNode,
     summarizeAuthTokenFiles,
 } from './privacy-token-hardening.js';
+import { normalizeMessageStatus, shouldAdvanceMessageStatus } from './message-status.js';
+import {
+    isTyrejobsColdOptInExclusive,
+    normalizeJobReplyName,
+    parseJobReplyAllowFile,
+} from './tyrejobs-cold-opt-in.js';
+import {
+    applyTyrejobsWorkerCreateDefaults,
+    isTyrejobsDedicatedWorker,
+    TYREJOBS_TRIAL_ANTIBAN_SETTINGS,
+} from './tyrejobs-worker-defaults.js';
+import {
+    armAfterConnect,
+    isCtaBlockedByPostLimit,
+    isPostLinkOutboundQuiet,
+    isTyrejobsPostLimitLine,
+    markLimited,
+    noteRegisteredAt,
+    parsePostLimitQuiet,
+    resetRegisteredAt,
+    serializePostLimitQuiet,
+    POST_REGISTERED_QUIET_MS,
+} from './tyrejobs-post-limit-quiet.js';
+import {
+    parseOptInCtaState,
+    randomOptInCtaGapMs,
+    serializeOptInCtaState,
+} from './atk2-opt-in-cta.js';
+import {
+    interpretOnWhatsAppResult,
+    isOnWhatsAppPreflightEnabled,
+    isOutboundHardeningEnabled,
+    ONWHATSAPP_CACHE_TTL_MS,
+    ONWHATSAPP_TIMEOUT_MS,
+    onWhatsAppCacheKey,
+    parseOnWhatsAppCache,
+    serializeOnWhatsAppCache,
+} from './outbound-preflight.js';
 
 const { sendButtons, sendInteractiveMessage } = baileysHelper;
 import { fileURLToPath } from 'url';
@@ -131,6 +171,8 @@ const SHARED_DEVICE_RESUME_MAX_ATTEMPTS = Math.max(
     1,
     Number.parseInt(process.env.WA_SHARED_DEVICE_RESUME_MAX_ATTEMPTS || '24', 10) || 24,
 );
+/** Demo + TyreJobs (trial/ATK/ATK2) 428: 20–50s, then 1–5m, then 30m, then stop. */
+const DEMO_RESUME_MAX_ATTEMPTS = 3;
 /** Cap generic auto-reconnect (405/503/etc) so we don't hammer WhatsApp forever. */
 const GENERIC_RECONNECT_MAX_ATTEMPTS = Math.max(
     1,
@@ -155,6 +197,10 @@ const RUNTIME_RECONNECT_STAGGER_MS = Math.max(
     Number.parseInt(process.env.WA_RUNTIME_RECONNECT_STAGGER_MS || '5000', 10) || 5_000,
 );
 const QR_CODE_TTL_MS = 110_000;
+/** Hold /api/send until SERVER_ACK/NACK. Timeout with a real WA id is sent, not failed. */
+const OUTBOUND_ACK_WAIT_MS = 60_000;
+/** How often to re-check ack maps while the HTTP request is held. */
+const OUTBOUND_ACK_POLL_MS = 2_000;
 
 /**
  * Stable egress fingerprint for risk scoring.
@@ -408,6 +454,33 @@ function normalizeBehaviorSettings(settings = {}, previous = {}) {
         ? !!settings.groupAlertMode
         : (previous.groupAlertMode !== undefined ? !!previous.groupAlertMode : false);
 
+    // Orthogonal: capture inbound `<tctoken>` on message stanzas (Baileys PR #2752 / #2698).
+    // Default ON fleet-wide so a reply stores a token for later outbound.
+    // Does not mint tokens for cold outbound.
+    merged.proactiveTcTokenCapture = settings.proactiveTcTokenCapture !== undefined
+        ? !!settings.proactiveTcTokenCapture
+        : (previous.proactiveTcTokenCapture !== undefined ? !!previous.proactiveTcTokenCapture : true);
+
+    // TyreJobs-only on shared workers. On wasup-tyrejobs default ON (token hold).
+    const dedicated = isTyrejobsDedicatedWorker();
+    merged.coldOptInGate = settings.coldOptInGate !== undefined
+        ? !!settings.coldOptInGate
+        : (previous.coldOptInGate !== undefined ? !!previous.coldOptInGate : dedicated);
+
+    // Default OFF elsewhere. On wasup-tyrejobs: never send without a tctoken.
+    merged.blockColdWithoutToken = settings.blockColdWithoutToken !== undefined
+        ? !!settings.blockColdWithoutToken
+        : (previous.blockColdWithoutToken !== undefined ? !!previous.blockColdWithoutToken : dedicated);
+
+    // Hard-off. Trial / ATK / ATK2 never send CTA buttons, even if a client asks.
+    merged.optInCtaOnce = false;
+
+    // Default OFF. On = return /send as soon as Baileys mints an id (no 60s SERVER_ACK wait).
+    // Still one-shot: doNotRetry. Companion sockets often never ACK (Samantha / dental / Content Crew).
+    merged.skipOutboundAckWait = settings.skipOutboundAckWait !== undefined
+        ? !!settings.skipOutboundAckWait
+        : (previous.skipOutboundAckWait !== undefined ? !!previous.skipOutboundAckWait : false);
+
     return merged;
 }
 
@@ -460,6 +533,7 @@ class WhatsAppInstance {
         this.genericReconnectAttempts = 0;
         this.activeConnectGeneration = 0;
         this.connectInFlight = false;
+        this._logoutFreshQrAttempted = false;
         this.qrScanReceivedAt = null;
         this.linkingGraceUntil = null;
         this.lastPairingUpdateAt = null;
@@ -483,15 +557,18 @@ class WhatsAppInstance {
         // Behavior profiles control how much the linked device acts like an
         // active reader versus preserving handset notifications.
         this.behaviorSettings = normalizeBehaviorSettings(config.behaviorSettings || {});
+        this._clampColdOptInGate();
         
         // Anti-ban settings
-        this.antiBanSettings = config.antiBanSettings || {
-            preset: 'balanced',
-            messagesPerHour: 200,
-            messagesPerDay: 5000,
-            uniqueChatsPerHour: 50,
-            uniqueChatsPerDay: 500
-        };
+        this.antiBanSettings = config.antiBanSettings || (isTyrejobsDedicatedWorker()
+            ? { ...TYREJOBS_TRIAL_ANTIBAN_SETTINGS }
+            : {
+                preset: 'balanced',
+                messagesPerHour: 200,
+                messagesPerDay: 5000,
+                uniqueChatsPerHour: 50,
+                uniqueChatsPerDay: 500
+            });
         this.antiBanManager = new AntiBanManager(this.antiBanSettings);
         
         // Paths
@@ -499,6 +576,18 @@ class WhatsAppInstance {
         this.logsFolder = path.join(INSTANCES_FOLDER, this.id, 'logs');
         this.lidCacheFile = path.join(this.authFolder, 'lid-mapping.json');
         this.savedContactsFile = path.join(this.authFolder, 'saved-contacts.json');
+        this.jobReplyAllowFile = path.join(INSTANCES_FOLDER, this.id, 'job-reply-allow.json');
+        this.jobReplyAllowByPhone = new Map(); // phone digits -> { name, phone, repliedAt }
+        this.optInCtaFile = path.join(INSTANCES_FOLDER, this.id, 'opt-in-cta.json');
+        this.optInCtaByPhone = new Map();
+        this.optInCtaLastSentAt = 0;
+        this.optInCtaNextAllowedAt = 0;
+        this.optInCtaLastVariant = null;
+        this.postLimitQuietFile = path.join(INSTANCES_FOLDER, this.id, 'post-limit-quiet.json');
+        this.postLimitQuiet = parsePostLimitQuiet(null);
+        this.onWhatsAppCacheFile = path.join(INSTANCES_FOLDER, this.id, 'onwhatsapp-cache.json');
+        this.onWhatsAppCache = new Map();
+        this._onWhatsAppChain = Promise.resolve();
         
         // Activity log (in-memory, capped)
         this.activityLog = [];
@@ -531,6 +620,9 @@ class WhatsAppInstance {
         // Outbound ACK errors (e.g. WA 463 account restriction) keyed by message id
         this.outboundAckErrors = new Map();
         this.outboundAckStatus = new Map();
+        // Final delivery labels for GET .../messages/:id/status (+ late ACK watch)
+        this.outboundDeliveryById = new Map();
+        this._ackWatchTimers = new Map();
         // WA MEX reachout timelock / new-chat cap (Baileys connection.update)
         this.reachoutTimeLock = null;
         this.newChatMessageCap = null;
@@ -539,6 +631,7 @@ class WhatsAppInstance {
         // Fleet metrics + per-contact 463 circuit (never retry cold to a 463'd contact)
         this.privacyTokenMetrics = createPrivacyTokenMetrics();
         this.contact463Circuit = new Map(); // circuitKey -> untilMs
+        this._proactiveTcTokenHandler = null; // CB:message listener when capture enabled
         
         // Presence cycling interval (for stealth mode)
         this.presenceCycleInterval = null;
@@ -579,6 +672,10 @@ class WhatsAppInstance {
         await this._loadLidCache();
         // Load saved contacts cache from disk
         await this._loadSavedContacts();
+        await this._loadJobReplyAllowState();
+        await this._loadOptInCtaState();
+        await this._loadPostLimitQuietState();
+        await this._loadOnWhatsAppCache();
         return this;
     }
 
@@ -611,21 +708,45 @@ class WhatsAppInstance {
         return capped + jitter;
     }
 
+    _demoResumeDelayMs(attempt) {
+        const randMs = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+        if (attempt <= 1) return randMs(20_000, 50_000);
+        if (attempt === 2) return randMs(60_000, 5 * 60_000);
+        return 30 * 60_000;
+    }
+
+    _quietResumeMaxAttempts() {
+        return this._usesDemoResumeCurve() ? DEMO_RESUME_MAX_ATTEMPTS : SHARED_DEVICE_RESUME_MAX_ATTEMPTS;
+    }
+
+    _quietResumeDelayMs(attempt) {
+        if (this._usesDemoResumeCurve()) return this._demoResumeDelayMs(attempt);
+        return this._sharedDeviceResumeDelayMs(attempt);
+    }
+
+    _quietResumeLabel() {
+        if (this._isTyrejobsProtectedLine()) return 'TyreJobs';
+        if (this._isDemoQuietConflictLine()) return 'Demo';
+        return 'Shared-devices';
+    }
+
     /**
-     * After 428 in shared-devices mode: stand down (don't fight staff), then
-     * gently retry later. If staff Web is still active we get 428 again and
-     * back off further. Auth is always preserved.
+     * After 428 in shared-devices / demo / TyreJobs: stand down, then progressive resume.
+     * Demo + trial/ATK/ATK2: 20–50s → 1–5m → 30m → stop. Clinics: slower exponential.
      */
     _scheduleSharedDeviceResume({ statusCode, detail } = {}) {
         this._cancelConflictReconnectTimer();
         this._cancelSharedDeviceResumeTimer();
         this.conflictReconnectAttempts = 0;
 
-        if (this.sharedDeviceResumeAttempts >= SHARED_DEVICE_RESUME_MAX_ATTEMPTS) {
+        const maxAttempts = this._quietResumeMaxAttempts();
+        const label = this._quietResumeLabel();
+        if (this.sharedDeviceResumeAttempts >= maxAttempts) {
             this.connectionIssue = {
-                message:
-                    `Paused after ${this.sharedDeviceResumeAttempts} quiet resume tries (shared-devices). ` +
-                    `Auth preserved — press Connect when staff Web/Desktop is idle.`,
+                message: this._usesDemoResumeCurve()
+                    ? `${label} stand-down exhausted after ${this.sharedDeviceResumeAttempts} quiet resumes. Auth preserved — press Connect.`
+                    : `Paused after ${this.sharedDeviceResumeAttempts} quiet resume tries (shared-devices). `
+                      + `Auth preserved — press Connect when staff Web/Desktop is idle.`,
                 category: 'shared_device_stand_down_exhausted',
                 requiresAuthClear: false,
                 at: new Date().toISOString(),
@@ -639,14 +760,18 @@ class WhatsAppInstance {
 
         this.sharedDeviceResumeAttempts += 1;
         const attempt = this.sharedDeviceResumeAttempts;
-        const delayMs = this._sharedDeviceResumeDelayMs(attempt);
+        const delayMs = this._quietResumeDelayMs(attempt);
         const waitMin = Math.round(delayMs / 60_000);
         const waitSec = Math.round(delayMs / 1000);
         this.connectionIssue = {
             message:
-                `Paused: another linked device was active (shared-devices). ` +
-                `Quiet auto-resume ${attempt}/${SHARED_DEVICE_RESUME_MAX_ATTEMPTS} in ~${waitMin > 0 ? `${waitMin}m` : `${waitSec}s`} ` +
-                `(or press Connect now if staff Web is idle).`,
+                this._usesDemoResumeCurve()
+                    ? `${label} stand-down: WhatsApp replaced this socket (${statusCode || 428}). `
+                      + `Quiet resume ${attempt}/${maxAttempts} in ~${waitMin > 0 ? `${waitMin}m` : `${waitSec}s`} `
+                      + `(or press Connect). Auth preserved.`
+                    : `Paused: another linked device was active (shared-devices). `
+                      + `Quiet auto-resume ${attempt}/${maxAttempts} in ~${waitMin > 0 ? `${waitMin}m` : `${waitSec}s`} `
+                      + `(or press Connect now if staff Web is idle).`,
             category: 'shared_device_stand_down',
             requiresAuthClear: false,
             at: new Date().toISOString(),
@@ -654,7 +779,7 @@ class WhatsAppInstance {
             detail: detail || null,
             retryAfterMs: delayMs,
             sharedDeviceResumeAttempt: attempt,
-            sharedDeviceResumeMaxAttempts: SHARED_DEVICE_RESUME_MAX_ATTEMPTS,
+            sharedDeviceResumeMaxAttempts: maxAttempts,
         };
         this._log(this.connectionIssue.message, 'warning');
         this._emitStatusChange();
@@ -665,10 +790,10 @@ class WhatsAppInstance {
             if (generation !== this.activeConnectGeneration) return;
             if (this.status === 'connected' || this.status === 'connecting') return;
             this._log(
-                `Shared-devices quiet resume attempt ${attempt}/${SHARED_DEVICE_RESUME_MAX_ATTEMPTS}…`,
+                `${label} quiet resume attempt ${attempt}/${maxAttempts}…`,
                 'info',
             );
-            this.connect().catch((err) => {
+            this.connect({ _pairingRecovery: true }).catch((err) => {
                 this.connectionIssue = {
                     message: `Shared-device resume failed: ${err.message}`,
                     category: 'shared_device_resume_failed',
@@ -737,7 +862,7 @@ class WhatsAppInstance {
             this.conflictReconnectTimer = null;
             if (generation !== this.activeConnectGeneration) return;
             if (this.status === 'connected') return;
-            this.connect().catch((err) => {
+            this.connect({ _pairingRecovery: true }).catch((err) => {
                 this.connectionIssue = {
                     message: `Conflict auto-reconnect failed: ${err.message}`,
                     category: 'reconnect_failed',
@@ -756,15 +881,42 @@ class WhatsAppInstance {
             const raw = await fs.readFile(credsPath, 'utf8');
             const creds = JSON.parse(raw);
             const hasMe = Boolean(creds?.me?.id || creds?.me?.lid);
-            // Baileys often keeps registered=false on fully paired lines; me.id is the reliable signal.
-            const registered = !!creds.registered || hasMe;
+            const registeredFlag = !!creds.registered;
+            // Baileys often keeps registered=false on fully paired lines; me.id is the
+            // soft-reconnect signal. Do NOT treat hasMe as "fresh QR ready" — a 401
+            // logout leaves me.id on disk and blocks QR until session files are cleared.
             return {
                 exists: true,
-                registered,
+                registeredFlag,
                 hasMe,
+                registered: registeredFlag || hasMe,
             };
         } catch {
-            return { exists: false, registered: false, hasMe: false };
+            return { exists: false, registeredFlag: false, hasMe: false, registered: false };
+        }
+    }
+
+    _connectionIssueNeedsFreshQr() {
+        const issue = this.connectionIssue || {};
+        if (issue.requiresAuthClear === true) return true;
+        const msg = String(issue.message || '');
+        if (/logged\s*out|restart with QR|QR code required/i.test(msg)) return true;
+        if (issue.category === 'fatal' && /unauthorized|logged\s*out|401/i.test(msg)) return true;
+        return false;
+    }
+
+    /**
+     * Wipe session/creds for a fresh QR while keeping tctoken / lid / device-list.
+     */
+    async _resetAuthForFreshQr(reason = 'Preparing fresh QR (privacy tokens preserved)') {
+        const preserved = await this._snapshotPrivacyTokenFiles();
+        await this._clearLocalAuthFiles(reason);
+        if (preserved.files.length) {
+            await this._restorePrivacyTokenFiles(preserved.files);
+            this._log(
+                `Fresh QR prep — restored ${preserved.files.length} privacy/mapping files (tctoken/lid/device-list)`,
+                'info'
+            );
         }
     }
 
@@ -794,9 +946,10 @@ class WhatsAppInstance {
     }
 
     /**
-     * Reset stale partial pairing state so WhatsApp accepts a fresh QR scan.
-     * Partial creds.json (registered=false) from a timed-out or abandoned attempt
-     * causes phones to show "QR code out of date" until auth is cleared manually.
+     * Reset stale / dead pairing state so WhatsApp accepts a fresh QR scan.
+     * - Partial creds (no me) from abandoned attempts
+     * - Dead logged-out sessions that still have me.id (401) — must clear or QR never appears
+     * Always preserves tctoken / lid-mapping / device-list by default.
      */
     async _prepareFreshQrPairingSession() {
         const authState = await this._readAuthRegistrationState();
@@ -805,15 +958,23 @@ class WhatsAppInstance {
             : null;
         const qrExpired = typeof qrAgeMs === 'number' && qrAgeMs >= (QR_CODE_TTL_MS - 15_000);
         const inLinkingGrace = this._isPostScanGraceActive();
-        const staleUnregisteredAuth = authState.exists && !authState.registered && !authState.hasMe && !inLinkingGrace;
+        const staleUnregisteredAuth = authState.exists
+            && !authState.registeredFlag
+            && !authState.hasMe
+            && !inLinkingGrace;
         const staleConnectingSession = this.status === 'connecting'
             && !inLinkingGrace
             && (qrExpired || staleUnregisteredAuth || (!this.qrCode && !this.qrContent));
 
+        // Never auto-wipe a session that still has me.id. 401 "logged out" in
+        // connectionIssue used to clear creds on Reconnect (same as variset).
         if (staleUnregisteredAuth && this.status !== 'connecting') {
-            this._log('Auto-clearing stale unregistered auth before fresh QR pairing', 'info');
+            this._log(
+                'Auto-clearing stale unregistered auth before fresh QR pairing (keeping privacy tokens)',
+                'info'
+            );
             await this._teardownPairingSocket();
-            await this._clearLocalAuthFiles();
+            await this._resetAuthForFreshQr();
             return;
         }
 
@@ -824,7 +985,7 @@ class WhatsAppInstance {
             );
             await this._teardownPairingSocket();
             if (staleUnregisteredAuth) {
-                await this._clearLocalAuthFiles();
+                await this._resetAuthForFreshQr();
             }
             return;
         }
@@ -928,8 +1089,8 @@ class WhatsAppInstance {
             try {
                 if (mode === 'qr-timeout') {
                     const authState = await this._readAuthRegistrationState();
-                    if (authState.exists && !authState.registered && !authState.hasMe && !this._isPostScanGraceActive()) {
-                        await this._clearLocalAuthFiles('Cleared stale unregistered auth during QR refresh');
+                    if (authState.exists && !authState.registeredFlag && !authState.hasMe && !this._isPostScanGraceActive()) {
+                        await this._resetAuthForFreshQr('Cleared stale unregistered auth during QR refresh (privacy tokens preserved)');
                     }
                 }
                 await this.connect({ _pairingRecovery: mode });
@@ -1039,7 +1200,21 @@ class WhatsAppInstance {
             // me.id is the reliable "already paired" signal — same as getAuthStateSummary().
             // Treating paired reconnects as "initial registration" disables syncFullHistory,
             // so tctokens from chats on other linked devices never arrive → WA NACK 463.
-            const isInitialRegistration = !state.creds.registered && !state.creds.me?.id;
+            let isInitialRegistration = !state.creds.registered && !state.creds.me?.id;
+            // ATK2 2026-08-28: pairing sets me.id, then 515 restart wrapped antiban +
+            // syncFullHistory on a companion that was not finished registering. TyreJobs
+            // only: keep the registration-safe socket until WhatsApp actually finishes.
+            if (
+                this._isTyrejobsProtectedLine()
+                && !state.creds.registered
+                && (this._isPostScanGraceActive() || options._pairingRecovery || options.pairingPhone)
+            ) {
+                isInitialRegistration = true;
+                this._log(
+                    'TyreJobs: post-pair socket stays registration-safe until link finishes (no antiban wrap, no full history)',
+                    'warning'
+                );
+            }
 
             // ─── Anti-ban v2 integration ──────────────────────────────────
             // 1) Lazy-init the v2 config from legacy on first connect
@@ -1158,6 +1333,9 @@ class WhatsAppInstance {
             rawSocket.ws?.on?.('error', (err) => {
                 this._log(`WhatsApp websocket error: ${err?.message || String(err)}`, 'warning');
             });
+
+            // Optional PR #2752-style inbound <tctoken> capture (behavior switch, default off).
+            this._syncProactiveTcTokenCapture();
             
             // Save credentials when updated
             this.socket.ev.on('creds.update', async (creds) => {
@@ -1175,6 +1353,7 @@ class WhatsAppInstance {
                 }
 
                 await saveCreds();
+                this._noteTyrejobsRegistered('creds.update');
             });
 
             const enableAntibanAfterRegistration = async () => {
@@ -1285,6 +1464,9 @@ class WhatsAppInstance {
                     const isForbidden = statusCode === DisconnectReason.forbidden
                         || statusCode === 403
                         || reconnectPlan.category === 'forbidden';
+                    if (isForbidden || isLoggedOut) {
+                        this._markTyrejobsLimited(isForbidden ? '403' : '401');
+                    }
                     const shouldReconnect = !isLoggedOut && !isForbidden && !isConflict && reconnectPlan.shouldReconnect !== false;
                     const wasPairing = this.status === 'connecting' && !this.connectedAt;
                     const isQrTimeout = this._isQrTimeoutDisconnect(statusCode, updateSummary);
@@ -1382,9 +1564,32 @@ class WhatsAppInstance {
                             this._log(`Pairing protocol retries exhausted after ${this.staleProtocolResetCount} attempt(s): ${updateSummary.error || reconnectPlan.message}`, 'error');
                             this._emitStatusChange();
                         }
+                    } else if (wasPairing && isLoggedOut && !usePairingCode) {
+                        // NEVER auto-wipe auth here. A 401 during connect/QR used to clear
+                        // creds.json for "fresh QR" and that nuked live sessions after a
+                        // conflict/reconnect (variset 2026-08-22). Auth stays on disk;
+                        // clear only when the user explicitly presses QR / clear-auth.
+                        this._cancelConflictReconnectTimer();
+                        this._cancelPairingRestartTimer();
+                        this.connectionIssue = {
+                            message:
+                                reconnectPlan.message
+                                || 'Logged out (401) — auth preserved. Press Reconnect; use QR / Clear Auth only if that fails.',
+                            category: 'fatal',
+                            requiresAuthClear: true,
+                            at: new Date().toISOString(),
+                            statusCode,
+                        };
+                        this._log(
+                            `Disconnect is fatal (${reconnectPlan.message}) — auth preserved (no auto-wipe); press Reconnect or QR manually`,
+                            'error'
+                        );
+                        this._emitStatusChange();
                     } else if (isConflict) {
-                        if (this._isMultiDeviceCoexist() && !this._groupAlertModeEnabled()) {
-                            // Clinic/chatbot coexist: don't fight staff Web — quiet resume later.
+                        if (this._usesQuietConflictResume()) {
+                            // Demo + trial/ATK/ATK2 + clinic coexist: stand down, then
+                            // progressive quiet resume. Do not fight 428 with 10s×8 reclaim.
+                            // 401 conflict still stands down (fatal branch above).
                             this._scheduleSharedDeviceResume({
                                 statusCode,
                                 detail: updateSummary.error || reconnectPlan.message,
@@ -1447,7 +1652,7 @@ class WhatsAppInstance {
                             this._emitStatusChange();
                             setTimeout(() => {
                                 if (generation !== this.activeConnectGeneration) return;
-                                this.connect().catch((err) => {
+                                this.connect({ _pairingRecovery: true }).catch((err) => {
                                     this.connectionIssue = {
                                         message: `Reconnect failed: ${err.message}`,
                                         category: 'reconnect_failed',
@@ -1466,10 +1671,15 @@ class WhatsAppInstance {
                                 ? 'WhatsApp requested a pairing restart. Press QR Code again to start a fresh pairing attempt; saved auth was preserved.'
                                 : reconnectPlan.message,
                             category: reconnectPlan.category,
-                            requiresAuthClear: false,
+                            requiresAuthClear: !!isLoggedOut,
                             at: new Date().toISOString()
                         };
-                        this._log(`Disconnect is fatal (${reconnectPlan.message}) — auth preserved; manual re-pair may be required`, 'error');
+                        this._log(
+                            isLoggedOut
+                                ? `Disconnect is fatal (${reconnectPlan.message}) — auth preserved; press Reconnect, or QR / Clear Auth only if needed`
+                                : `Disconnect is fatal (${reconnectPlan.message}) — auth preserved; manual re-pair may be required`,
+                            'error'
+                        );
                         this._emitStatusChange();
                     }
                 }
@@ -1488,6 +1698,7 @@ class WhatsAppInstance {
                     this.qrCodeUpdatedAt = null;
                     this.qrRefreshRestartCount = 0;
                     this.staleProtocolResetCount = 0;
+                    this._logoutFreshQrAttempted = false;
                     this.qrScanReceivedAt = null;
                     this.linkingGraceUntil = null;
                     this.pairingCode = null;
@@ -1499,6 +1710,9 @@ class WhatsAppInstance {
                     this.connectedAt = new Date().toISOString();
                     this._emitStatusChange();
                     this._log(`Connected as ${this.connectedPhone || 'unknown phone'}`, 'success');
+                    this._armTyrejobsPostLimitCtaQuiet();
+                    this._noteTyrejobsRegistered('connect');
+                    this._logWaAbProps('connect');
 
                     // Probe WA reachout timelock / new-chat cap (read-only MEX). Critical for 463 diagnosis.
                     setTimeout(() => {
@@ -1561,6 +1775,11 @@ class WhatsAppInstance {
                 const MAX_AGE_SEC = 15 * 60;
                 const tasks = [];
                 for (const msg of messages) {
+                    // fromMe echo often carries SERVER_ACK; capture it before handoff
+                    // short-circuit so /api/send does not 60s-timeout as failed.
+                    if (msg?.key?.fromMe && msg?.key?.id) {
+                        this._noteOutboundAck(msg.key.id, msg.status, msg.key.remoteJid || null);
+                    }
                     const msgTimestamp = Number(msg.messageTimestamp) || now;
                     if (now - msgTimestamp > MAX_AGE_SEC) continue;
                     tasks.push(
@@ -1572,6 +1791,22 @@ class WhatsAppInstance {
                 if (tasks.length) await Promise.allSettled(tasks);
             });
 
+            // Delivery/read receipts on companion sockets often skip messages.update.
+            this.socket.ev.on('message-receipt.update', (updates) => {
+                for (const item of updates || []) {
+                    const id = item?.key?.id;
+                    if (!id) continue;
+                    const receipt = item.receipt || {};
+                    let status = 0;
+                    if (receipt.playedTimestamp) status = 5;
+                    else if (receipt.readTimestamp) status = 4;
+                    else if (receipt.receiptTimestamp) status = 3;
+                    if (status >= 2) {
+                        this._noteOutboundAck(id, status, item.key?.remoteJid || null);
+                    }
+                }
+            });
+
             // Capture WA server NACKs (463) and positive status ACKs (SERVER_ACK+).
             this.socket.ev.on('messages.update', (updates) => {
                 for (const { key, update } of updates || []) {
@@ -1580,15 +1815,7 @@ class WhatsAppInstance {
                     const stub = update.messageStubParameters;
                     const errCode = Array.isArray(stub) ? stub[0] : null;
                     if (typeof update.status === 'number' && update.status >= 2) {
-                        this.outboundAckStatus.set(id, {
-                            status: update.status,
-                            at: new Date().toISOString(),
-                            remoteJid: key.remoteJid || null,
-                        });
-                        if (this.outboundAckStatus.size > 500) {
-                            const first = this.outboundAckStatus.keys().next().value;
-                            this.outboundAckStatus.delete(first);
-                        }
+                        this._noteOutboundAck(id, update.status, key.remoteJid || null);
                     }
                     if (update.status === 0 || errCode === '463' || errCode === 463 || String(errCode) === '463') {
                         this.outboundAckErrors.set(id, {
@@ -1605,6 +1832,13 @@ class WhatsAppInstance {
                             (String(errCode) === '463' ? ' — account restricted or missing tctoken for this contact' : ''),
                             'error'
                         );
+                        this._recordOutboundDelivery(id, {
+                            status: 'failed',
+                            reason: String(errCode || 'error'),
+                            remoteJid: key.remoteJid || null,
+                            doNotRetry: String(errCode) === '463',
+                        });
+                        this._cancelOutboundAckWatch(id);
                         if (String(errCode) === '463') {
                             this._tripContact463Circuit(key.remoteJid, 'messages.update');
                             this.refreshReachoutDiagnostics('463').catch(() => {});
@@ -1643,6 +1877,9 @@ class WhatsAppInstance {
             this.socket.ev.on('messages.upsert', ({ messages }) => {
                 for (const msg of messages) {
                     if (msg.key.id) {
+                        if (msg.key.fromMe) {
+                            this._noteOutboundAck(msg.key.id, msg.status, msg.key.remoteJid || null);
+                        }
                         this.messageStore.set(msg.key.id, msg);
                         if (this.messageStore.size > this.maxStoredMessages) {
                             const firstKey = this.messageStore.keys().next().value;
@@ -1670,6 +1907,17 @@ class WhatsAppInstance {
                 for (const [lid, pn] of Object.entries(mappings)) {
                     await this._storeLidMapping(lid, pn);
                 }
+            });
+
+            this.socket.ev.on('message-capping.update', (cap) => {
+                if (!cap || typeof cap !== 'object') return;
+                this.newChatMessageCap = {
+                    ...cap,
+                    checkedAt: new Date().toISOString(),
+                    source: 'message-capping.update',
+                };
+                this._log(`New-chat message cap (event): ${JSON.stringify(this.newChatMessageCap)}`, 'info');
+                this._emitStatusChange();
             });
 
             this.connectInFlight = false;
@@ -1752,6 +2000,21 @@ class WhatsAppInstance {
     /** Staff Web/Desktop coexistence: stand down on conflict, stay presence-passive. */
     _isMultiDeviceCoexist() {
         return !!this.behaviorSettings?.multiDeviceCoexist;
+    }
+
+    /** Demo / trial-style lines: 428 stand-down then progressive quiet resume, not a fight. */
+    _isDemoQuietConflictLine() {
+        return /\bdemo\b/i.test(String(this.name || ''));
+    }
+
+    /** Demo names + trial/ATK/ATK2: 20–50s → 1–5m → 30m → stop. */
+    _usesDemoResumeCurve() {
+        return this._isDemoQuietConflictLine() || this._isTyrejobsProtectedLine();
+    }
+
+    _usesQuietConflictResume() {
+        if (this._usesDemoResumeCurve()) return true;
+        return this._isMultiDeviceCoexist() && !this._groupAlertModeEnabled();
     }
 
     /** Passive companion presence so phone/staff Web keep push + don't fight Wasup. */
@@ -1895,10 +2158,17 @@ class WhatsAppInstance {
     }
     
     /**
-     * Clear auth data (logout + delete credentials)
+     * Clear auth data (logout + delete credentials).
+     * By default keeps tctoken / lid-mapping / device-list files so a re-pair
+     * on the same number does not throw away warm-contact privacy tokens.
+     * Pass { preservePrivacyTokens: false } for a full wipe.
      */
-    async clearAuth() {
-        console.log(`[Instance ${this.id}] Clearing auth...`);
+    async clearAuth(options = {}) {
+        const preservePrivacyTokens = options.preservePrivacyTokens !== false;
+        console.log(
+            `[Instance ${this.id}] Clearing auth...` +
+            (preservePrivacyTokens ? ' (preserving privacy tokens)' : ' (full wipe)')
+        );
         this._cancelPairingRestartTimer();
         this._cancelConflictReconnectTimer();
         this._cancelSharedDeviceResumeTimer();
@@ -1929,6 +2199,10 @@ class WhatsAppInstance {
         this.lastCredsUpdateSummary = null;
         this.connectedPhone = null;
         this.connectedAt = null;
+        if (this._isTyrejobsProtectedLine()) {
+            this.postLimitQuiet = resetRegisteredAt(this.postLimitQuiet);
+            void this._savePostLimitQuietState();
+        }
         this.connectionIssue = null;
         this.reachoutTimeLock = null;
         this.newChatMessageCap = null;
@@ -1936,11 +2210,63 @@ class WhatsAppInstance {
         this._emitStatusChange();
         
         try {
+            const preserved = preservePrivacyTokens
+                ? await this._snapshotPrivacyTokenFiles()
+                : { count: 0, files: [] };
             await this._clearLocalAuthFiles();
-            this._log('Auth cleared - ready for new QR scan', 'info');
+            if (preservePrivacyTokens && preserved.files.length) {
+                await this._restorePrivacyTokenFiles(preserved.files);
+                this._log(
+                    `Auth cleared for re-pair — restored ${preserved.files.length} privacy/mapping files (tctoken/lid/device-list)`,
+                    'info'
+                );
+            } else {
+                this._log(
+                    preservePrivacyTokens
+                        ? 'Auth cleared - ready for new QR scan (no privacy tokens to preserve)'
+                        : 'Auth cleared (full wipe) - ready for new QR scan',
+                    'info'
+                );
+            }
         } catch (error) {
             console.error(`[Instance ${this.id}] Clear auth error:`, error);
             throw error;
+        }
+    }
+
+    _isPrivacyTokenPreserveFile(name) {
+        if (!name || name.includes('__index')) return false;
+        return (
+            name.startsWith('tctoken-')
+            || name.startsWith('lid-mapping-')
+            || name.startsWith('device-list-')
+        );
+    }
+
+    async _snapshotPrivacyTokenFiles() {
+        const out = [];
+        try {
+            if (!fsSync.existsSync(this.authFolder)) return { count: 0, files: out };
+            const names = await fs.readdir(this.authFolder);
+            for (const name of names) {
+                if (!this._isPrivacyTokenPreserveFile(name)) continue;
+                const full = path.join(this.authFolder, name);
+                try {
+                    const st = await fs.stat(full);
+                    if (!st.isFile()) continue;
+                    const data = await fs.readFile(full);
+                    out.push({ name, data });
+                } catch (_) { /* skip unreadable */ }
+            }
+        } catch (_) { /* empty auth */ }
+        return { count: out.length, files: out };
+    }
+
+    async _restorePrivacyTokenFiles(files = []) {
+        await fs.mkdir(this.authFolder, { recursive: true });
+        for (const file of files) {
+            if (!file?.name || !this._isPrivacyTokenPreserveFile(file.name)) continue;
+            await fs.writeFile(path.join(this.authFolder, file.name), file.data);
         }
     }
 
@@ -2206,6 +2532,48 @@ class WhatsAppInstance {
             }
         }
 
+        // After 6h quiet: live tctoken → send job (text or buttons).
+        // No token / expired → hold. Never invent a CTA for a cold contact.
+        if (this._isTyrejobsProtectedLine() || this._isColdOptInGateActive()) {
+            options.skipContactSave = true;
+        }
+        if (this._isTyrejobsProtectedLine() && this._isTyrejobsPostLinkSendHold()) {
+            const held = this._maybeHoldJobUntilHumanReply(jid, normalizedTo);
+            if (held) return held;
+            return this._policyBlock(
+                'post-link-hold',
+                'TyreJobs hold — waiting 6 hours after connect/status sync before any outbound'
+            );
+        }
+        if (this._isTokenOnlyOutbound()) {
+            const warm = await this._tyrejobsHasUsablePrivacyToken(jid);
+            if (!warm) {
+                const held = this._maybeHoldJobUntilHumanReply(jid, normalizedTo);
+                if (held) return held;
+                return this._policyBlock(
+                    'cold-blocked',
+                    'No usable tctoken — nothing sent (token-only worker)'
+                );
+            }
+        }
+
+        // Hard stop before any WA IQ (onWhatsApp / save-contact / send).
+        // Companion cold during lock extends the restriction.
+        this._expireReachoutTimeLockIfNeeded('send:expiry');
+        if (this._isReachoutTimeLockBlocking() && !options.forceDespiteTimelock) {
+            const until = this.reachoutTimeLock.timeEnforcementEnds || 'unknown';
+            const type = this.reachoutTimeLock.enforcementType || 'DEFAULT';
+            return this._policyBlock(
+                'reachout-timelock',
+                `Reachout timelock active (${type}) until ${until} — companion cold sends are blocked by WhatsApp`
+            );
+        }
+
+        if (!options.skipOnWhatsApp) {
+            const unknown = await this._maybeBlockUnknownWhatsApp(jid, normalizedTo, options);
+            if (unknown) return unknown;
+        }
+
         // Content variation (global module and/or per-send contentVariation for marketing blasts).
         textOrParams = this._applyOutboundContentVariation(textOrParams, options);
 
@@ -2225,22 +2593,12 @@ class WhatsAppInstance {
             await this._saveContactBeforeMessage(jid, options.contactName);
         }
 
-        // Hard stop when WA has companion reachout lock active — retries worsen budget.
-        // Expired end timestamps must not keep blocking (sticky Argo/connection.update flags).
-        this._expireReachoutTimeLockIfNeeded('send:expiry');
-        if (this._isReachoutTimeLockBlocking() && !options.forceDespiteTimelock) {
-            const until = this.reachoutTimeLock.timeEnforcementEnds || 'unknown';
-            const type = this.reachoutTimeLock.enforcementType || 'DEFAULT';
-            throw new Error(
-                `Reachout timelock active (${type}) until ${until} — companion cold sends are blocked by WhatsApp`
-            );
-        }
-
         // Per-contact 463 circuit — never retry a contact that just NACK'd (extends lock).
         const circuitKey = circuitKeyForJid(jid);
         const circuitUntil = circuitKey ? this.contact463Circuit.get(circuitKey) : null;
         if (circuitUntil && Date.now() < circuitUntil && !options.forceDespiteTimelock) {
-            throw new Error(
+            return this._policyBlock(
+                '463-circuit',
                 `Contact ${circuitKey} is on a 463 circuit until ${new Date(circuitUntil).toISOString()} — do not retry cold sends`
             );
         }
@@ -2248,7 +2606,20 @@ class WhatsAppInstance {
         // Warm/cold classification via persisted tctoken (Baileys attaches on send when present).
         let tokenProbe = null;
         if (!options.skipPrivacyToken) {
-            tokenProbe = await this._ensurePrivacyTokenBeforeSend(jid, options);
+            try {
+                const sendOptions = {
+                    ...options,
+                    blockColdWithoutToken:
+                        options.blockColdWithoutToken === true
+                        || (this.behaviorSettings?.blockColdWithoutToken === true && options.allowColdWithoutToken !== true),
+                };
+                tokenProbe = await this._ensurePrivacyTokenBeforeSend(jid, sendOptions);
+            } catch (err) {
+                if (/Cold send blocked/i.test(err.message || '')) {
+                    return this._policyBlock('cold-blocked', err.message);
+                }
+                throw err;
+            }
         }
         
         // Build the outbound message object
@@ -2338,7 +2709,30 @@ class WhatsAppInstance {
         // and used to falsely arm human handoff (TyreFlow leads → bashir/owner numbers).
         if (result?.sent && result?.key?.id) {
             this._markBotOutbound(jid, result.key.id);
-            result = await this._awaitOutboundServerAck(result);
+            if (typeof result.status === 'number' && result.status >= 2) {
+                this._noteOutboundAck(result.key.id, result.status, result.key.remoteJid || jid);
+            }
+            if (this.behaviorSettings?.skipOutboundAckWait) {
+                this._log(
+                    `ACK wait skipped (fire-and-forget) ${result.key.id} — marked sent, doNotRetry`,
+                    'info'
+                );
+                this._recordOutboundDelivery(result.key.id, {
+                    status: 'sent',
+                    remoteJid: result.key.remoteJid || jid,
+                    doNotRetry: true,
+                    ackWaitSkipped: true,
+                });
+                result = {
+                    ...result,
+                    sent: true,
+                    doNotRetry: true,
+                    ackWaitSkipped: true,
+                    via: result.via ? `${result.via}+fire-and-forget` : 'fire-and-forget',
+                };
+            } else {
+                result = await this._awaitOutboundServerAck(result);
+            }
         }
         
         if (result.sent) {
@@ -2347,6 +2741,15 @@ class WhatsAppInstance {
             
             this._log(`Sent to ${to}: ${logText.substring(0, 50)}...`, 'success');
             this._logMessage('outbound', this.connectedPhone || this.id, normalizedTo, logText, result.key?.id);
+
+            if (result.key?.id) {
+                this._recordOutboundDelivery(result.key.id, {
+                    toPhone: normalizedTo,
+                    preview: String(logText || '').substring(0, 120),
+                    status: normalizeMessageStatus(result.status) || 'sent',
+                    doNotRetry: true,
+                });
+            }
 
             // Re-assert 'unavailable' after send (phone-push and/or shared-devices).
             // Without this, composing/send can leave the companion "online" and silence the phone.
@@ -2369,20 +2772,40 @@ class WhatsAppInstance {
             };
         }
 
+        if (result?.sent && options._atk2OptInCtaPhone) {
+            this._markAtk2OptInCtaSent(options._atk2OptInCtaPhone, options._atk2OptInCtaVariant);
+            result = {
+                ...result,
+                skippedJob: true,
+                doNotRetry: true,
+                via: 'opt-in-cta',
+                reason: `Opt-in CTA sent to ${options._atk2OptInCtaPhone} — job held until a tctoken exists`,
+            };
+        }
+
         return result;
     }
 
     /**
-     * Wait for a real WA server outcome after Baileys returns from sendMessage.
-     * Absence of 463 is NOT success — ghost sends stay PENDING (status 1) forever.
-     * Require SERVER_ACK+ (status >= 2) or fail clearly.
+     * Hold the send until WA SERVER_ACK / NACK, polling every 2s for up to 1 minute.
+     * ACK early → return as soon as status lands. Real NACK (463 / status 0) → failed.
+     * After 1m with no NACK but a real WA id → sent (not failed). Companion sockets
+     * often never emit SERVER_ACK while WhatsApp still delivered (Samantha / dental).
+     * Returning failed here made n8n cron unlock-and-resend the same opener.
      */
-    async _awaitOutboundServerAck(result, waitMs = 8000) {
+    async _awaitOutboundServerAck(result, waitMs = OUTBOUND_ACK_WAIT_MS) {
         const id = result?.key?.id;
         if (!id) return result;
 
+        this._recordOutboundDelivery(id, {
+            status: 'pending',
+            remoteJid: result?.key?.remoteJid || null,
+            sentAt: new Date().toISOString(),
+            doNotRetry: true,
+        });
+
         const deadline = Date.now() + waitMs;
-        while (Date.now() < deadline) {
+        while (true) {
             const nack = this.outboundAckErrors.get(id);
             if (nack) {
                 this.outboundAckErrors.delete(id);
@@ -2394,6 +2817,13 @@ class WhatsAppInstance {
                 if (code === '463') {
                     this._tripContact463Circuit(nack.remoteJid || result?.key?.remoteJid, 'server-nack');
                 }
+                this._recordOutboundDelivery(id, {
+                    status: 'failed',
+                    reason,
+                    remoteJid: nack.remoteJid || result?.key?.remoteJid || null,
+                    doNotRetry: code === '463',
+                });
+                this._cancelOutboundAckWatch(id);
                 const out = {
                     ...result,
                     sent: false,
@@ -2408,9 +2838,15 @@ class WhatsAppInstance {
                 }
                 return out;
             }
+
             const ack = this.outboundAckStatus.get(id);
             if (ack && ack.status >= 2) {
                 this.outboundAckStatus.delete(id);
+                this._recordOutboundDelivery(id, {
+                    status: normalizeMessageStatus(ack.status) || 'sent',
+                    remoteJid: ack.remoteJid || result?.key?.remoteJid || null,
+                });
+                this._cancelOutboundAckWatch(id);
                 return {
                     ...result,
                     sent: true,
@@ -2418,14 +2854,159 @@ class WhatsAppInstance {
                     via: result.via || 'server-ack'
                 };
             }
-            await delay(100);
+
+            if (Date.now() >= deadline) break;
+            const sleepMs = Math.min(OUTBOUND_ACK_POLL_MS, Math.max(0, deadline - Date.now()));
+            if (sleepMs <= 0) break;
+            await delay(sleepMs);
         }
+
+        // No NACK, real WA id already minted — message left the socket. Companion ACK
+        // never showed up. Treat as sent so /api/send returns status:sent, not failed.
+        this._log(
+            `Server ACK not received within ${Math.round(waitMs / 1000)}s for ${id} — treating as sent (doNotRetry; message likely already delivered)`,
+            'warning'
+        );
+        this._recordOutboundDelivery(id, {
+            status: 'sent',
+            remoteJid: result?.key?.remoteJid || null,
+            doNotRetry: true,
+            ackWatchTimedOut: true,
+        });
+        this._cancelOutboundAckWatch(id);
         return {
             ...result,
-            sent: false,
-            reason: 'WhatsApp did not acknowledge the message (stuck PENDING — not delivered)',
-            via: 'server-ack-timeout'
+            sent: true,
+            status: 2,
+            ackPending: false,
+            ackTimedOut: true,
+            doNotRetry: true,
+            via: 'server-ack-timeout-assumed'
         };
+    }
+
+    _noteOutboundAck(messageId, status, remoteJid = null) {
+        if (!messageId) return;
+        const numeric = typeof status === 'number' ? status : Number.parseInt(String(status), 10);
+        if (!Number.isFinite(numeric) || numeric < 2) return;
+        const prev = this.outboundAckStatus.get(messageId);
+        if (prev && prev.status >= numeric) return;
+        this.outboundAckStatus.set(messageId, {
+            status: numeric,
+            at: new Date().toISOString(),
+            remoteJid: remoteJid || prev?.remoteJid || null,
+        });
+        if (this.outboundAckStatus.size > 500) {
+            const first = this.outboundAckStatus.keys().next().value;
+            this.outboundAckStatus.delete(first);
+        }
+        this._recordOutboundDelivery(messageId, {
+            status: normalizeMessageStatus(numeric) || 'sent',
+            remoteJid: remoteJid || prev?.remoteJid || null,
+        });
+        this._cancelOutboundAckWatch(messageId);
+    }
+
+    _cancelOutboundAckWatch(messageId) {
+        const t = this._ackWatchTimers?.get(messageId);
+        if (t) {
+            clearTimeout(t);
+            this._ackWatchTimers.delete(messageId);
+        }
+    }
+
+    /** @deprecated kept as no-op cancel helper for older call sites */
+    _scheduleOutboundAckWatch() {
+        // HTTP now waits up to 1 minute synchronously; no post-response watch needed.
+    }
+
+    _recordOutboundDelivery(messageId, patch = {}) {
+        if (!messageId) return;
+        const prev = this.outboundDeliveryById.get(messageId) || {
+            messageId,
+            status: 'pending',
+            statusAt: null,
+            sentAt: new Date().toISOString(),
+            fromPhone: this.connectedPhone || null,
+            toPhone: null,
+            preview: null,
+            updates: [],
+            doNotRetry: true,
+        };
+
+        const nextStatus = patch.status || prev.status;
+        if (patch.status && !shouldAdvanceMessageStatus(prev.status, nextStatus) && nextStatus !== 'failed') {
+            return;
+        }
+
+        const updates = Array.isArray(prev.updates) ? [...prev.updates] : [];
+        if (patch.status && patch.status !== prev.status) {
+            updates.push({
+                status: patch.status,
+                at: new Date().toISOString(),
+                reason: patch.reason || null,
+            });
+            if (updates.length > 20) updates.splice(0, updates.length - 20);
+        }
+
+        const toPhone = patch.toPhone
+            || prev.toPhone
+            || (patch.remoteJid ? String(patch.remoteJid).split('@')[0].split(':')[0] : null);
+
+        const entry = {
+            ...prev,
+            ...patch,
+            messageId,
+            status: nextStatus,
+            statusAt: new Date().toISOString(),
+            sentAt: patch.sentAt || prev.sentAt || new Date().toISOString(),
+            toPhone,
+            fromPhone: prev.fromPhone || this.connectedPhone || null,
+            updates,
+            doNotRetry: patch.doNotRetry !== undefined ? !!patch.doNotRetry : (prev.doNotRetry !== false),
+        };
+        this.outboundDeliveryById.set(messageId, entry);
+        if (this.outboundDeliveryById.size > 2000) {
+            const first = this.outboundDeliveryById.keys().next().value;
+            this.outboundDeliveryById.delete(first);
+        }
+    }
+
+    getMessageStatus(messageId) {
+        if (!messageId) return null;
+        const tracked = this.outboundDeliveryById.get(messageId);
+        if (tracked) return { ...tracked };
+
+        const ack = this.outboundAckStatus.get(messageId);
+        if (ack) {
+            return {
+                messageId,
+                status: normalizeMessageStatus(ack.status) || 'sent',
+                statusAt: ack.at,
+                sentAt: ack.at,
+                fromPhone: this.connectedPhone || null,
+                toPhone: ack.remoteJid ? String(ack.remoteJid).split('@')[0].split(':')[0] : null,
+                preview: null,
+                updates: [],
+                doNotRetry: true,
+            };
+        }
+        const nack = this.outboundAckErrors.get(messageId);
+        if (nack) {
+            return {
+                messageId,
+                status: 'failed',
+                statusAt: nack.at,
+                sentAt: nack.at,
+                fromPhone: this.connectedPhone || null,
+                toPhone: nack.remoteJid ? String(nack.remoteJid).split('@')[0].split(':')[0] : null,
+                preview: null,
+                updates: [],
+                doNotRetry: String(nack.code) === '463',
+                reason: `ack error ${nack.code}`,
+            };
+        }
+        return null;
     }
     
     /**
@@ -2457,7 +3038,7 @@ class WhatsAppInstance {
                     try {
                         const raw = JSON.parse(fsSync.readFileSync(path.join(this.authFolder, name), 'utf8'));
                         if (name.includes('_reverse')) {
-                            ingestPair(stem, raw);
+                            ingestPair(stem.replace(/_reverse$/, ''), raw);
                         } else {
                             ingestPair(raw, stem);
                         }
@@ -2490,7 +3071,7 @@ class WhatsAppInstance {
         // Explicit @lid input: map back to PN when we can
         if (to.includes('@lid')) {
             const lidId = to.replace('@lid', '').split(':')[0];
-            const pn = this.lidCache.get(lidId);
+            const pn = await this._resolveLidToPhone(lidId);
             if (pn) return `${pn}@s.whatsapp.net`;
             return to;
         }
@@ -2607,11 +3188,18 @@ class WhatsAppInstance {
             return { present: false, expired: false, cold: false };
         }
         const sock = this.rawSocket || this.socket;
-        const probe = await lookupPrivacyToken(sock, this.lidCache, jid);
+        const probe = await lookupPrivacyToken(sock, this.lidCache, jid, this._privacyLookupExtraKeys(jid));
 
         if (probe.present && !probe.expired) {
             this.privacyTokenMetrics.tokenHits += 1;
-            return { ...probe, cold: false };
+            const mirrored = await mirrorPrivacyTokenToJid(sock, probe, jid);
+            if (mirrored.mirroredTo) {
+                this._log(
+                    `Mirrored tctoken ${probe.storageJid} → ${mirrored.mirroredTo} so PN send carries the LID token`,
+                    'info'
+                );
+            }
+            return { ...mirrored, cold: false };
         }
 
         if (probe.present && probe.expired) {
@@ -2638,6 +3226,438 @@ class WhatsAppInstance {
         }
 
         return { ...probe, cold: true };
+    }
+
+    _isTyrejobsColdOptInAllowlisted() {
+        return isTyrejobsColdOptInExclusive({
+            id: this.id,
+            phone: this.connectedPhone || '',
+        });
+    }
+
+    _clampColdOptInGate() {
+        if (this.behaviorSettings) this.behaviorSettings.optInCtaOnce = false;
+        if (isTyrejobsDedicatedWorker() || this._isTyrejobsColdOptInAllowlisted()) {
+            if (this.behaviorSettings) {
+                this.behaviorSettings.coldOptInGate = true;
+                this.behaviorSettings.blockColdWithoutToken = true;
+                this.behaviorSettings.optInCtaOnce = false;
+            }
+            return;
+        }
+        if (!this.behaviorSettings?.coldOptInGate) return;
+        this.behaviorSettings.coldOptInGate = false;
+        this._log(
+            'coldOptInGate forced OFF — exclusive to trial-Tyrejobs / TyreJobs-ATK / ATK2',
+            'warning'
+        );
+    }
+
+    _isColdOptInGateActive() {
+        if (isTyrejobsDedicatedWorker()) return this.behaviorSettings?.coldOptInGate !== false;
+        return !!this.behaviorSettings?.coldOptInGate && this._isTyrejobsColdOptInAllowlisted();
+    }
+
+    /** Trial / ATK / ATK2 never send a job/media/CTA without a live tctoken. */
+    _isTokenOnlyOutbound() {
+        if (isTyrejobsDedicatedWorker()) return true;
+        if (this._isTyrejobsColdOptInAllowlisted()) return true;
+        return this._isColdOptInGateActive();
+    }
+
+    /** Hard-off. Dashboard / API cannot turn CTA back on for these lines. */
+    _isOptInCtaOnceEnabled() {
+        return false;
+    }
+
+    _isTyrejobsProtectedLine() {
+        return isTyrejobsPostLimitLine({
+            id: this.id,
+            phone: this.connectedPhone || '',
+        });
+    }
+
+    _isTyrejobsPostLinkSendHold() {
+        return isPostLinkOutboundQuiet({
+            status: this.status,
+            connectedAt: this.connectedAt,
+            registeredAt: this.postLimitQuiet?.registeredAt,
+        });
+    }
+
+    _noteTyrejobsRegistered(source = 'unknown') {
+        if (!this._isTyrejobsProtectedLine()) return;
+        const creds = (this.rawSocket || this.socket)?.authState?.creds;
+        if (!creds?.registered) return;
+        const at = source === 'connect' && this.connectedAt
+            ? this.connectedAt
+            : new Date().toISOString();
+        const next = noteRegisteredAt(this.postLimitQuiet, at);
+        this.postLimitQuiet = next;
+        if (!next.changed) return;
+        void this._savePostLimitQuietState();
+        const until = new Date(new Date(next.registeredAt).getTime() + POST_REGISTERED_QUIET_MS).toISOString();
+        this._log(
+            `TyreJobs registered=true (${source}) — no outbound until ${until} (6 hours after registered / status sync)`,
+            'warning'
+        );
+    }
+
+    async _loadJobReplyAllowState() {
+        this.jobReplyAllowByPhone = new Map();
+        try {
+            const raw = await fs.readFile(this.jobReplyAllowFile, 'utf8');
+            this.jobReplyAllowByPhone = parseJobReplyAllowFile(JSON.parse(raw));
+        } catch (_) {
+            /* first run */
+        }
+    }
+
+    async _saveJobReplyAllowState() {
+        try {
+            await fs.mkdir(path.dirname(this.jobReplyAllowFile), { recursive: true });
+            const obj = {};
+            for (const [phone, entry] of this.jobReplyAllowByPhone.entries()) obj[phone] = entry;
+            await fs.writeFile(this.jobReplyAllowFile, JSON.stringify(obj, null, 2));
+        } catch (err) {
+            this._log(`Failed to persist job reply allowlist: ${err.message}`, 'warning');
+        }
+    }
+
+    _jobReplyPhoneKey(jidOrPhone) {
+        const digits = String(jidOrPhone || '').split('@')[0].split(':')[0].replace(/[^\d]/g, '');
+        return digits.length >= 6 ? digits : null;
+    }
+
+    _noteTyrejobsHumanReply(phone, name) {
+        if (!this._isColdOptInGateActive()) return false;
+        const key = this._jobReplyPhoneKey(phone);
+        if (!key) return false;
+        const cleanName = normalizeJobReplyName(name);
+        const prev = this.jobReplyAllowByPhone.get(key);
+        if (prev && (!cleanName || prev.name === cleanName)) return false;
+        const entry = {
+            name: cleanName || prev?.name || null,
+            phone: key,
+            repliedAt: prev?.repliedAt || new Date().toISOString(),
+        };
+        this.jobReplyAllowByPhone.set(key, entry);
+        if (this.jobReplyAllowByPhone.size > 5000) {
+            const first = this.jobReplyAllowByPhone.keys().next().value;
+            this.jobReplyAllowByPhone.delete(first);
+        }
+        const label = entry.name || 'unknown';
+        this._log(
+            prev
+                ? `Job allowlist updated: ${label} (${key})`
+                : `Job allowlist: ${label} (${key}) replied — jobs can send to this chat`,
+            'success'
+        );
+        void this._saveJobReplyAllowState();
+        return true;
+    }
+
+    async _tyrejobsHasUsablePrivacyToken(jid) {
+        if (!jid || String(jid).includes('@g.us')) return false;
+        try {
+            const sock = this.rawSocket || this.socket;
+            const probe = await lookupPrivacyToken(
+                sock,
+                this.lidCache,
+                jid,
+                this._privacyLookupExtraKeys(jid)
+            );
+            return !!(probe.present && !probe.expired);
+        } catch (_) {
+            return false;
+        }
+    }
+
+    async _loadOptInCtaState() {
+        this.optInCtaByPhone = new Map();
+        this.optInCtaLastSentAt = 0;
+        this.optInCtaNextAllowedAt = 0;
+        this.optInCtaLastVariant = null;
+        try {
+            const raw = await fs.readFile(this.optInCtaFile, 'utf8');
+            const parsed = parseOptInCtaState(JSON.parse(raw));
+            this.optInCtaByPhone = parsed.byPhone;
+            this.optInCtaLastSentAt = parsed.lastSentAt;
+            this.optInCtaNextAllowedAt = parsed.nextAllowedAt;
+            this.optInCtaLastVariant = parsed.lastVariant;
+        } catch (_) {
+            /* first run */
+        }
+    }
+
+    async _saveOptInCtaState() {
+        try {
+            await fs.mkdir(path.dirname(this.optInCtaFile), { recursive: true });
+            await fs.writeFile(
+                this.optInCtaFile,
+                JSON.stringify(serializeOptInCtaState({
+                    lastSentAt: this.optInCtaLastSentAt,
+                    nextAllowedAt: this.optInCtaNextAllowedAt,
+                    lastVariant: this.optInCtaLastVariant,
+                    byPhone: this.optInCtaByPhone,
+                }), null, 2)
+            );
+        } catch (err) {
+            this._log(`Failed to persist opt-in CTA state: ${err.message}`, 'warning');
+        }
+    }
+
+    _claimAtk2OptInCtaSlot(phone, variant) {
+        const key = this._jobReplyPhoneKey(phone);
+        if (!key) return 0;
+        const now = Date.now();
+        const gapMs = randomOptInCtaGapMs();
+        this.optInCtaLastSentAt = now;
+        this.optInCtaNextAllowedAt = now + gapMs;
+        this.optInCtaLastVariant = variant || null;
+        this.optInCtaByPhone.set(key, {
+            phone: key,
+            sentAt: new Date(now).toISOString(),
+            variant: variant || null,
+            source: 'opt-in-cta',
+        });
+        void this._saveOptInCtaState();
+        return gapMs;
+    }
+
+    _markAtk2OptInCtaSent(phone, variant) {
+        const key = this._jobReplyPhoneKey(phone);
+        if (!key) return;
+        const prev = this.optInCtaByPhone.get(key);
+        this.optInCtaByPhone.set(key, {
+            phone: key,
+            sentAt: prev?.sentAt || new Date().toISOString(),
+            variant: variant || prev?.variant || null,
+            source: 'opt-in-cta',
+        });
+        const waitMin = Math.round(Math.max(0, this.optInCtaNextAllowedAt - Date.now()) / 60000);
+        this._log(
+            `TyreJobs opt-in CTA sent to ${key} — this number will not get another CTA; next new fitter in ~${waitMin}m`,
+            'success'
+        );
+        void this._saveOptInCtaState();
+    }
+
+    async _planAtk2OptInCta(_jid, _normalizedTo) {
+        return null;
+    }
+
+    async _loadPostLimitQuietState() {
+        this.postLimitQuiet = parsePostLimitQuiet(null);
+        try {
+            const raw = await fs.readFile(this.postLimitQuietFile, 'utf8');
+            this.postLimitQuiet = parsePostLimitQuiet(JSON.parse(raw));
+        } catch (_) {
+            /* first run */
+        }
+        if (isCtaBlockedByPostLimit(this.postLimitQuiet)) {
+            const until = this.postLimitQuiet.noCtaUntil;
+            this.optInCtaNextAllowedAt = Math.max(this.optInCtaNextAllowedAt || 0, until);
+            this._log(
+                `TyreJobs CTA blackout until ${new Date(until).toISOString()} (5d after reconnect post-limit)`,
+                'warning'
+            );
+        }
+    }
+
+    async _savePostLimitQuietState() {
+        try {
+            await fs.mkdir(path.dirname(this.postLimitQuietFile), { recursive: true });
+            await fs.writeFile(
+                this.postLimitQuietFile,
+                JSON.stringify(serializePostLimitQuiet(this.postLimitQuiet), null, 2)
+            );
+        } catch (err) {
+            this._log(`Failed to persist post-limit quiet: ${err.message}`, 'warning');
+        }
+    }
+
+    _markTyrejobsLimited(reason) {
+        if (!isTyrejobsPostLimitLine({ id: this.id, phone: this.connectedPhone || '' })) return;
+        this.postLimitQuiet = markLimited(this.postLimitQuiet, reason);
+        this.postLimitQuiet = resetRegisteredAt(this.postLimitQuiet);
+        void this._savePostLimitQuietState();
+        this._log(`TyreJobs marked limited (${reason}) — next connect starts a 5-day CTA blackout`, 'error');
+    }
+
+    _armTyrejobsPostLimitCtaQuiet() {
+        if (!isTyrejobsPostLimitLine({ id: this.id, phone: this.connectedPhone || '' })) return;
+        const armed = armAfterConnect(this.postLimitQuiet, this.connectedAt);
+        this.postLimitQuiet = armed;
+        if (!armed.changed) return;
+        this.optInCtaNextAllowedAt = Math.max(this.optInCtaNextAllowedAt || 0, armed.noCtaUntil);
+        void this._savePostLimitQuietState();
+        void this._saveOptInCtaState();
+        this._log(
+            `TyreJobs CTA BLACKOUT until ${new Date(armed.noCtaUntil).toISOString()} — 5 days after this connect (was limited: ${armed.limitedReason})`,
+            'error'
+        );
+    }
+
+    _maybeHoldJobUntilHumanReply(jid, normalizedTo) {
+        if (!this._isTokenOnlyOutbound() && !this._isColdOptInGateActive()) return null;
+        if (!jid || String(jid).includes('@g.us')) return null;
+        const phone = this._jobReplyPhoneKey(jid) || this._jobReplyPhoneKey(normalizedTo);
+        if (!phone) return null;
+        const fresh = this._isTyrejobsPostLinkSendHold();
+        this._log(
+            fresh
+                ? `Job held for ${phone} — waiting for registered=true + 6h after status sync (nothing sent)`
+                : `Job held for ${phone} — no usable tctoken yet (nothing sent)`,
+            fresh ? 'error' : 'warning'
+        );
+        return {
+            sent: true,
+            skippedJob: true,
+            doNotRetry: true,
+            status: 2,
+            via: 'job-reply-held',
+            reason: fresh
+                ? `Fresh companion — held ${phone} (nothing sent)`
+                : `Waiting for a tctoken for ${phone} before sending jobs`,
+        };
+    }
+
+    _policyBlock(via, reason) {
+        this._log(reason, 'warning');
+        return {
+            sent: false,
+            doNotRetry: true,
+            status: 0,
+            via,
+            reason,
+        };
+    }
+
+    _logWaAbProps(source = 'unknown') {
+        const sock = this.rawSocket || this.socket;
+        const props = sock?.serverProps;
+        if (!props) {
+            this._log(`WA AB props unavailable (${source})`, 'info');
+            return;
+        }
+        const oneToOne = props.privacyTokenOn1to1 !== false;
+        this._log(
+            `WA AB props (${source}): 10518/privacyTokenOn1to1=${props.privacyTokenOn1to1 !== false}` +
+            ` 9666/profilePic=${props.profilePicPrivacyToken !== false}` +
+            ` 14303/issueToLid=${!!props.lidTrustedTokenIssueToLid}`,
+            oneToOne ? 'info' : 'warning'
+        );
+        if (!oneToOne) {
+            this._log('AB prop 10518 is OFF — 1:1 sends may go out without tctoken (463 risk)', 'error');
+        }
+    }
+
+    async _loadOnWhatsAppCache() {
+        this.onWhatsAppCache = new Map();
+        try {
+            const raw = await fs.readFile(this.onWhatsAppCacheFile, 'utf8');
+            this.onWhatsAppCache = parseOnWhatsAppCache(JSON.parse(raw));
+        } catch (_) {
+            /* first run */
+        }
+    }
+
+    async _saveOnWhatsAppCache() {
+        try {
+            await fs.mkdir(path.dirname(this.onWhatsAppCacheFile), { recursive: true });
+            await fs.writeFile(
+                this.onWhatsAppCacheFile,
+                JSON.stringify(serializeOnWhatsAppCache(this.onWhatsAppCache))
+            );
+        } catch (err) {
+            this._log(`Failed to persist onWhatsApp cache: ${err.message}`, 'warning');
+        }
+    }
+
+    async _maybeBlockUnknownWhatsApp(jid, normalizedTo, options = {}) {
+        if (!isOnWhatsAppPreflightEnabled()) return null;
+        if (!jid || String(jid).includes('@g.us') || String(jid).includes('@lid')) return null;
+        const phone = onWhatsAppCacheKey(jid) || onWhatsAppCacheKey(normalizedTo);
+        if (!phone) return null;
+
+        try {
+            const sockProbe = this.rawSocket || this.socket;
+            const warm = await lookupPrivacyToken(sockProbe, this.lidCache, jid, this._privacyLookupExtraKeys(jid));
+            if (warm.present && !warm.expired) return null;
+        } catch (_) {
+            /* lookup is best-effort */
+        }
+
+        const cached = this.onWhatsAppCache.get(phone);
+        if (cached && Date.now() - cached.checkedAt < ONWHATSAPP_CACHE_TTL_MS) {
+            if (cached.exists === false) {
+                return this._policyBlock(
+                    'onwhatsapp-missing',
+                    `onWhatsApp cache: ${phone} is not on WhatsApp — not spending reach-out budget`
+                );
+            }
+            return null;
+        }
+
+        const queued = (this._onWhatsAppChain || Promise.resolve())
+            .catch(() => null)
+            .then(() => this._runOnWhatsAppUsync(phone));
+        this._onWhatsAppChain = queued.then(() => null, () => null);
+        return queued;
+    }
+
+    async _runOnWhatsAppUsync(phone) {
+        const cached = this.onWhatsAppCache.get(phone);
+        if (cached && Date.now() - cached.checkedAt < ONWHATSAPP_CACHE_TTL_MS) {
+            if (cached.exists === false) {
+                return this._policyBlock(
+                    'onwhatsapp-missing',
+                    `onWhatsApp cache: ${phone} is not on WhatsApp — not spending reach-out budget`
+                );
+            }
+            return null;
+        }
+
+        const sock = this.rawSocket || this.socket;
+        if (typeof sock?.onWhatsApp !== 'function') return null;
+
+        try {
+            const results = await Promise.race([
+                sock.onWhatsApp(phone),
+                new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('onWhatsApp timeout')), ONWHATSAPP_TIMEOUT_MS);
+                }),
+            ]);
+            const parsed = interpretOnWhatsAppResult(results, phone);
+            if (!parsed.known) return null;
+            this.onWhatsAppCache.set(phone, {
+                exists: parsed.exists,
+                jid: parsed.jid,
+                lid: parsed.lid || null,
+                checkedAt: Date.now(),
+            });
+            if (parsed.exists && parsed.lid) {
+                const lidId = String(parsed.lid).replace('@lid', '').split(':')[0];
+                if (lidId && lidId !== phone) {
+                    await this._storeLidMapping(lidId, phone);
+                }
+            }
+            if (this.onWhatsAppCache.size > 5000) {
+                const first = this.onWhatsAppCache.keys().next().value;
+                this.onWhatsAppCache.delete(first);
+            }
+            void this._saveOnWhatsAppCache();
+            if (parsed.exists === false) {
+                return this._policyBlock(
+                    'onwhatsapp-missing',
+                    `onWhatsApp: ${phone} is not on WhatsApp — not spending reach-out budget`
+                );
+            }
+        } catch (err) {
+            this._log(`onWhatsApp preflight failed for ${phone}: ${err.message} — continuing`, 'warning');
+        }
+        return null;
     }
 
     /**
@@ -2680,6 +3700,58 @@ class WhatsAppInstance {
             this.lidCache.set(cleanLid, cleanPn);
             await this._saveLidCache();
         }
+    }
+
+    _privacyLookupExtraKeys(jid) {
+        const extras = [];
+        const user = String(jid || '').split('@')[0].split(':')[0].replace(/[^\d]/g, '');
+        if (!user || !this.authFolder) return extras;
+        const files = [
+            path.join(this.authFolder, `lid-mapping-${user}.json`),
+            path.join(this.authFolder, `lid-mapping-${user}@s.whatsapp.net.json`),
+            path.join(this.authFolder, `lid-mapping-${user}_reverse.json`),
+        ];
+        for (const file of files) {
+            if (!fsSync.existsSync(file)) continue;
+            try {
+                const raw = JSON.parse(fsSync.readFileSync(file, 'utf8'));
+                const other = String(raw || '').replace(/"/g, '').split('@')[0].replace(/[^\d]/g, '');
+                if (!other) continue;
+                if (String(jid).includes('@lid')) extras.push(`${other}@s.whatsapp.net`);
+                else extras.push(`${other}@lid`);
+            } catch (_) { /* skip */ }
+        }
+        return extras;
+    }
+
+    async inspectPrivacyForPhone(phoneOrJid) {
+        const raw = String(phoneOrJid || '').trim();
+        if (!raw) return { error: 'missing phone' };
+        const jid = raw.includes('@') ? raw : `${raw.replace(/[^\d]/g, '')}@s.whatsapp.net`;
+        const extra = this._privacyLookupExtraKeys(jid);
+        const sock = this.rawSocket || this.socket;
+        const probe = await lookupPrivacyToken(sock, this.lidCache, jid, extra);
+        const user = jid.split('@')[0].split(':')[0];
+        let mappedLid = null;
+        for (const [lid, pn] of this.lidCache.entries()) {
+            if (String(pn) === user) mappedLid = `${lid}@lid`;
+        }
+        return {
+            phone: user,
+            sendJid: jid,
+            mappedLid,
+            extraKeys: extra,
+            lookupKeys: probe.lookupKeys || [],
+            token: {
+                present: !!probe.present,
+                expired: !!probe.expired,
+                storageJid: probe.storageJid || null,
+                wouldMirrorTo: probe.present && !probe.expired && probe.storageJid !== jid ? jid : null,
+            },
+            blockColdWithoutToken: shouldBlockColdWithoutToken({
+                blockColdWithoutToken: this.behaviorSettings?.blockColdWithoutToken === true,
+            }),
+        };
     }
     
     /**
@@ -2923,14 +3995,23 @@ class WhatsAppInstance {
             }
             
             const messageContent = this._extractMessageContent(msg.message);
-            
-            if (!messageContent.text && !messageContent.hasMedia) return;
+            const hasInteractiveReply = !!(
+                msg.message?.buttonsResponseMessage
+                || msg.message?.templateButtonReplyMessage
+                || msg.message?.listResponseMessage
+                || msg.message?.interactiveResponseMessage
+            );
+            const hasUserInbound = !!(messageContent.text || messageContent.hasMedia || hasInteractiveReply);
+            if (!hasUserInbound) return;
 
             try { this._humanEntropy?.trackInbound?.(msg); } catch (_) {}
             
             // Handle LID (Local Identifier) to PN (Phone Number) mapping
             let phoneNumber = await this._resolvePhoneNumber(msg, from);
             const isGroup = isGroupJid(from);
+            if (!isGroup) {
+                this._noteTyrejobsHumanReply(phoneNumber, msg.pushName);
+            }
             const senderJid = resolveSenderJid(msg);
             let senderPhone = senderJid
                 ? await this._resolvePhoneNumber(msg, senderJid)
@@ -3732,9 +4813,37 @@ class WhatsAppInstance {
     updateBehaviorSettings(settings) {
         const previousPassive = this._shouldStayPresencePassive();
         const previousGroupAlert = this._groupAlertModeEnabled();
+        const previousColdGate = this._isColdOptInGateActive();
+        const previousCtaOnce = this._isOptInCtaOnceEnabled();
+        const previousSkipAck = !!this.behaviorSettings?.skipOutboundAckWait;
         this.behaviorSettings = normalizeBehaviorSettings(settings || {}, this.behaviorSettings || {});
+        this._clampColdOptInGate();
         const nextPassive = this._shouldStayPresencePassive();
         const nextGroupAlert = this._groupAlertModeEnabled();
+        if (this._isColdOptInGateActive() !== previousColdGate) {
+            this._log(
+                this._isColdOptInGateActive()
+                    ? 'Token-only ON — jobs send only with a live tctoken (nothing cold)'
+                    : 'Cold opt-in gate OFF',
+                this._isColdOptInGateActive() ? 'success' : 'info'
+            );
+        }
+        if (this._isOptInCtaOnceEnabled() !== previousCtaOnce) {
+            this._log(
+                this._isOptInCtaOnceEnabled()
+                    ? 'One-shot opt-in CTA ON — one staggered variation per new fitter, then hold'
+                    : 'One-shot opt-in CTA OFF — no CTAs, token-only',
+                this._isOptInCtaOnceEnabled() ? 'warning' : 'success'
+            );
+        }
+        if (!!this.behaviorSettings?.skipOutboundAckWait !== previousSkipAck) {
+            this._log(
+                this.behaviorSettings.skipOutboundAckWait
+                    ? 'ACK wait OFF — fire-and-forget (sent + doNotRetry as soon as Baileys mints an id)'
+                    : 'ACK wait ON — /send holds up to 60s for SERVER_ACK',
+                'info'
+            );
+        }
 
         // Turning group-alert mode on: clear any stuck @g.us handoff entries immediately.
         if (nextGroupAlert && !previousGroupAlert) {
@@ -3777,6 +4886,50 @@ class WhatsAppInstance {
             this.socket.sendPresenceUpdate('unavailable')
                 .catch((e) => this._log(`Failed to push unavailable: ${e.message}`, 'warning'));
         }
+
+        this._syncProactiveTcTokenCapture();
+    }
+
+    /**
+     * Attach/detach CB:message listener for inbound <tctoken> capture (Baileys PR #2752).
+     * On by default; toggled via behaviorSettings.proactiveTcTokenCapture.
+     */
+    _syncProactiveTcTokenCapture() {
+        const ws = this.rawSocket?.ws;
+        const prev = this._proactiveTcTokenHandler;
+        if (prev && ws) {
+            try {
+                if (typeof ws.off === 'function') ws.off('CB:message', prev);
+                else if (typeof ws.removeListener === 'function') ws.removeListener('CB:message', prev);
+            } catch (_) { /* ignore */ }
+            this._proactiveTcTokenHandler = null;
+        }
+
+        if (!this.behaviorSettings?.proactiveTcTokenCapture) return;
+        if (!ws || typeof ws.on !== 'function') return;
+
+        const handler = (node) => {
+            const sock = this.rawSocket;
+            if (!sock) return;
+            void storeTcTokenFromMessageNode(sock, node)
+                .then((storageJid) => {
+                    if (!storageJid) return;
+                    if (this.privacyTokenMetrics) {
+                        this.privacyTokenMetrics.proactiveCaptures =
+                            (this.privacyTokenMetrics.proactiveCaptures || 0) + 1;
+                        this.privacyTokenMetrics.lastProactiveCaptureAt = new Date().toISOString();
+                        this.privacyTokenMetrics.lastProactiveCaptureJid = storageJid;
+                    }
+                    this._log(`Proactive tctoken capture stored for ${storageJid}`, 'info');
+                })
+                .catch((err) => {
+                    this._log(`Proactive tctoken capture error: ${err?.message || err}`, 'warning');
+                });
+        };
+
+        this._proactiveTcTokenHandler = handler;
+        ws.on('CB:message', handler);
+        this._log('Proactive tctoken capture ON (inbound message stanza)', 'success');
     }
     
     /**
@@ -3997,7 +5150,13 @@ class WhatsAppInstance {
             authFiles,
             tokenHitRate: attempts > 0 ? Number((hits / attempts).toFixed(4)) : null,
             open463Circuits: this.contact463Circuit.size,
-            blockColdWithoutToken: shouldBlockColdWithoutToken({}),
+            blockColdWithoutToken: shouldBlockColdWithoutToken({
+                blockColdWithoutToken: this.behaviorSettings?.blockColdWithoutToken === true,
+            }),
+            blockColdWithoutTokenSwitch: this.behaviorSettings?.blockColdWithoutToken === true,
+            outboundHardening: isOutboundHardeningEnabled(),
+            onWhatsAppPreflight: isOnWhatsAppPreflightEnabled(),
+            onWhatsAppCacheSize: this.onWhatsAppCache?.size || 0,
             baileysNote:
                 'Baileys 7.0.0-rc13 harvests history tcToken + privacy_token into useMultiFileAuthState; Wasup adds circuit breaker + metrics',
         };
@@ -4110,6 +5269,7 @@ class WhatsAppInstance {
         // Polling every 20–30s used to re-log + WS-broadcast the same lock and freeze the admin UI.
         if (!changed) return false;
         if (normalized.isActive) {
+            this._markTyrejobsLimited(`reachout-${normalized.enforcementType || 'lock'}`);
             this._log(
                 `Reachout timelock ACTIVE until ${normalized.timeEnforcementEnds || 'unknown'} (${normalized.enforcementType})`,
                 'error'
@@ -4811,10 +5971,13 @@ class WhatsAppInstance {
                 port: cfg.port,
                 username: cfg.username,
                 password: cfg.password,
+                ...(newProxy.label ? { label: newProxy.label } : {}),
+                ...(newProxy.country ? { country: newProxy.country } : {}),
             };
             const originLabel = source === 'pool' ? 'pool-assigned' : 'override';
+            const tag = this.proxy.label ? ` [${this.proxy.label}]` : '';
             this._log(
-                `Proxy ${originLabel}: ${cfg.type}://${cfg.username ? cfg.username + '@' : ''}${cfg.host}:${cfg.port}`,
+                `Proxy ${originLabel}${tag}: ${cfg.type}://${cfg.username ? cfg.username + '@' : ''}${cfg.host}:${cfg.port}`,
                 'info'
             );
         }
@@ -4833,7 +5996,7 @@ class WhatsAppInstance {
                 this._emitStatusChange();
                 // Reconnect in the background so the API call returns quickly
                 setTimeout(() => {
-                    this.connect().catch(err => {
+                    this.connect({ _pairingRecovery: true }).catch(err => {
                         this._log(`Reconnect after proxy change failed: ${err.message}`, 'error');
                     });
                 }, 500);
@@ -5029,13 +6192,158 @@ class InstanceManager {
      */
     async addProxyToPool(input) {
         const result = this.proxyPool.addEntry(input);
+        // Persist metadata updates even when host:port already existed (label/country).
+        await this._saveProxyPool();
         if (result.added) {
-            await this._saveProxyPool();
-            console.log(`[InstanceManager] Added pool slot: ${result.slot.id}`);
+            console.log(`[InstanceManager] Added pool slot: ${result.slot.id}` +
+                (result.slot.label ? ` (${result.slot.label})` : ''));
         }
         return {
             ...result,
             pool: this.proxyPool.getStatus(),
+        };
+    }
+
+    getProxyCatalog() {
+        return this.proxyPool.getCatalog({
+            instanceLookup: (id) => {
+                const inst = this.instances.get(id);
+                if (!inst) return null;
+                return { name: inst.name, status: inst.status };
+            },
+        });
+    }
+
+    /**
+     * Light latency (+ optional egress IP) probe for a labeled catalog slot.
+     */
+    async probeCatalogLabel(label) {
+        const slot = this.proxyPool.findByLabel(label);
+        if (!slot) throw new Error(`Catalog label ${label} not found`);
+        const axios = (await import('axios')).default;
+        const agent = createProxyAgent(slot.config);
+        const start = Date.now();
+        // Single light request: latency + egress IP in one hop
+        const ipRes = await axios.get('https://api.ipify.org?format=json', {
+            httpsAgent: agent,
+            httpAgent: agent,
+            timeout: 12000,
+        });
+        const elapsedMs = Date.now() - start;
+        return {
+            success: true,
+            label: slot.label,
+            country: slot.country,
+            host: slot.config.host,
+            port: slot.config.port,
+            responseStatus: ipRes.status,
+            elapsedMs,
+            egressIp: ipRes.data?.ip || null,
+        };
+    }
+
+    /**
+     * Find other instances already using this host:port (sticky api/pool override).
+     */
+    findSharedProxyUsers(host, port, { excludeId = null, connectedOnly = true } = {}) {
+        if (!host || !port) return [];
+        const hits = [];
+        for (const inst of this.instances.values()) {
+            if (excludeId && inst.id === excludeId) continue;
+            const p = inst.proxy;
+            if (!p || p.enabled === false) continue;
+            if (String(p.host) !== String(host) || Number(p.port) !== Number(port)) continue;
+            if (connectedOnly && inst.status !== 'connected' && inst.status !== 'connecting') continue;
+            hits.push({ id: inst.id, name: inst.name, status: inst.status });
+        }
+        return hits;
+    }
+
+    /**
+     * Attach a labeled catalog/pool slot as a sticky API override (unique egress).
+     */
+    async attachCatalogProxy(id, label, { forceShared = false } = {}) {
+        const instance = this.instances.get(id);
+        if (!instance) throw new Error(`Instance ${id} not found`);
+        const slot = this.proxyPool.findByLabel(label);
+        if (!slot) throw new Error(`Catalog label ${label} not found on this worker`);
+
+        const shared = this.findSharedProxyUsers(slot.config.host, slot.config.port, { excludeId: id });
+        if (shared.length && !forceShared) {
+            const err = new Error(
+                `Proxy ${slot.label || slot.id} is already used by connected instance(s): ` +
+                shared.map(s => s.name).join(', ') +
+                '. Pass forceShared=true to override (bad WhatsApp signal).'
+            );
+            err.code = 'PROXY_SHARED_EGRESS';
+            err.sharedWith = shared;
+            throw err;
+        }
+
+        // Fleet-wide guard (other workers / org VMs)
+        if (!forceShared) {
+            try {
+                const { fetchFleetProxyOccupancy } = await import('./fleet-proxy-occupancy.js');
+                const occupancy = await fetchFleetProxyOccupancy({ force: true });
+                const hp = `${slot.config.host}:${slot.config.port}`;
+                const wantLabel = String(slot.label || label).toUpperCase();
+                const users = [
+                    ...((occupancy?.byHost || {})[hp] || []),
+                    ...((occupancy?.byLabel || {})[wantLabel] || []),
+                ];
+                const seen = new Set();
+                const conflicts = [];
+                for (const u of users) {
+                    if (u.instanceId === id) continue;
+                    if (!u.connected) continue;
+                    const key = `${u.workerId}:${u.instanceId}`;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    conflicts.push(u);
+                }
+                if (conflicts.length) {
+                    const err = new Error(
+                        `Proxy ${wantLabel} (${hp}) already used fleet-wide by connected: ` +
+                        conflicts.map((u) => `${u.instanceName}@${u.workerLabel}`).join(', ') +
+                        '. Pass forceShared=true to override (bad WhatsApp signal).'
+                    );
+                    err.code = 'PROXY_SHARED_EGRESS';
+                    err.sharedWith = conflicts.map((u) => ({
+                        id: u.instanceId,
+                        name: `${u.instanceName}@${u.workerLabel}`,
+                        status: u.status,
+                    }));
+                    throw err;
+                }
+            } catch (fleetErr) {
+                if (fleetErr.code === 'PROXY_SHARED_EGRESS') throw fleetErr;
+                console.warn('[attachCatalogProxy] fleet occupancy check skipped:', fleetErr.message);
+            }
+        }
+
+        this.proxyPool.releaseSlot(id);
+        this.proxyPool.markAssigned(id, slot.config.host, slot.config.port);
+        await this._saveProxyPool();
+
+        const result = await instance.updateProxy(
+            {
+                enabled: true,
+                type: slot.config.type,
+                host: slot.config.host,
+                port: slot.config.port,
+                username: slot.config.username,
+                password: slot.config.password,
+                label: slot.label,
+                country: slot.country,
+            },
+            { source: 'api' }
+        );
+        await this._saveInstances();
+        return {
+            ...result,
+            label: slot.label,
+            country: slot.country,
+            catalog: this.getProxyCatalog(),
         };
     }
 
@@ -5153,14 +6461,15 @@ class InstanceManager {
             }
         }
 
+        const created = applyTyrejobsWorkerCreateDefaults(config);
         const instance = new WhatsAppInstance({
             id,
-            name: config.name || `Instance ${id}`,
-            webhookUrl: config.webhookUrl || '',
-            webhookSigningSecret: config.webhookSigningSecret || '',
-            behaviorSettings: config.behaviorSettings,
-            antiBanSettings: config.antiBanSettings,
-            antibanV2: config.antibanV2 || legacyToV2Config(config.antiBanSettings || {}),
+            name: created.name || `Instance ${id}`,
+            webhookUrl: created.webhookUrl || '',
+            webhookSigningSecret: created.webhookSigningSecret || '',
+            behaviorSettings: created.behaviorSettings,
+            antiBanSettings: created.antiBanSettings,
+            antibanV2: created.antibanV2 || legacyToV2Config(created.antiBanSettings || {}),
             proxy: proxyConfig,
         });
         instance.manager = this;
@@ -5367,48 +6676,73 @@ class InstanceManager {
      *   otherwise               -> user-supplied override with source='api'
      *                              (releases any held pool slot).
      */
-    async setInstanceProxy(id, proxy) {
+    async setInstanceProxy(id, proxy, opts = {}) {
         const instance = this.instances.get(id);
         if (!instance) {
             throw new Error(`Instance ${id} not found`);
         }
 
-        if (proxy === null || proxy === undefined) {
-            // Clearing an override: give up any held pool slot, then try to
-            // claim a fresh one (same slot will usually be available since we
-            // just released it — pool is FIFO by free-slot order).
+        // null / undefined / { direct: true } => FORCE DIRECT (do not re-claim pool).
+        // Legacy "fall back to pool" is opt-in via { inheritPool: true }.
+        if (proxy === null || proxy === undefined || proxy?.direct === true) {
             this.proxyPool.releaseSlot(id);
-            const slot = this.proxyPool.isEnabled() ? this.proxyPool.claimSlot(id) : null;
-            if (slot) {
-                const result = await instance.updateProxy(
-                    {
-                        enabled: true,
-                        type: slot.type,
-                        host: slot.host,
-                        port: slot.port,
-                        username: slot.username,
-                        password: slot.password,
-                    },
-                    { source: 'pool' }
-                );
-                await this._saveInstances();
-                return result;
+            await this._saveProxyPool();
+
+            if (opts.inheritPool || proxy?.inheritPool) {
+                const slot = this.proxyPool.isEnabled() ? this.proxyPool.claimSlot(id) : null;
+                if (slot) {
+                    const result = await instance.updateProxy(
+                        {
+                            enabled: true,
+                            type: slot.type,
+                            host: slot.host,
+                            port: slot.port,
+                            username: slot.username,
+                            password: slot.password,
+                            label: slot.label,
+                            country: slot.country,
+                        },
+                        { source: 'pool' }
+                    );
+                    await this._saveInstances();
+                    await this._saveProxyPool();
+                    return result;
+                }
             }
-            const result = await instance.updateProxy(null);
+
+            const result = await instance.updateProxy({ enabled: false });
             await this._saveInstances();
             return result;
         }
 
         if (proxy.enabled === false) {
             this.proxyPool.releaseSlot(id);
+            await this._saveProxyPool();
             const result = await instance.updateProxy({ enabled: false });
             await this._saveInstances();
             return result;
         }
 
-        // API-set override: free the pool slot so another instance can use it,
-        // then apply the custom proxy with source='api'.
+        // Shared-egress guard for sticky attaches
+        const cfg = parseProxyConfig(proxy.url || proxy);
+        if (cfg && !opts.forceShared && !proxy.forceShared) {
+            const shared = this.findSharedProxyUsers(cfg.host, cfg.port, { excludeId: id });
+            if (shared.length) {
+                const err = new Error(
+                    `Proxy ${cfg.host}:${cfg.port} already used by connected: ` +
+                    shared.map(s => s.name).join(', ') +
+                    '. Pass forceShared=true to override.'
+                );
+                err.code = 'PROXY_SHARED_EGRESS';
+                err.sharedWith = shared;
+                throw err;
+            }
+        }
+
+        // API-set override: free any prior pool assignment, mark catalog slot if known.
         this.proxyPool.releaseSlot(id);
+        if (cfg) this.proxyPool.markAssigned(id, cfg.host, cfg.port);
+        await this._saveProxyPool();
         const result = await instance.updateProxy(proxy, { source: 'api' });
         await this._saveInstances();
         return result;
@@ -5564,12 +6898,12 @@ class InstanceManager {
     /**
      * Clear instance auth
      */
-    async clearInstanceAuth(id) {
+    async clearInstanceAuth(id, options = {}) {
         const instance = this.instances.get(id);
         if (!instance) {
             throw new Error(`Instance ${id} not found`);
         }
-        await instance.clearAuth();
+        await instance.clearAuth(options);
         return instance.getStatus();
     }
     
@@ -5667,8 +7001,8 @@ class InstanceManager {
                         this.scheduleStartupReconnect(instance, startupSlot);
                         startupSlot += 1;
                     } else if (authState.exists && !authState.hasMe) {
-                        console.log(`[InstanceManager] Clearing abandoned unpaired auth for ${id} on startup`);
-                        await instance._clearLocalAuthFiles('Cleared abandoned unpaired auth on startup');
+                        console.log(`[InstanceManager] Clearing abandoned unpaired auth for ${id} on startup (privacy tokens preserved)`);
+                        await instance._resetAuthForFreshQr('Cleared abandoned unpaired auth on startup');
                     }
                 }
                 console.log(`[InstanceManager] Finished loading ${this.instances.size} instances (${startupSlot} staggered startup reconnects)`);

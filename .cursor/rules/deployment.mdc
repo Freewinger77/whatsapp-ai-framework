@@ -10,15 +10,26 @@ alwaysApply: true
 
 # ⚠️ DEPLOYMENT RULES — DO NOT SKIP
 
+Canonical model (401/428/463, reload, locks): `docs/guides/whatsapp-companion-risk-playbook.md`  
+TyreJobs trial/ATK/ATK2 never-again: `docs/guides/tyrejobs-sacred-scroll.md`
+
 The app runs on Azure VM `20.107.202.157` (user: `azureuser`, path: `/opt/whatsapp-ai`).
 
-## NEVER restart PM2 for static/frontend changes
+## NEVER recycle the Node process on a hot WhatsApp worker
 
-PM2 restart kills the Node.js process which **disconnects all WhatsApp sessions permanently**.
-WhatsApp often invalidates auth credentials on reconnect, forcing users to re-scan QR codes.
-This has caused production incidents multiple times.
+`pm2 restart`, `pm2 reload`, crash, OOM, and `deploy-to-vm.sh` all drop **every Baileys socket** on that VM.
 
-**Behaviour-only changes on disk:** use `POST /api/system/reload-behavior-from-disk` (or `WASUP_SIGHUP_BEHAVIOR_RELOAD=1` + `kill -HUP` on the Node pid) — **no PM2 restart**.
+To WhatsApp this is not “graceful HTTP.” It is a **companion logout + re-login** (the Linked device, e.g. `airb`). That is a **high risk-score event**: `428`/`401 conflict`, device vanished from Linked devices, then a **DEFAULT reach-out lock** (~6h, stacks to 24h if the line was also cold-sending). Creds can stay on disk and still be dead.
+
+**Do not reload wasup2 / wasup3 (or any worker with live TyreJobs / customer lines) to ship JS.** SCP the files and wait for a calm window the operator explicitly accepts. Token-gate / hold-logic bugs can wait. A 6h/24h lock cannot.
+
+**Static files** (`public/*.html`, `openapi.yaml`): SCP only — Express reads from disk. **No PM2.**
+
+**Behaviour-only changes on disk:** `POST /api/system/reload-behavior-from-disk` (or `WASUP_SIGHUP_BEHAVIOR_RELOAD=1` + `kill -HUP` on the Node pid) — **no PM2**.
+
+**Regular ops that are fine:** n8n jobs, CTAs, presence, keep-alives, HTML SCP, behavior PUT — as long as the process and socket stay up.
+
+**Regular ops that are the same fuckery as a deploy reload:** process crash, watchdog force-connect, `428` auto-reconnect storms, Connect/QR spam after `401`. Staggered reconnect only spreads the mass-login; it does **not** make one hot line safe.
 
 **Disconnect vs logout:** `POST .../disconnect` closes the socket and **keeps** on-disk creds by default. Use body `{ "revoke": true }` for server-side revoke, or `clear-auth` to wipe local files + QR again.
 
@@ -32,12 +43,12 @@ scp app/public/index.html azureuser@20.107.202.157:/opt/whatsapp-ai/app/public/i
 ```
 No PM2 restart needed — Express serves from disk.
 
-**Server code** (`server.js`, `src/utils/*.js`):
+**Server code** (`server.js`, `src/utils/*.js`) on a **quiet** worker (no live restricted/hot lines), and **only with operator OK**:
 ```bash
 scp <files> azureuser@20.107.202.157:/opt/whatsapp-ai/<files>
 ssh azureuser@20.107.202.157 'cd /opt/whatsapp-ai && pm2 reload whatsapp-api'
 ```
-Use `reload` (graceful) not `restart` (hard kill).
+`reload` is still a companion flap. Prefer `reload` over `restart` if you must bounce; both are risk events. Never bounce to “quickly fix a hold.”
 
 **New npm dependencies**:
 ```bash

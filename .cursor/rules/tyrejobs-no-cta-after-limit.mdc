@@ -1,0 +1,56 @@
+---
+description: TyreJobs trial/ATK/ATK2 — wait registered+6h before any send; never CTA/buttons
+alwaysApply: true
+---
+
+# TyreJobs CTA / cold-send / fresh-link — NON-NEGOTIABLE
+
+Applies to **trial-Tyrejobs** `447503207364`, **TyreJobs-ATK** `447503741818`, **TyreJobs-ATK2** `447503742842` only. Paid / variset / Booklapland / K1 are never in this path.
+
+Full never-again: `docs/guides/tyrejobs-sacred-scroll.md`. Companion/401/428: `docs/guides/whatsapp-companion-risk-playbook.md`.
+
+Do **not** bounce wasup3 to ship this.
+
+**Phones:** ATK `07503 741818` · ATK2 `07503 742842` · trial `07503 207364`. Pairing code on the wrong one is “incorrect,” not a reason to mint five more.
+
+## What killed ATK2 (2026-08-28)
+
+Same leftover LID→PN token copy as ATK. ATK lived. ATK2 died because we sent **23s** after connect while `registered:false`, saved a new contact, then auto-reconnected into a 401 conflict.
+
+## After any fresh pair on these three (forever)
+
+1. Wait until WhatsApp **`registered` is true** (status sync finished). Dashboard `connected` is not enough.
+2. Then wait **6 more hours**.
+3. Only then: jobs with a usable tctoken on **that same companion**.
+
+Until that clock is done:
+
+- **Nothing outbound.** Not jobs, not CTA, not “there is a tctoken file.”
+- **No save-contact.**
+- **No 401 auto-reconnect.** Stand down.
+- **428:** quiet resume 20–50s → 1–5 min → 30 min → stop. Not the 10s×8 fight.
+- Post-pair **515** stays registration-safe (no antiban wrap, no full history).
+
+`registeredAt` lives in `instances/<id>/post-limit-quiet.json`. Clear-auth / 401 / 403 resets it so the next pair waits again.
+
+## What you may send (after registered / connect + 6h)
+
+Jobs **including buttons** only to contacts with a **live (not expired) tctoken on that same companion**.
+
+## What you must never send
+
+- **No send to cold or expired-token contacts.** Hold (`doNotRetry`). Do not invent a CTA for them.
+- **No save-contact** on a newborn companion.
+
+## After a limit
+
+**ZERO CTAs for 5 full days from `Connected as`.** Clock: `noCtaUntil`.
+
+## What you must never do to “fix” a hold
+
+- **Do not `pm2 reload` / restart wasup3** while ATK / paid / variset / Booklapland / K1 are live.
+- **Do not** mint pairing-code storms. One code, wait.
+- **Do not** Connect/QR during a lock or after 403.
+- **Do not** send a test job or CTA on a new companion.
+
+SCP and **wait**. Operator must explicitly accept a bounce.

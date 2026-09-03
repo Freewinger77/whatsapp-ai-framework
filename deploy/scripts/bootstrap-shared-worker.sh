@@ -68,6 +68,7 @@ ssh -o ConnectTimeout=15 "$HOST" 'sudo mkdir -p /opt/whatsapp-ai/logs && sudo ch
 rsync -avz \
   --exclude node_modules --exclude instances --exclude logs --exclude .env \
   --exclude auth_info --exclude 'auth_info/**' \
+  --exclude '*credentials*' --exclude '*backup*.json' \
   "$ROOT/app/" "$HOST:/opt/whatsapp-ai/app/"
 
 rsync -avz "$ROOT/deploy/" "$HOST:/opt/whatsapp-ai/deploy/"
@@ -93,6 +94,8 @@ sudo ufw allow 'Nginx Full' 2>/dev/null || true
 sudo ufw --force enable 2>/dev/null || true
 cd /opt/whatsapp-ai/app
 npm install --production --legacy-peer-deps --ignore-scripts
+# Keep Platform.WEB (wasup2 parity). Do NOT auto-patch to MACOS.
+node scripts/patch-baileys.js || true
 REMOTE
 
 ssh -o ConnectTimeout=15 "$HOST" bash -s <<REMOTE

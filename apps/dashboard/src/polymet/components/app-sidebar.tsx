@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { createPortal } from "react-dom";
 import { useClerk, useOrganization, useOrganizationList, useUser } from "@clerk/clerk-react";
 import { Link, useLocation } from "react-router-dom";
@@ -19,6 +19,8 @@ import {
   ExternalLinkIcon,
   Building2Icon,
   CheckIcon,
+  AlertTriangleIcon,
+  GripVerticalIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { instanceGradient } from "@/polymet/data/instance-colors";
@@ -26,8 +28,17 @@ import { useSidebar } from "@/polymet/hooks/use-sidebar";
 import { useWorkspaceState } from "@/polymet/hooks/use-workspace-state";
 import { getConnection, inviteOrganizationMember } from "@/polymet/lib/control-plane-api";
 import { buildDashboardUrl } from "@/polymet/lib/dashboard-url";
+import {
+  mergeMetadataInstanceOrder,
+  moveIdInOrder,
+  readLocalInstanceOrder,
+  readMetadataInstanceOrder,
+  sortInstancesForSidebar,
+  writeLocalInstanceOrder,
+} from "@/polymet/lib/instance-sidebar-order";
 import { storeOneTimeApiKeys } from "@/polymet/lib/one-time-api-keys";
 import { ProBadge } from "@/polymet/components/pro-badge";
+import { ReachoutSidebarChip } from "@/polymet/components/reachout-timelock-banner";
 import { isPlatformAdminEmail } from "@/polymet/lib/platform-admin";
 import { cn } from "@/lib/utils";
 import {
@@ -89,14 +100,92 @@ export function AppSidebar() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [teamModalTab, setTeamModalTab] = useState<TeamModalTab | null>(null);
   const [switchingOrgId, setSwitchingOrgId] = useState<string | null>(null);
+  const [instanceOrder, setInstanceOrder] = useState<string[]>([]);
+  const [draggingInstanceId, setDraggingInstanceId] = useState<string | null>(null);
+  const [dragOverInstanceId, setDragOverInstanceId] = useState<string | null>(null);
+  const persistOrderTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const workspaceMemberships = userMemberships.data ?? [];
   const canSwitchWorkspace = workspaceMemberships.length > 1;
+  const orgId = organization?.id ?? null;
 
   useEffect(() => {
     if (!userMenuOpen || !orgListLoaded) return;
     void userMemberships.revalidate?.();
   }, [orgListLoaded, userMenuOpen]);
+
+  useEffect(() => {
+    const remote = readMetadataInstanceOrder(user?.unsafeMetadata as Record<string, unknown> | undefined, orgId);
+    const local = readLocalInstanceOrder(orgId);
+    setInstanceOrder(remote.length ? remote : local);
+  }, [orgId, user?.id, user?.unsafeMetadata]);
+
+  const sortedInstances = useMemo(
+    () => sortInstancesForSidebar(instances, instanceOrder),
+    [instances, instanceOrder],
+  );
+
+  const persistInstanceOrder = useCallback(
+    (nextOrder: string[]) => {
+      setInstanceOrder(nextOrder);
+      writeLocalInstanceOrder(orgId, nextOrder);
+
+      if (persistOrderTimer.current) clearTimeout(persistOrderTimer.current);
+      persistOrderTimer.current = setTimeout(() => {
+        if (!user) return;
+        void user
+          .update({
+            unsafeMetadata: mergeMetadataInstanceOrder(
+              user.unsafeMetadata as Record<string, unknown> | undefined,
+              orgId,
+              nextOrder,
+            ),
+          })
+          .catch(() => {
+            /* local order still applies in this browser */
+          });
+      }, 400);
+    },
+    [orgId, user],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (persistOrderTimer.current) clearTimeout(persistOrderTimer.current);
+    };
+  }, []);
+
+  const onInstanceDragStart = (instanceId: string) => (event: DragEvent<HTMLAnchorElement>) => {
+    setDraggingInstanceId(instanceId);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", instanceId);
+  };
+
+  const onInstanceDragOver = (instanceId: string) => (event: DragEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    if (dragOverInstanceId !== instanceId) setDragOverInstanceId(instanceId);
+  };
+
+  const onInstanceDrop = (toId: string) => (event: DragEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    const fromId = draggingInstanceId || event.dataTransfer.getData("text/plain");
+    setDraggingInstanceId(null);
+    setDragOverInstanceId(null);
+    if (!fromId || fromId === toId) return;
+    const next = moveIdInOrder(
+      instanceOrder,
+      fromId,
+      toId,
+      sortedInstances.map((inst) => inst.id),
+    );
+    persistInstanceOrder(next);
+  };
+
+  const onInstanceDragEnd = () => {
+    setDraggingInstanceId(null);
+    setDragOverInstanceId(null);
+  };
 
   const switchWorkspace = async (organizationId: string) => {
     if (!setActive || organizationId === organization?.id || switchingOrgId) return;
@@ -228,24 +317,49 @@ export function AppSidebar() {
               className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain px-2 pb-1 [scrollbar-gutter:stable]"
               aria-label="Instance list"
             >
-              {instances.map((inst) => {
+              {sortedInstances.map((inst) => {
                 const instActive = pathname === `/instances/${inst.id}`;
+                const restricted = !!inst.reachoutTimeLock?.isActive;
+                const isDragging = draggingInstanceId === inst.id;
+                const isDragOver = dragOverInstanceId === inst.id && draggingInstanceId !== inst.id;
                 return (
                   <Link
                     key={inst.id}
                     to={`/instances/${inst.id}`}
+                    draggable
+                    onDragStart={onInstanceDragStart(inst.id)}
+                    onDragOver={onInstanceDragOver(inst.id)}
+                    onDragLeave={() => {
+                      if (dragOverInstanceId === inst.id) setDragOverInstanceId(null);
+                    }}
+                    onDrop={onInstanceDrop(inst.id)}
+                    onDragEnd={onInstanceDragEnd}
                     className={cn(
-                      "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+                      "group/inst flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
                       instActive
                         ? "bg-muted text-foreground font-medium"
                         : "text-muted-foreground hover:text-foreground hover:bg-muted/60",
+                      restricted && "bg-orange-500/5 text-orange-100/90",
+                      isDragging && "opacity-45",
+                      isDragOver && "ring-1 ring-foreground/25 bg-muted/80",
                     )}
+                    title="Drag to reorder · connected stay on top"
                   >
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ background: instanceGradient(inst.id) }}
+                    <GripVerticalIcon
+                      className="h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground/50 opacity-0 transition-opacity group-hover/inst:opacity-100 active:cursor-grabbing"
+                      strokeWidth={2}
+                      aria-hidden
                     />
-                    <span className="truncate">{inst.name}</span>
+                    {restricted ? (
+                      <AlertTriangleIcon className="h-3.5 w-3.5 shrink-0 text-orange-400" strokeWidth={2.5} />
+                    ) : (
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ background: instanceGradient(inst.id) }}
+                      />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{inst.name}</span>
+                    <ReachoutSidebarChip lock={inst.reachoutTimeLock} />
                   </Link>
                 );
               })}

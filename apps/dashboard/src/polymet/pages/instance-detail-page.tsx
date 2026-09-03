@@ -58,6 +58,19 @@ const DEFAULT_OPEN_SETTINGS_CARDS: Record<MainSettingsCard, boolean> = {
   proxy: false,
 };
 
+/** Worker hard-allowlists these too — UI is only shown here so other businesses never see the switch. */
+const TYREJOBS_COLD_OPTIN_PHONES = ["447503741818", "447503207364", "447503742842"];
+const TYREJOBS_COLD_OPTIN_INSTANCE_IDS = ["wa_mrkslqeb_0b6og", "wa_mrscw48u_xfqds", "wa_mt7k88um_46lo7"];
+
+function isTyrejobsColdOptInExclusive(instanceId: string | undefined, phone: string | undefined) {
+  if (instanceId && TYREJOBS_COLD_OPTIN_INSTANCE_IDS.includes(instanceId)) return true;
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return false;
+  return TYREJOBS_COLD_OPTIN_PHONES.some(
+    (allowed) => digits === allowed || digits.endsWith(allowed) || allowed.endsWith(digits),
+  );
+}
+
 export function InstanceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -120,6 +133,16 @@ export function InstanceDetailPage() {
   const [webhookTypingSaving, setWebhookTypingSaving] = useState(false);
   const [groupAlertMode, setGroupAlertMode] = useState(false);
   const [groupAlertSaving, setGroupAlertSaving] = useState(false);
+  const [proactiveTcTokenCapture, setProactiveTcTokenCapture] = useState(false);
+  const [proactiveTcTokenSaving, setProactiveTcTokenSaving] = useState(false);
+  const [coldOptInGate, setColdOptInGate] = useState(false);
+  const [coldOptInSaving, setColdOptInSaving] = useState(false);
+  const [blockColdWithoutToken, setBlockColdWithoutToken] = useState(false);
+  const [blockColdSaving, setBlockColdSaving] = useState(false);
+  const [optInCtaOnce, setOptInCtaOnce] = useState(false);
+  const [skipOutboundAckWait, setSkipOutboundAckWait] = useState(false);
+  const [skipOutboundAckWaitSaving, setSkipOutboundAckWaitSaving] = useState(false);
+  const [optInCtaSaving, setOptInCtaSaving] = useState(false);
   const [handoffsCleared, setHandoffsCleared] = useState(false);
   const [pictureRemoved, setPictureRemoved] = useState(false);
   const [openSettingsCards, setOpenSettingsCards] = useState<Record<MainSettingsCard, boolean>>(
@@ -270,6 +293,11 @@ export function InstanceDetailPage() {
         );
         setWebhookTypingEvents(!!settings.webhookTypingEvents);
         setGroupAlertMode(!!settings.groupAlertMode);
+        setProactiveTcTokenCapture(!!settings.proactiveTcTokenCapture);
+        setColdOptInGate(!!settings.coldOptInGate);
+        setBlockColdWithoutToken(!!settings.blockColdWithoutToken);
+        setOptInCtaOnce(!!settings.optInCtaOnce);
+        setSkipOutboundAckWait(!!settings.skipOutboundAckWait);
         if (typeof settings.delayEnabled === "boolean") setResponseDelays(settings.delayEnabled);
         if (typeof settings.typingSimulation === "boolean") setTyping(settings.typingSimulation);
       })
@@ -892,6 +920,34 @@ export function InstanceDetailPage() {
               }}
             />
             <ToggleRow
+              label="Don't wait for WhatsApp ACK"
+              description="Off by default. On = once Baileys mints a message id, /send returns sent immediately (no 60s SERVER_ACK wait). Still one-shot — doNotRetry so n8n will not double-text. Companion sockets often never ACK (Samantha / dental / Content Crew). Tradeoff: a real 463 NACK will not fail this HTTP request. Saves immediately."
+              checked={skipOutboundAckWait}
+              disabled={skipOutboundAckWaitSaving || inst.status === "provisioning"}
+              onChange={async (value) => {
+                if (!id || skipOutboundAckWaitSaving) return;
+                const previous = skipOutboundAckWait;
+                setSkipOutboundAckWait(value);
+                setSkipOutboundAckWaitSaving(true);
+                try {
+                  const result = await updateInstanceBehavior(id, { skipOutboundAckWait: value });
+                  setSkipOutboundAckWait(!!result.behaviorSettings?.skipOutboundAckWait);
+                  toast.success(value ? "ACK wait off — fire-and-forget" : "ACK wait on again", {
+                    description: value
+                      ? "Sends return as soon as the message leaves the socket. Still sent once."
+                      : "Sends will wait up to 60s for WhatsApp SERVER_ACK again.",
+                  });
+                } catch (error) {
+                  setSkipOutboundAckWait(previous);
+                  toast.error("Could not update ACK wait", {
+                    description: error instanceof Error ? error.message : "Please try again shortly.",
+                  });
+                } finally {
+                  setSkipOutboundAckWaitSaving(false);
+                }
+              }}
+            />
+            <ToggleRow
               label="Webhook typing events"
               description="Forward contact typing / recording / paused to the instance webhook so n8n can hold or cancel a pending AI reply. Off by default. Saves immediately."
               checked={webhookTypingEvents}
@@ -947,6 +1003,99 @@ export function InstanceDetailPage() {
                 }
               }}
             />
+            <ToggleRow
+              label="Proactive tctoken capture"
+              description="Store privacy tokens from inbound message stanzas (Baileys PR #2752 / #2698). Off by default. Helps warm replies avoid 463 after someone DMs you — does not mint tokens for cold outbound. Saves immediately."
+              checked={proactiveTcTokenCapture}
+              disabled={proactiveTcTokenSaving || inst.status === "provisioning"}
+              onChange={async (value) => {
+                if (!id || proactiveTcTokenSaving) return;
+                const previous = proactiveTcTokenCapture;
+                setProactiveTcTokenCapture(value);
+                setProactiveTcTokenSaving(true);
+                try {
+                  const result = await updateInstanceBehavior(id, { proactiveTcTokenCapture: value });
+                  setProactiveTcTokenCapture(!!result.behaviorSettings?.proactiveTcTokenCapture || value);
+                  toast.success(value ? "Proactive tctoken capture on" : "Proactive tctoken capture off", {
+                    description: value
+                      ? "Inbound message privacy tokens will be saved for later replies."
+                      : "Inbound message tokens will no longer be captured.",
+                  });
+                } catch (error) {
+                  setProactiveTcTokenCapture(previous);
+                  toast.error("Could not update proactive tctoken capture", {
+                    description: error instanceof Error ? error.message : "Please try again shortly.",
+                  });
+                } finally {
+                  setProactiveTcTokenSaving(false);
+                }
+              }}
+            />
+            <ToggleRow
+              label="Block cold sends without tctoken"
+              description="Off by default. On = refuse first messages to contacts with no stored privacy token (463 / reach-out). Warm chats and replies are unchanged. n8n gets HTTP 200 + doNotRetry so it does not resend."
+              checked={blockColdWithoutToken}
+              disabled={blockColdSaving || inst.status === "provisioning"}
+              onChange={async (value) => {
+                if (!id || blockColdSaving) return;
+                const previous = blockColdWithoutToken;
+                setBlockColdWithoutToken(value);
+                setBlockColdSaving(true);
+                try {
+                  const result = await updateInstanceBehavior(id, { blockColdWithoutToken: value });
+                  setBlockColdWithoutToken(!!result.behaviorSettings?.blockColdWithoutToken);
+                  toast.success(value ? "Cold-without-token block on" : "Cold-without-token block off", {
+                    description: value
+                      ? "First messages without a tctoken are held. n8n will not retry them."
+                      : "Cold first messages are allowed again (same as before).",
+                  });
+                } catch (error) {
+                  setBlockColdWithoutToken(previous);
+                  toast.error("Could not update cold-send block", {
+                    description: error instanceof Error ? error.message : "Please try again shortly.",
+                  });
+                } finally {
+                  setBlockColdSaving(false);
+                }
+              }}
+            />
+            <ToggleRow
+              label="One-shot opt-in CTA"
+              description="Hard-off. Trial / ATK / ATK2 never send CTA or buttons. This switch cannot be turned on."
+              checked={false}
+              disabled
+              onChange={async () => {}}
+            />
+            {isTyrejobsColdOptInExclusive(id, inst.phone) ? (
+              <ToggleRow
+                label="Reply-before-jobs gate (TyreJobs only)"
+                description="Off by default. On = this number never starts a chat. Jobs send only after that person messages you first; we store their WhatsApp name against the number. No save-contact button. Exclusive to trial-Tyrejobs and TyreJobs-ATK."
+                checked={coldOptInGate}
+                disabled={coldOptInSaving || inst.status === "provisioning"}
+                onChange={async (value) => {
+                  if (!id || coldOptInSaving) return;
+                  const previous = coldOptInGate;
+                  setColdOptInGate(value);
+                  setColdOptInSaving(true);
+                  try {
+                    const result = await updateInstanceBehavior(id, { coldOptInGate: value });
+                    setColdOptInGate(!!result.behaviorSettings?.coldOptInGate);
+                    toast.success(value ? "Reply-before-jobs gate on" : "Reply-before-jobs gate off", {
+                      description: value
+                        ? "Jobs stay held until that person replies to this number. Nothing is sent first."
+                        : "Job texts will send without waiting for a reply.",
+                    });
+                  } catch (error) {
+                    setColdOptInGate(previous);
+                    toast.error("Could not update cold opt-in gate", {
+                      description: error instanceof Error ? error.message : "Please try again shortly.",
+                    });
+                  } finally {
+                    setColdOptInSaving(false);
+                  }
+                }}
+              />
+            ) : null}
             <EditableTextRow label="Notification grace (s)" value={notificationGrace} onSave={setNotificationGrace} onDirty={markDirty} monospace />
           </SettingsAccordionCard>
 

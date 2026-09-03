@@ -3,6 +3,8 @@
  * Shared hosts mirror deploy/scripts/deploy-tctoken-hardening.sh.
  */
 
+import { getSupabaseAdmin } from './supabase-admin';
+
 export type FleetWorkerKind = 'shared' | 'org';
 
 export type FleetWorkerDefinition = {
@@ -14,6 +16,8 @@ export type FleetWorkerDefinition = {
   sshUser?: string;
   appPath?: string;
   pm2Name?: string;
+  orgId?: string | null;
+  orgSlug?: string | null;
 };
 
 /** Canonical shared NEU workers (wasup / wasup-dev / wasup2–5 / wasup01–05). */
@@ -134,6 +138,57 @@ export function getSharedFleetWorkers(filterIds?: string[] | null): FleetWorkerD
   if (!filterIds?.length) return SHARED_FLEET_WORKERS;
   const want = new Set(filterIds.map((id) => id.trim().toLowerCase()).filter(Boolean));
   return SHARED_FLEET_WORKERS.filter((w) => want.has(w.id.toLowerCase()));
+}
+
+/** Ready org VMs provisioned via dev.wasup (Bashir, Mousa, …). */
+export async function getOrgFleetWorkers(): Promise<FleetWorkerDefinition[]> {
+  const supabase = getSupabaseAdmin() as any;
+  const { data, error } = await supabase
+    .from('org_deployments')
+    .select('id, org_id, status, base_url, public_ip, vm_name, organizations(slug, name)')
+    .in('status', ['ready', 'dns_pending', 'provisioned'])
+    .not('base_url', 'is', null)
+    .limit(200);
+
+  if (error) {
+    console.warn('[fleet-workers] org_deployments query failed:', error.message);
+    return [];
+  }
+
+  const sharedUrls = new Set(
+    SHARED_FLEET_WORKERS.map((w) => w.baseUrl.replace(/\/$/, '').toLowerCase())
+  );
+
+  return (data || [])
+    .map((row: any) => {
+      const baseUrl = String(row.base_url || '').replace(/\/$/, '');
+      if (!baseUrl) return null;
+      if (sharedUrls.has(baseUrl.toLowerCase())) return null;
+      const org = Array.isArray(row.organizations) ? row.organizations[0] : row.organizations;
+      const slug = org?.slug || row.vm_name || row.id;
+      return {
+        id: `org:${slug || row.id}`,
+        kind: 'org' as const,
+        label: `org/${slug || row.id}${org?.name ? ` (${org.name})` : ''}`,
+        baseUrl,
+        publicIp: row.public_ip || null,
+        orgId: row.org_id || null,
+        orgSlug: org?.slug || null,
+      } satisfies FleetWorkerDefinition;
+    })
+    .filter(Boolean) as FleetWorkerDefinition[];
+}
+
+/** Shared NEU fleet + live org workers — source of truth for global proxy ops. */
+export async function getAllFleetWorkers(filterIds?: string[] | null): Promise<FleetWorkerDefinition[]> {
+  const [shared, org] = await Promise.all([
+    Promise.resolve(getSharedFleetWorkers(filterIds)),
+    getOrgFleetWorkers(),
+  ]);
+  const merged = [...shared, ...org];
+  if (!filterIds?.length) return merged;
+  const want = new Set(filterIds.map((id) => id.trim().toLowerCase()).filter(Boolean));
+  return merged.filter((w) => want.has(w.id.toLowerCase()));
 }
 
 export function getWorkerSharedSecret(): string | null {

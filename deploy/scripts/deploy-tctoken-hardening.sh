@@ -47,6 +47,11 @@ HOSTS=(
   "wasup3|azureuser|94.245.90.173|/opt/whatsapp-ai/app|whatsapp-api|0"
   "wasup4|azureuser|20.166.12.101|/opt/whatsapp-ai/app|whatsapp-api|0"
   "wasup5|azureuser|20.13.163.156|/opt/whatsapp-ai/app|whatsapp-api|0"
+  "wasup01|azureuser|20.234.23.46|/opt/whatsapp-ai/app|whatsapp-api|0"
+  "wasup02|azureuser|20.234.94.178|/opt/whatsapp-ai/app|whatsapp-api|0"
+  "wasup03|azureuser|20.166.63.111|/opt/whatsapp-ai/app|whatsapp-api|0"
+  "wasup04|azureuser|52.236.60.246|/opt/whatsapp-ai/app|whatsapp-api|0"
+  "wasup05|azureuser|20.234.102.144|/opt/whatsapp-ai/app|whatsapp-api|0"
 )
 
 if [[ "${INCLUDE_ORG:-0}" == "1" ]]; then
