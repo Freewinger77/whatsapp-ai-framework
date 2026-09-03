@@ -1,0 +1,17 @@
+{
+  "name": "n8n-cloud-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CLI and client for managing the live n8n instance from Cursor cloud agents",
+  "bin": {
+    "n8n-agent": "./src/cli.js"
+  },
+  "scripts": {
+    "n8n": "node src/cli.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
