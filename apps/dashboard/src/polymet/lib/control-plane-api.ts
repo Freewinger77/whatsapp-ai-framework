@@ -860,6 +860,7 @@ export type InstanceBehaviorSettings = {
   multiDeviceCoexist?: boolean;
   webhookTypingEvents?: boolean;
   groupAlertMode?: boolean;
+  attachCsToken?: boolean;
 };
 
 export async function getInstanceBehavior(instanceId: string) {

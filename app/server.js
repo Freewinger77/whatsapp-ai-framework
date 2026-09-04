@@ -56,6 +56,10 @@ import {
     registerWorkerInstance,
     syncWorkerInstanceCatalog,
 } from './src/utils/control-plane-registry.js';
+import {
+    startDisconnectWatchdog,
+    getDisconnectWatchdog,
+} from './src/utils/disconnect-watchdog.js';
 
 // ========================================
 // CONFIGURATION
@@ -630,14 +634,20 @@ app.post('/api/instances/:id/disconnect', async (req, res) => {
 
 /**
  * POST /api/instances/:id/clear-auth
- * Clear instance auth (logout + delete credentials)
+ * Clear instance auth (logout + delete credentials).
+ * Body: { preservePrivacyTokens?: boolean } — default true (keeps tctoken/lid/device-list for re-pair).
  */
 app.post('/api/instances/:id/clear-auth', async (req, res) => {
     try {
-        const instance = await instanceManager.clearInstanceAuth(req.params.id);
+        const preservePrivacyTokens = req.body?.preservePrivacyTokens !== false
+            && String(req.query?.preservePrivacyTokens ?? 'true') !== 'false';
+        const instance = await instanceManager.clearInstanceAuth(req.params.id, { preservePrivacyTokens });
         res.json({ 
             success: true, 
-            message: 'Auth cleared',
+            message: preservePrivacyTokens
+                ? 'Auth cleared (privacy tokens preserved for re-pair)'
+                : 'Auth cleared (full wipe)',
+            preservePrivacyTokens,
             instance 
         });
     } catch (error) {
@@ -760,7 +770,10 @@ app.post('/api/instances/:id/send', async (req, res) => {
         const response = await executeInstanceSend(req.params.id, req.body);
         res.status(response.status).json(response.body);
     } catch (error) {
-        res.status(400).json({ error: error.message });
+        res.status(400).json({
+            error: error.message,
+            doNotRetry: /463|restricted|tctoken|cold send blocked|reachout/i.test(error.message || '')
+        });
     }
 });
 
@@ -769,7 +782,10 @@ app.post('/api/instances/:id/send/interactive', async (req, res) => {
         const response = await executeInstanceSend(req.params.id, req.body, { interactiveFocus: true });
         res.status(response.status).json(response.body);
     } catch (error) {
-        res.status(400).json({ error: error.message });
+        res.status(400).json({
+            error: error.message,
+            doNotRetry: /463|restricted|tctoken|cold send blocked|reachout/i.test(error.message || '')
+        });
     }
 });
 
@@ -850,6 +866,8 @@ function buildSendOptions(body = {}) {
     if (body.forceDespiteHandoff !== undefined) options.forceDespiteHandoff = body.forceDespiteHandoff;
     if (body.allowDuringHandoff !== undefined) options.allowDuringHandoff = body.allowDuringHandoff;
     if (body.skipPrivacyToken !== undefined) options.skipPrivacyToken = body.skipPrivacyToken;
+    if (body.skipOnWhatsApp !== undefined) options.skipOnWhatsApp = body.skipOnWhatsApp;
+    if (body.skipColdOptIn !== undefined) options.skipColdOptIn = body.skipColdOptIn;
     if (body.contentVariation !== undefined) options.contentVariation = body.contentVariation;
     return options;
 }
@@ -942,8 +960,11 @@ async function executeInstanceSend(instanceId, body = {}, { interactiveFocus = f
 
     if (result && result.sent === false) {
         const is463 = String(result.ackError || '') === '463' || /463|restricted|tctoken/i.test(String(result.reason || ''));
+        const doNotRetry = result.doNotRetry === true || is463;
+        // Same JSON n8n already parses. HTTP 200 when doNotRetry so the HTTP
+        // node does not throw/retry and burn reach-out budget.
         return {
-            status: is463 ? 403 : 422,
+            status: doNotRetry ? 200 : (is463 ? 403 : 422),
             body: {
                 success: false,
                 error: result.reason || 'Message rejected by WhatsApp',
@@ -951,7 +972,9 @@ async function executeInstanceSend(instanceId, body = {}, { interactiveFocus = f
                 delivery: payload.delivery,
                 message_id: result.key?.id || null,
                 message_status: 'failed',
-                doNotRetry: result.doNotRetry === true || is463,
+                doNotRetry,
+                via: result.via || null,
+                reason: result.reason || null,
                 result
             }
         };
@@ -1094,9 +1117,15 @@ app.post('/api/send', async (req, res) => {
         }
         
         const result = await instanceManager.sendMessage(targetInstanceId, toPhone, textOrParams, options);
-        
+
+        // Keep the array-of-one shape n8n already parses. Extra fields are additive:
+        // wa_id = real Baileys/WA id (never a minted UUID).
+        // doNotRetry = already handed to WA (real id) or ACK-timeout/463 (may still deliver).
+        const waId = result.key?.id || null;
+        const doNotRetry = result.doNotRetry === true || Boolean(waId);
         res.json([{
-            message_id: result.key?.id || crypto.randomUUID(),
+            message_id: waId || crypto.randomUUID(),
+            wa_id: waId,
             created_at: new Date().toISOString(),
             from_phone: normalizePhone(matchedInstance.connectedPhone),
             to_phone: normalizePhone(toPhone),
@@ -1104,11 +1133,14 @@ app.post('/api/send', async (req, res) => {
             message_type: payload.messageType || messageType || 'text',
             status: !result.sent
                 ? (result.reason?.includes('Rate') ? 'rate_limited' : 'failed')
-                : (normalizeMessageStatus(result.status) || 'pending')
+                : (normalizeMessageStatus(result.status) || 'pending'),
+            doNotRetry,
+            reason: result.reason || null,
+            via: result.via || null
         }]);
     } catch (error) {
         // Check if error indicates a ban or connection issue
-        const errorMsg = error.message.toLowerCase();
+        const errorMsg = (error.message || '').toLowerCase();
         let status = 'failed';
         if (errorMsg.includes('rate') || errorMsg.includes('limit')) {
             status = 'rate_limited';
@@ -1117,10 +1149,11 @@ app.post('/api/send', async (req, res) => {
         } else if (errorMsg.includes('connect') || errorMsg.includes('disconnect')) {
             status = 'disconnected';
         }
-        
+
         res.status(400).json({ 
             error: error.message,
-            status: status
+            status: status,
+            doNotRetry: /463|restricted|tctoken/i.test(error.message || '')
         });
     }
 });
@@ -1196,9 +1229,30 @@ app.get('/api/instances/:id/behavior', (req, res) => {
 });
 
 /**
+ * GET /api/instances/:id/privacy-lookup?phone=
+ * Read-only tctoken + LID/PN map for one contact. Does not send.
+ */
+app.get('/api/instances/:id/privacy-lookup', async (req, res) => {
+    try {
+        const instance = instanceManager.getInstance(req.params.id);
+        if (!instance) {
+            return res.status(404).json({ error: 'Instance not found' });
+        }
+        const phone = req.query.phone || req.query.to;
+        if (!phone) {
+            return res.status(400).json({ error: 'Missing phone' });
+        }
+        const report = await instance.inspectPrivacyForPhone(String(phone));
+        res.json({ success: true, instanceId: instance.id, ...report });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
  * PUT /api/instances/:id/behavior
  * Update behavior settings for instance
- * Body: { behaviorProfile?, typingSimulation?, delayEnabled?, phoneNotificationsEnabled?, notificationGraceMs?, multiDeviceCoexist?, webhookTypingEvents?, groupAlertMode? }
+ * Body: { behaviorProfile?, typingSimulation?, delayEnabled?, phoneNotificationsEnabled?, notificationGraceMs?, multiDeviceCoexist?, webhookTypingEvents?, groupAlertMode?, proactiveTcTokenCapture?, coldOptInGate?, blockColdWithoutToken?, optInCtaOnce?, skipOutboundAckWait?, attachCsToken? }
  * Any subset may be sent; omitted keys are left unchanged.
  */
 app.put('/api/instances/:id/behavior', async (req, res) => {
@@ -1214,7 +1268,13 @@ app.put('/api/instances/:id/behavior', async (req, res) => {
         if (body.multiDeviceCoexist !== undefined) behaviorSettings.multiDeviceCoexist = body.multiDeviceCoexist;
         if (body.webhookTypingEvents !== undefined) behaviorSettings.webhookTypingEvents = body.webhookTypingEvents;
         if (body.groupAlertMode !== undefined) behaviorSettings.groupAlertMode = body.groupAlertMode;
-
+        if (body.proactiveTcTokenCapture !== undefined) behaviorSettings.proactiveTcTokenCapture = body.proactiveTcTokenCapture;
+        if (body.coldOptInGate !== undefined) behaviorSettings.coldOptInGate = body.coldOptInGate;
+        if (body.blockColdWithoutToken !== undefined) behaviorSettings.blockColdWithoutToken = body.blockColdWithoutToken;
+        if (body.optInCtaOnce !== undefined) behaviorSettings.optInCtaOnce = body.optInCtaOnce;
+        if (body.skipOutboundAckWait !== undefined) behaviorSettings.skipOutboundAckWait = body.skipOutboundAckWait;
+        if (body.attachCsToken !== undefined) behaviorSettings.attachCsToken = body.attachCsToken;
+        
         const instance = await instanceManager.updateInstance(req.params.id, {
             behaviorSettings,
         });
@@ -1734,6 +1794,55 @@ app.get('/api/instances/:id/proxy', (req, res) => {
 });
 
 /**
+ * GET /api/proxy/catalog
+ * Labeled SE/UK quick-attach catalog for this worker.
+ * Enriched with fleet-wide occupancy from the control plane (wasup / wasup2 / org VMs / …)
+ * so slots used elsewhere are not shown as "free".
+ * Query: ?local=1 to skip fleet enrichment.
+ */
+app.get('/api/proxy/catalog', async (req, res) => {
+    try {
+        let catalog = instanceManager.getProxyCatalog();
+        const skipFleet = req.query.local === '1' || req.query.local === 'true';
+        if (!skipFleet) {
+            try {
+                const { fetchFleetProxyOccupancy, enrichCatalogWithFleetOccupancy } = await import(
+                    './src/utils/fleet-proxy-occupancy.js'
+                );
+                const occupancy = await fetchFleetProxyOccupancy();
+                if (occupancy) {
+                    catalog = enrichCatalogWithFleetOccupancy(catalog, occupancy, {
+                        localWorkerId: process.env.WASUP_WORKER_ID || null,
+                    });
+                }
+            } catch (enrichErr) {
+                console.warn('[proxy/catalog] fleet enrich skipped:', enrichErr.message);
+            }
+        }
+        res.json({ success: true, catalog });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/proxy/catalog/probe
+ * Light speed test for a labeled catalog slot. Body: { label: "SE1", includeEgress?: boolean }
+ */
+app.post('/api/proxy/catalog/probe', async (req, res) => {
+    try {
+        const label = req.body?.label;
+        if (!label) return res.status(400).json({ error: 'label is required' });
+        const result = await instanceManager.probeCatalogLabel(label, {
+            includeEgress: req.body?.includeEgress !== false,
+        });
+        res.json(result);
+    } catch (error) {
+        res.status(400).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * PUT /api/instances/:id/proxy
  * Set per-instance proxy. Automatically reconnects if the instance is currently connected.
  *
@@ -1741,35 +1850,92 @@ app.get('/api/instances/:id/proxy', (req, res) => {
  *   { url: "http://user:pass@proxy.example.com:8080" }    -> use this proxy
  *   { url: "socks5://proxy.example.com:1080" }            -> SOCKS5 also supported
  *   { type, host, port, username?, password? }            -> structured form
- *   { enabled: false }                                    -> explicitly disable (ignore deployment default)
- *   null / {}                                             -> clear override, inherit deployment default
+ *   { enabled: false }                                    -> force DIRECT (no pool re-claim)
+ *   { label: "UK3" }                                      -> attach catalog label
+ *   null / {}                                             -> force DIRECT
+ *   forceShared: true                                     -> allow same host:port as another connected instance
  */
 app.put('/api/instances/:id/proxy', async (req, res) => {
     try {
         const body = req.body || {};
-        let proxyArg;
-        if (body.enabled === false) {
-            proxyArg = { enabled: false };
-        } else if (body.url || body.shorthand || body.host) {
-            proxyArg = buildProxyAttachArg(body);
-        } else if (Object.keys(body).length === 0) {
-            proxyArg = null;
+        let result;
+
+        if (body.label && !body.url && !body.shorthand && !body.host) {
+            result = await instanceManager.attachCatalogProxy(req.params.id, body.label, {
+                forceShared: !!body.forceShared,
+            });
         } else {
-            return res.status(400).json({
-                error: 'Missing proxy. Provide url, shorthand (host:port:user:pass), or {host,port,username,password}.',
+            let proxyArg;
+            if (body.enabled === false || body.direct === true) {
+                proxyArg = { enabled: false };
+            } else if (body.url || body.shorthand || body.host) {
+                proxyArg = buildProxyAttachArg(body);
+                if (body.forceShared) proxyArg.forceShared = true;
+            } else if (Object.keys(body).length === 0) {
+                proxyArg = { enabled: false };
+            } else {
+                return res.status(400).json({
+                    error: 'Missing proxy. Provide url, shorthand, {host,port}, label, or {enabled:false}.',
+                });
+            }
+
+            result = await instanceManager.setInstanceProxy(req.params.id, proxyArg, {
+                forceShared: !!body.forceShared,
+                inheritPool: !!body.inheritPool,
             });
         }
 
-        const result = await instanceManager.setInstanceProxy(req.params.id, proxyArg);
-
+        const inst = instanceManager.getInstance(req.params.id);
         broadcastToAll({
             type: 'instance_updated',
-            data: instanceManager.getInstance(req.params.id).getStatus(),
+            data: inst.getStatus(),
         });
 
-        res.json({ success: true, proxy: result, message: 'Proxy updated. Instance will reconnect if it was online.' });
+        res.json({
+            success: true,
+            instanceId: req.params.id,
+            instanceName: inst.name,
+            proxy: result,
+            message: 'Proxy updated. Instance will reconnect if it was online.',
+        });
     } catch (error) {
-        res.status(400).json({ error: error.message });
+        const status = error.code === 'PROXY_SHARED_EGRESS' ? 409 : 400;
+        res.status(status).json({
+            error: error.message,
+            code: error.code || null,
+            sharedWith: error.sharedWith || undefined,
+        });
+    }
+});
+
+/**
+ * POST /api/instances/:id/proxy/attach-catalog
+ * One-click attach by label (SE1, UK3, …).
+ * Body: { label: "UK3", forceShared?: boolean }
+ */
+app.post('/api/instances/:id/proxy/attach-catalog', async (req, res) => {
+    try {
+        const label = req.body?.label;
+        if (!label) return res.status(400).json({ error: 'label is required' });
+        const result = await instanceManager.attachCatalogProxy(req.params.id, label, {
+            forceShared: !!req.body?.forceShared,
+        });
+        const inst = instanceManager.getInstance(req.params.id);
+        broadcastToAll({ type: 'instance_updated', data: inst.getStatus() });
+        res.json({
+            success: true,
+            instanceId: req.params.id,
+            instanceName: inst.name,
+            proxy: result,
+            message: `Attached ${label} to ${inst.name}`,
+        });
+    } catch (error) {
+        const status = error.code === 'PROXY_SHARED_EGRESS' ? 409 : 400;
+        res.status(status).json({
+            error: error.message,
+            code: error.code || null,
+            sharedWith: error.sharedWith || undefined,
+        });
     }
 });
 
@@ -1807,18 +1973,33 @@ app.post('/api/instances/:id/proxy/verify', async (req, res) => {
 
 /**
  * DELETE /api/instances/:id/proxy
- * Clear the per-instance override so the instance falls back to the deployment default.
+ * Force DIRECT egress for this instance only (releases pool slot, does NOT re-claim).
+ * Pass ?inheritPool=1 to restore legacy "claim another pool slot" behaviour.
  */
 app.delete('/api/instances/:id/proxy', async (req, res) => {
     try {
-        const result = await instanceManager.setInstanceProxy(req.params.id, null);
+        const inheritPool = req.query.inheritPool === '1' || req.query.inheritPool === 'true';
+        const result = await instanceManager.setInstanceProxy(
+            req.params.id,
+            { enabled: false },
+            { inheritPool }
+        );
 
+        const inst = instanceManager.getInstance(req.params.id);
         broadcastToAll({
             type: 'instance_updated',
-            data: instanceManager.getInstance(req.params.id).getStatus(),
+            data: inst.getStatus(),
         });
 
-        res.json({ success: true, proxy: result, message: 'Per-instance proxy override cleared.' });
+        res.json({
+            success: true,
+            instanceId: req.params.id,
+            instanceName: inst.name,
+            proxy: result,
+            message: inheritPool
+                ? `Proxy cleared on ${inst.name}; may inherit pool slot.`
+                : `Proxy detached from ${inst.name} — direct egress (no pool re-claim).`,
+        });
     } catch (error) {
         res.status(400).json({ error: error.message });
     }
@@ -2083,7 +2264,10 @@ app.get('/api/instances/:id/messages/:messageId/status', (req, res) => {
             from_phone: tracked.fromPhone,
             to_phone: tracked.toPhone,
             preview: tracked.preview,
-            updates: tracked.updates
+            updates: tracked.updates,
+            doNotRetry: tracked.doNotRetry !== false,
+            ackWatching: tracked.ackWatching === true || undefined,
+            reason: tracked.reason || undefined,
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -2599,6 +2783,67 @@ app.post('/api/system/reload-behavior-from-disk', async (req, res) => {
 });
 
 /**
+ * GET /api/system/disconnect-watchdog
+ * Status of the fleet disconnect → WhatsApp alert watcher.
+ */
+app.get('/api/system/disconnect-watchdog', (req, res) => {
+    const wd = getDisconnectWatchdog();
+    if (!wd) {
+        return res.json({ success: true, enabled: false, running: false });
+    }
+    res.json({ success: true, running: true, ...wd.getStatus() });
+});
+
+/**
+ * POST /api/system/relay-alert-send
+ * Peer workers call this when they have no local connected sender.
+ * Body: { to, message, aboutInstanceId?, fromWorker? }
+ */
+app.post('/api/system/relay-alert-send', async (req, res) => {
+    try {
+        const wd = getDisconnectWatchdog();
+        if (!wd) {
+            return res.status(503).json({ success: false, error: 'Disconnect watchdog not running' });
+        }
+        const out = await wd.handleRelaySend({
+            to: req.body?.to,
+            message: req.body?.message,
+        });
+        if (!out.success) {
+            const status = out.error === 'contact-muted' ? 429 : 503;
+            return res.status(status).json(out);
+        }
+        res.json(out);
+    } catch (error) {
+        console.error('[API] relay-alert-send:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/system/disconnect-alert-mute
+ * Fleet peer fanout: mute WhatsApp contact to the alert recipient until `until`.
+ * Body: { until: number (epoch ms), fromWorker? }
+ */
+app.post('/api/system/disconnect-alert-mute', async (req, res) => {
+    try {
+        const wd = getDisconnectWatchdog();
+        if (!wd) {
+            return res.status(503).json({ success: false, error: 'Disconnect watchdog not running' });
+        }
+        const until = Number(req.body?.until);
+        if (!Number.isFinite(until) || until <= 0) {
+            return res.status(400).json({ success: false, error: 'until (epoch ms) required' });
+        }
+        const out = wd.applyContactMute(until, { source: req.body?.fromWorker || 'peer' });
+        res.json(out);
+    } catch (error) {
+        console.error('[API] disconnect-alert-mute:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * POST /api/reload-instances
  * Manually trigger instance loading from disk (for Railway volume mount timing issues)
  */
@@ -3040,6 +3285,15 @@ Initializing...
     }
     
     console.log(`[Server] Ready! ${instanceManager.getAllInstances().length} instances loaded.`);
+
+    // Fleet disconnect alerts → WhatsApp (default 447835156367 after 10m down)
+    try {
+        startDisconnectWatchdog(instanceManager, {
+            instancesFolder: path.join(__dirname, 'instances'),
+        });
+    } catch (err) {
+        console.warn('[Server] Disconnect watchdog failed to start:', err.message);
+    }
 
     if (typeof process.send === 'function') {
         try {

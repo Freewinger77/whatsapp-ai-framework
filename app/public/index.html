@@ -5222,6 +5222,16 @@
                                         <span class="toggle-slider"></span>
                                     </label>
                                 </div>
+                                <div class="toggle-row">
+                                    <div class="toggle-info">
+                                        <h4>CS token fallback</h4>
+                                        <p>Off by default. When ON, 1:1 sends with no tctoken attach a self-computed &lt;cstoken&gt; (PR #2438). Never sends if NCT salt is missing.</p>
+                                    </div>
+                                    <label class="toggle-switch" aria-label="CS token fallback">
+                                        <input type="checkbox" id="toggle-attach-cs-token">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
                             </div>
                             <button class="btn btn-primary" style="width: 100%;" id="btn-save-behavior">Save Behavior</button>
                     </div>
@@ -5389,6 +5399,7 @@
             toggleMultiDeviceCoexist: document.getElementById('toggle-multi-device-coexist'),
             toggleWebhookTypingEvents: document.getElementById('toggle-webhook-typing-events'),
             toggleGroupAlertMode: document.getElementById('toggle-group-alert-mode'),
+            toggleAttachCsToken: document.getElementById('toggle-attach-cs-token'),
             behaviorProfileInputs: document.querySelectorAll('input[name="behavior-profile"]'),
             modalCreate: document.getElementById('modal-create'),
             modalClose: document.getElementById('modal-close'),
@@ -6235,6 +6246,9 @@
                 if (el.toggleGroupAlertMode) {
                     el.toggleGroupAlertMode.checked = !!instance.behaviorSettings.groupAlertMode;
                 }
+                if (el.toggleAttachCsToken) {
+                    el.toggleAttachCsToken.checked = !!instance.behaviorSettings.attachCsToken;
+                }
             }
 
             renderProxyPanel(instance);
@@ -6960,6 +6974,7 @@
                         multiDeviceCoexist: !!(el.toggleMultiDeviceCoexist && el.toggleMultiDeviceCoexist.checked),
                         webhookTypingEvents: !!(el.toggleWebhookTypingEvents && el.toggleWebhookTypingEvents.checked),
                         groupAlertMode: !!(el.toggleGroupAlertMode && el.toggleGroupAlertMode.checked),
+                        attachCsToken: !!(el.toggleAttachCsToken && el.toggleAttachCsToken.checked),
                         notificationGraceMs: behaviorProfile === 'notification-max' ? 5000
                             : behaviorProfile === 'notification-balanced' ? 2500
                                 : ((el.togglePhonePush && el.togglePhonePush.checked) ? 2500 : 0)

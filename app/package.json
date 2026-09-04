@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "postinstall": "node scripts/patch-baileys.js && node scripts/patch-mex.js",
+    "postinstall": "node scripts/patch-baileys.js && node scripts/patch-mex.js && node scripts/patch-baileys-cstoken.js",
     "smoke:wasup2": "node scripts/wasup-smoke.js",
     "docs:enrich": "node scripts/enrich-openapi.js openapi.yaml"
   },

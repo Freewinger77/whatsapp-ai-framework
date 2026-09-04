@@ -120,6 +120,8 @@ export function InstanceDetailPage() {
   const [webhookTypingSaving, setWebhookTypingSaving] = useState(false);
   const [groupAlertMode, setGroupAlertMode] = useState(false);
   const [groupAlertSaving, setGroupAlertSaving] = useState(false);
+  const [attachCsToken, setAttachCsToken] = useState(false);
+  const [attachCsTokenSaving, setAttachCsTokenSaving] = useState(false);
   const [handoffsCleared, setHandoffsCleared] = useState(false);
   const [pictureRemoved, setPictureRemoved] = useState(false);
   const [openSettingsCards, setOpenSettingsCards] = useState<Record<MainSettingsCard, boolean>>(
@@ -270,6 +272,7 @@ export function InstanceDetailPage() {
         );
         setWebhookTypingEvents(!!settings.webhookTypingEvents);
         setGroupAlertMode(!!settings.groupAlertMode);
+        setAttachCsToken(!!settings.attachCsToken);
         if (typeof settings.delayEnabled === "boolean") setResponseDelays(settings.delayEnabled);
         if (typeof settings.typingSimulation === "boolean") setTyping(settings.typingSimulation);
       })
@@ -944,6 +947,34 @@ export function InstanceDetailPage() {
                   });
                 } finally {
                   setGroupAlertSaving(false);
+                }
+              }}
+            />
+            <ToggleRow
+              label="CS token fallback"
+              description="Off by default. When ON, 1:1 sends with no tctoken attach a self-computed cstoken (Baileys PR #2438). Never sends if the NCT salt is missing. Content Crew only for now."
+              checked={attachCsToken}
+              disabled={attachCsTokenSaving || inst.status === "provisioning"}
+              onChange={async (value) => {
+                if (!id || attachCsTokenSaving) return;
+                const previous = attachCsToken;
+                setAttachCsToken(value);
+                setAttachCsTokenSaving(true);
+                try {
+                  const result = await updateInstanceBehavior(id, { attachCsToken: value });
+                  setAttachCsToken(!!result.behaviorSettings?.attachCsToken || value);
+                  toast.success(value ? "CS token fallback on" : "CS token fallback off", {
+                    description: value
+                      ? "Cold 1:1 sends will attach cstoken when the NCT salt exists."
+                      : "No cstoken will be attached.",
+                  });
+                } catch (error) {
+                  setAttachCsToken(previous);
+                  toast.error("Could not update CS token fallback", {
+                    description: error instanceof Error ? error.message : "Please try again shortly.",
+                  });
+                } finally {
+                  setAttachCsTokenSaving(false);
                 }
               }}
             />
