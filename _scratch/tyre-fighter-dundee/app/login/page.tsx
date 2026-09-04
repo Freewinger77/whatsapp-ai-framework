@@ -20,7 +20,7 @@ export default function LoginPage() {
       setPending(false);
       return;
     }
-    window.location.href = "/";
+    window.location.assign("/");
   }
 
   return (
