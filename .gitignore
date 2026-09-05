@@ -3,6 +3,10 @@ node_modules/
 package-lock.json
 !apps/control-plane/package-lock.json
 !apps/dashboard/package-lock.json
+!_scratch/tyre-fighter-dundee/package-lock.json
+
+# Isolated Dundee inbox is a sandbox app (do not merge into apps/dashboard).
+# Code is committed; secrets stay local via .env.* below.
 
 # Environment Variables
 .env
