@@ -1,3 +1,4 @@
+import { buildDashboardSeries } from "./analytics-series";
 import { buildLeadConversion } from "./conversion";
 import { npsHeadline } from "./hours";
 import { memory, memoryEnabled } from "./memory";
@@ -388,22 +389,29 @@ export async function counts() {
 }
 
 export async function analytics(days = 30) {
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const windowDays = Math.max(1, Math.min(366, Math.floor(days)));
+  const since = new Date(Date.now() - windowDays * 2 * 24 * 60 * 60 * 1000).toISOString();
   if (usingMemory()) {
-    const rows = memory.all("smt_enquiries").filter((r) => String(r.first_seen_at || r.enquired_at) >= since) as Array<{
+    const rows = memory.all("smt_enquiries") as Array<{
       enquired_at: string | null;
       in_hours: boolean;
       status: string | null;
       channel: string | null;
       first_seen_at: string;
     }>;
-    return buildAnalytics(days, rows, memory.all("smt_nps").map((r) => Number(r.score)));
+    const customers = memory.all("smt_customers") as Array<{ last_booking_at: string | null }>;
+    return buildAnalytics(windowDays, rows, customers, memory.all("smt_nps").map((r) => Number(r.score)));
   }
   const db = adminClient();
-  const { data: enquiries } = await db
-    .from("smt_enquiries")
-    .select("enquired_at,in_hours,status,source,channel,first_seen_at")
-    .gte("first_seen_at", since);
+  const [{ data: enquiries }, { data: customerRows }, { data: nps }, kpi] = await Promise.all([
+    db
+      .from("smt_enquiries")
+      .select("enquired_at,in_hours,status,source,channel,first_seen_at")
+      .gte("first_seen_at", since),
+    db.from("smt_customers").select("last_booking_at").not("last_booking_at", "is", null).gte("last_booking_at", since),
+    db.from("smt_nps").select("score,scored_at"),
+    counts(),
+  ]);
   const rows = (enquiries ?? []) as Array<{
     enquired_at: string | null;
     in_hours: boolean;
@@ -411,9 +419,9 @@ export async function analytics(days = 30) {
     channel: string | null;
     first_seen_at: string;
   }>;
-  const { data: nps } = await db.from("smt_nps").select("score,scored_at");
+  const customers = (customerRows ?? []) as Array<{ last_booking_at: string | null }>;
   const scores = ((nps ?? []) as Array<{ score: number }>).map((r) => Number(r.score));
-  return buildAnalytics(days, rows, scores);
+  return buildAnalytics(windowDays, rows, customers, scores, kpi);
 }
 
 async function buildAnalytics(
@@ -425,19 +433,26 @@ async function buildAnalytics(
     channel: string | null;
     first_seen_at: string;
   }>,
+  customers: Array<{ last_booking_at: string | null }>,
   scores: number[],
+  kpiCounts?: Awaited<ReturnType<typeof counts>>,
 ) {
-  const byDay: Record<string, { total: number; inHours: number; outHours: number }> = {};
+  const kpi = kpiCounts ?? (await counts());
+  const dash = buildDashboardSeries(
+    days,
+    rows.map((row) => ({
+      at: row.enquired_at,
+      firstSeenAt: row.first_seen_at,
+      inHours: Boolean(row.in_hours),
+      channel: row.channel,
+    })),
+    customers.map((row) => ({ bookedAt: row.last_booking_at })),
+    kpi.customers,
+  );
   const byHour = Array.from({ length: 24 }, (_, hour) => ({ hour, total: 0, inHours: 0, outHours: 0 }));
-  const typeMix: Record<string, number> = {};
   for (const row of rows) {
     const at = row.enquired_at || row.first_seen_at;
     const d = new Date(at);
-    const day = d.toISOString().slice(0, 10);
-    if (!byDay[day]) byDay[day] = { total: 0, inHours: 0, outHours: 0 };
-    byDay[day].total += 1;
-    if (row.in_hours) byDay[day].inHours += 1;
-    else byDay[day].outHours += 1;
     const hour = Number(
       new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", hourCycle: "h23" }).format(d),
     );
@@ -446,18 +461,29 @@ async function buildAnalytics(
       if (row.in_hours) byHour[hour].inHours += 1;
       else byHour[hour].outHours += 1;
     }
-    const key =
-      row.channel === "phone" ? "Phone enquiry" : row.channel === "email" ? "Email enquiry" : row.status || "Lead";
-    typeMix[key] = (typeMix[key] || 0) + 1;
   }
   return {
-    days,
-    kpi: await counts(),
-    byDay: Object.entries(byDay)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, v]) => ({ date, ...v })),
+    days: dash.days,
+    from: dash.from,
+    to: dash.to,
+    kpi,
+    series: dash.series,
+    mix: dash.mix,
+    pct: dash.pct,
+    byDay: dash.series.map((d) => ({
+      date: d.date,
+      total: d.leads,
+      inHours: d.inHours,
+      outHours: d.outHours,
+      email: d.email,
+      phone: d.phone,
+      customers: d.customers,
+    })),
     byHour,
-    typeMix: Object.entries(typeMix).map(([name, value]) => ({ name, value })),
+    typeMix: [
+      { name: "Email enquiry", value: dash.mix.email },
+      { name: "Phone enquiry", value: dash.mix.phone },
+    ].filter((x) => x.value > 0),
     npsHeadline: npsHeadline(scores),
     npsCount: scores.length,
   };
