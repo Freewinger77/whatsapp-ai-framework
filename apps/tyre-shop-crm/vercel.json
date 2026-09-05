@@ -1,5 +1,4 @@
 {
-  "name": "tyres-4u-smt-crm",
   "framework": "nextjs",
   "crons": [
     {

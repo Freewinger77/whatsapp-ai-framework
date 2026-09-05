@@ -25,7 +25,6 @@ const ENV_KEYS = [
   "SMT_ORIGIN",
   "SHOP_NAME",
   "POLL_INTERVAL_MS",
-  "TZ",
   "NEXT_PUBLIC_SUPABASE_URL",
   "SUPABASE_URL",
   "SUPABASE_SECRET_KEY",
@@ -82,7 +81,6 @@ const local = parseDotEnv(readFileSync(envPath, "utf8"));
 if (!local.CRON_SECRET) {
   local.CRON_SECRET = randomBytes(24).toString("hex");
 }
-if (!local.TZ) local.TZ = "Europe/London";
 if (!local.SMT_MODE) local.SMT_MODE = "live";
 if (!local.POLL_INTERVAL_MS) local.POLL_INTERVAL_MS = "60000";
 
