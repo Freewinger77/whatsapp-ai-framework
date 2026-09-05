@@ -69,10 +69,10 @@ export default function DashboardPage() {
     <div className="grid-12">
       <div className="span-12 kpis">
         {[
-          { label: "Customers discovered", value: kpi?.customers ?? "—", sub: "full SMT export" },
-          { label: "New this 30d", value: kpi?.newCustomers30d ?? "—", sub: "first seen" },
+          { label: "Customers discovered", value: kpi?.customers ?? "—", sub: "HTML walk · not Reports bookings" },
+          { label: "New this 30d", value: kpi?.newCustomers30d ?? "—", sub: "first seen in this CRM" },
           { label: "Enquiries", value: kpi?.enquiries ?? "—", sub: `${kpi?.inHours ?? 0} in-hours · ${kpi?.outHours ?? 0} out` },
-          { label: "NPS", value: kpi?.npsHeadline != null ? `${kpi.npsHeadline}%` : "—", sub: data?.smtHeadlineNps != null ? `SMT says ${data.smtHeadlineNps}%` : "vs SMT headline" },
+          { label: "NPS", value: kpi?.npsHeadline != null ? `${kpi.npsHeadline}%` : "—", sub: data?.smtHeadlineNps != null ? `SMT headline ${data.smtHeadlineNps}%` : "vs SMT headline" },
         ].map((m) => (
           <div className="card" key={m.label}>
             <div className="hint">{m.label}</div>
@@ -146,6 +146,15 @@ export default function DashboardPage() {
           </div>
         ))}
         {error ? <p className="err">{error}</p> : null}
+      </div>
+
+      <div className="span-12 card">
+        <h2>Reconcile vs SMT</h2>
+        <div className="hint">CRM list pages are the census. Reports → New/Existing Customer Bookings are booking charts (~243 new-customer bookings over ~12 months), not the customer list.</div>
+        <div className="row"><span>Customers</span><strong>SMT Page 1 of 14 → expect 289</strong></div>
+        <div className="row"><span>Enquiries</span><strong>SMT Page 1 of 4 → expect 84</strong></div>
+        <div className="row"><span>NPS rows</span><strong>SMT Page 1 of 3 → expect 31 · headline 71.43%</strong></div>
+        <div className="row"><span>Testimonials</span><strong>expect 6</strong></div>
       </div>
     </div>
   );

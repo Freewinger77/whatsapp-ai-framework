@@ -1,46 +1,58 @@
 # SMT admin map (Tyres 4 U)
 
-Selectors were checked against the public login screenshot and unauthenticated URL probes. Authenticated list HTML is loaded on first live login; the client prefers the page’s own DataTables `ajax` URL, then HTML tables, then Customers CSV export.
+Shop: **Tyres 4 U**, fitting centre **458**, site `dundeetyres4u.co.uk`. IIS / ASP.NET MVC 5.2 / Silkmoth.
 
-## Login (screenshot verified)
+## Login
 
 - URL: https://admin.sellmoretyres.com/Account/Login
-- Stack: IIS / ASP.NET MVC 5.2 / Silkmoth
 - Form `POST /` fields: `Email`, `Password`, `RememberMe`, hidden `__RequestVerificationToken`
 - Cookies after GET login: `ASP.NET_SessionId`, `__RequestVerificationToken`, `ARRAffinity`
 
-## Confirmed routes (unauthenticated 302 → login = route exists)
+## Lists (live, 2026-09-05)
 
-| Path | Role |
+Lists are **server-rendered HTML** with `?page=N`. There is **no DataTables XHR**. Prefer the HTML walk over CSV.
+
+| Path | Columns / notes | Census |
+|---|---|---|
+| `/FittingCentre/CRM/Customers` | First Name, Last Name, Email, VRN, Contact number. View `/CRM/CustomerView/:id`. Export `POST /FittingCentre/CRM/Export` (275 rows, **no SMT ids**) | **Page 1 of 14 → 289** unique View ids |
+| `/FittingCentre/CRM/Enquiries` | Date submitted, Name, Email, Telephone, Status (New / Resolved). View `/CRM/EnquiriesView/:id`. Export `POST /CRM/ExportEnquiries` | **Page 1 of 4 → 84** |
+| `/FittingCentre/CRM/NPS` | Score, Date, Reason, Comment. View `/CRM/NPSView?nps=:id`. Headline `<h3>Your NPS Score Is:</h3><p id="percentage">71.43%</p>` | **Page 1 of 3 → 31** |
+| `/FittingCentre/CRM/Testimonials` | Testimonial By, Date created, Approved, Comment. View `/CRM/Testimonial?TestimonialID=:id` | **6** |
+
+Do **not** upsert the Customers CSV: it has no `CustomerView` ids, so the parser would invent phone-hash keys and duplicate the HTML walk.
+
+## NPS headline vs table math
+
+- SMT chrome: **71.43%**
+- All 31 scored rows: 25 promoters, 4 passive, 2 detractors → **74.19%**
+- Headline likely uses a different window or filter. Dashboard shows both.
+
+## Reports (not the CRM census)
+
+Hub: `/FittingCentre/Reports`
+
+| Path | What it actually is |
 |---|---|
-| `/FittingCentre/CRM` | Hub: Customers / Enquiries / NPS / Testimonials |
-| `/FittingCentre/CRM/Customers` | Paged customer list + quick search |
-| `/FittingCentre/CRM/Customers/List` | List variant / likely XHR |
-| `/FittingCentre/CRM/Customers/Export` | CSV of all customers (KB + route exists) |
-| `/FittingCentre/CRM/Enquiries` | Enquiry list (New / Resolved) |
-| `/FittingCentre/CRM/Enquiries/List` | List variant |
-| `/FittingCentre/CRM/NPS` | Score, Date, Reason, Comment, View |
-| `/FittingCentre/CRM/NPS/List` | List variant |
-| `/FittingCentre/CRM/Testimonials` | Public quotes |
-| `/FittingCentre/CRM/Testimonials/List` | List variant |
-| `/FittingCentre/Reports` | Reports hub (reconcile) |
-| `/FittingCentre/Reports/BrandsSold` | Brands report |
+| `/Reports/NewCustomers` | **New customer bookings** chart. Monthly Sep 2025–Sep 2026 sums to **243**, not 289 CRM customers |
+| `/Reports/ExistingCustomers` | Existing customer **bookings** |
+| `/Reports/BookingAverageTotals` | Average booking value |
+| `/Reports/BookingTotals` | Total booking value |
+| `/Reports/BrandsSold` | Brands sold |
+| `/Reports/ViewTyreBookings` | Tyre bookings |
 
-## Dedupe
-
-- Customer: View `/Customers/View/:id` else phone E.164
-- Enquiry: View `/Enquiries/View/:id`
-- NPS: View id else hash(score + date + phone/name)
-- Testimonial: View id else hash(name + quote + date)
+Reconcile dashboard KPIs against the CRM list pages (289 / 84 / 31 / 6), not these booking charts.
 
 ## In-hours
 
-Mon–Sat 09:00–17:00 `Europe/London`. Sunday and evenings = out of hours.
+Mon–Sat 09:00–17:00 `Europe/London`. Sunday and evenings = out of hours. SMT `dd/mm/yyyy HH:mm` is parsed as London wall clock (BST/GMT), not UTC.
 
-## Live login still needed
+Example: Alison Crawley `04/09/2026 17:02` → out of hours.
 
-`SMT_EMAIL` / `SMT_PASSWORD` were not supplied in this pass. Set them in `.env.local` + Vercel, then:
+## Dedupe
 
-1. Open CRM hub and screenshot each list + View drawer.
-2. Confirm the DataTables ajax URL the page actually calls.
-3. Open Reports and compare counts to `GET /api/analytics`.
+- Customer: `CustomerView/:id` (never phone unless the View href is missing)
+- Enquiry: `EnquiriesView/:id`
+- NPS: `NPSView?nps=:id` else hash(score + date + reason + comment)
+- Testimonial: `TestimonialID=` else hash(name + quote + date)
+
+Unknown id → insert + optional webhook. Known id → refresh, no second webhook.

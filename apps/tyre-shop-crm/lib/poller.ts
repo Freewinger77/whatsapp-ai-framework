@@ -1,7 +1,7 @@
 import { createSmtClient, type SmtClient } from "./smt/client";
 import type { SmtCustomer, SmtEnquiry, SmtNps, SmtTestimonial } from "./smt/types";
 import { memoryEnabled } from "./memory";
-import { readSettings } from "./settings";
+import { readSettings, writeKv } from "./settings";
 import { supabaseConfigured } from "./supabase/admin";
 import {
   finishPollRun,
@@ -104,21 +104,12 @@ export async function tick(opts: TickOptions = {}, client?: SmtClient): Promise<
       if (opts.fullExport) {
         try {
           const csv = await smt.exportCustomersCsv();
+          pages.customersCsv = csv.length;
           if (csv.length) {
-            pages.customersCsv = 1;
-            for (const row of csv) {
-              scraped += 1;
-              const { isNew } = await upsertCustomer(row);
-              if (isNew) newCount += 1;
-              else refreshed += 1;
-              await maybeAnnounce(
-                "customers",
-                "customer.created",
-                "smt_customers",
-                { id: row.smtId, name: row.name, phone: row.phoneE164 || row.phone, at: row.lastBookingAt },
-                isNew,
-              );
-            }
+            await logEvent(
+              "customer.export_skipped",
+              `CSV export had ${csv.length} rows but no SMT View ids — HTML walk is the census`,
+            );
           }
         } catch (err) {
           await logEvent("customer.export_failed", err instanceof Error ? err.message : String(err));
@@ -193,6 +184,13 @@ export async function tick(opts: TickOptions = {}, client?: SmtClient): Promise<
       newCount += walked.newCount;
       refreshed += walked.refreshed;
       pages.nps = walked.pages;
+      try {
+        const headline = await smt.headlineNps();
+        await writeKv("nps_headline", headline);
+        pages.npsHeadline = headline ?? 0;
+      } catch (err) {
+        await logEvent("nps.headline_failed", err instanceof Error ? err.message : String(err));
+      }
     }
 
     if (kinds.includes("testimonials")) {

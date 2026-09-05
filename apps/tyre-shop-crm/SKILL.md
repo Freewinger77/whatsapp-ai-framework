@@ -26,12 +26,13 @@ In-hours is fixed in v1: **Mon–Sat 09:00–17:00 Europe/London**.
 
 1. Screenshot `/Account/Login`. Confirm `Email`, `Password`, `RememberMe`, `__RequestVerificationToken`, form `POST /`.
 2. After login, screenshot `/FittingCentre/CRM` and each list (Customers, Enquiries, NPS, Testimonials).
-3. In DevTools Network, note the list XHR (often DataTables `ajax` on `/FittingCentre/CRM/<Thing>/List`). Prefer that over HTML.
-4. Confirm View hrefs expose integer ids. Those are dedupe keys.
-5. Customers also have **Export CSV** — use it for backfill.
+3. In DevTools Network, check whether lists are DataTables XHR **or** server-rendered `?page=N` HTML. Tyres 4 U is **HTML only** — `/CRM/*/List` is not the live feed.
+4. Confirm View hrefs expose integer ids (`CustomerView/:id`, `EnquiriesView/:id`, `NPSView?nps=`, `TestimonialID=`). Those are dedupe keys.
+5. Customers CSV export may omit SMT ids and under-count the HTML walk (275 vs 289 here). **Do not upsert CSV** unless each row has a View id.
 6. Do not guess a selector that the screenshot contradicts.
+7. Reports → New/Existing Customer Bookings are **booking charts**, not CRM list totals. Reconcile KPIs against list pagination (`Page X of Y`) and unique View ids.
 
-Dedupe: customer id (else phone E.164); enquiry id; NPS score+date+phone/name; testimonial id.
+Dedupe: customer View id; enquiry View id; NPS View id; testimonial id.
 
 Unknown id → insert + optional webhook. Known id → refresh, **no second webhook**.
 
@@ -49,6 +50,6 @@ Unknown id → insert + optional webhook. Known id → refresh, **no second webh
 3. Enquiries in-hours filter: weekday 09:00–17:00 UK vs evenings/Sunday.
 4. Scraper → Scrape now → Activity shows `poll.ok`.
 5. API docs sample matches `GET /api/health`.
-6. SMT **Reports** vs `GET /api/analytics`: customer/enquiry counts, new vs existing bookings, NPS % vs `smt_nps` math (`Your NPS Score Is`).
+6. SMT **CRM lists** vs `GET /api/analytics`: 289 customers / 84 enquiries / 31 NPS / 6 testimonials. NPS chrome `71.43%` vs table math (`74.19%` on all 31). Reports new-customer bookings (~243/year) are a different metric.
 
 Backfill first (`npm run backfill`, `announce: false`), then turn cron on.

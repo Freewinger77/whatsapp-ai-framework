@@ -9,6 +9,7 @@ import {
   extractAjaxUrl,
   extractAntiforgery,
   extractHeadlineNps,
+  extractPageInfo,
   extractPaginationTotal,
   jsonTotal,
   npsFromTable,
@@ -73,6 +74,7 @@ export class LiveSmtClient implements SmtClient {
     path: string,
     body?: string,
     headers: Record<string, string> = {},
+    attempt = 0,
   ): Promise<{ status: number; text: string; url: string; res: Response }> {
     const url = path.startsWith("http") ? path : `${this.origin}${path}`;
     const reqHeaders: Record<string, string> = {
@@ -84,6 +86,7 @@ export class LiveSmtClient implements SmtClient {
     };
     const cookie = this.cookieHeader();
     if (cookie) reqHeaders.Cookie = cookie;
+    if (this.lastLoginAt) await new Promise((r) => setTimeout(r, 350));
     const res = await fetch(url, {
       method,
       headers: reqHeaders,
@@ -91,6 +94,10 @@ export class LiveSmtClient implements SmtClient {
       redirect: "manual",
     });
     this.mergeCookies(res);
+    if (res.status === 429 && attempt < 4) {
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+      return this.raw(method, path, body, headers, attempt + 1);
+    }
     const location = res.headers.get("location");
     if (res.status >= 300 && res.status < 400 && location) {
       const next = location.startsWith("http") ? location : `${this.origin}${location}`;
@@ -173,10 +180,9 @@ export class LiveSmtClient implements SmtClient {
   ): Promise<ListPage<T>> {
     await this.ensureSession();
     const qs = path.includes("?") ? "&" : "?";
-    const url = `${path}${qs}page=${page}&Page=${page}&pageSize=${pageSize}&length=${pageSize}&start=${(page - 1) * pageSize}`;
+    const url = `${path}${qs}page=${page}`;
     const res = await this.raw("GET", url, undefined, {
       Referer: `${this.origin}${CRM_PATHS.hub}`,
-      "X-Requested-With": "XMLHttpRequest",
     });
     const ajax = extractAjaxUrl(res.text);
     if (ajax && ajax !== path) {
@@ -208,13 +214,15 @@ export class LiveSmtClient implements SmtClient {
     }
     const table = pickMainTable(parseHtmlTables(res.text));
     const items = map(table);
-    const total = extractPaginationTotal(res.text);
+    const pages = extractPageInfo(res.text);
+    const totalRows = extractPaginationTotal(res.text);
+    const total = totalRows ?? (pages ? pages.pages * Math.max(items.length, 1) : items.length);
     return {
       items,
       page,
       pageSize,
       total,
-      hasMore: items.length >= pageSize || (total != null && page * pageSize < total),
+      hasMore: pages ? page < pages.pages : items.length >= 10,
       source: "html",
       url,
     };
@@ -307,8 +315,13 @@ export class LiveSmtClient implements SmtClient {
 
   async exportCustomersCsv(): Promise<SmtCustomer[]> {
     await this.ensureSession();
-    const res = await this.raw("GET", CRM_PATHS.customersExport, undefined, {
+    const page = await this.raw("GET", CRM_PATHS.customers);
+    const token = extractAntiforgery(page.text);
+    const body = new URLSearchParams({ btn: "Export" });
+    if (token) body.set("__RequestVerificationToken", token);
+    const res = await this.raw("POST", CRM_PATHS.customersExport, body.toString(), {
       Accept: "text/csv,application/vnd.ms-excel,*/*",
+      "Content-Type": "application/x-www-form-urlencoded",
       Referer: `${this.origin}${CRM_PATHS.customers}`,
     });
     if (res.status !== 200 || /Admin Login/i.test(res.text) || /<html/i.test(res.text.slice(0, 200))) {

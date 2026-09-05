@@ -57,6 +57,27 @@ export async function readSettings(): Promise<RuntimeSettings> {
   return next;
 }
 
+export async function writeKv(key: string, value: unknown): Promise<void> {
+  const encoded = JSON.stringify(value);
+  if (memoryEnabled() && !supabaseConfigured()) {
+    memory.upsert("smt_settings", "key", { key, value: encoded });
+    return;
+  }
+  if (!supabaseConfigured()) return;
+  await adminClient().from("smt_settings").upsert({ key, value: encoded, updated_at: new Date().toISOString() }, { onConflict: "key" });
+}
+
+export async function readKv<T>(key: string): Promise<T | null> {
+  if (memoryEnabled() && !supabaseConfigured()) {
+    const row = memory.find("smt_settings", "key", key) as { value?: string } | undefined;
+    return (parseValue(row?.value ?? null, null) as T | null) ?? null;
+  }
+  if (!supabaseConfigured()) return null;
+  const { data } = await adminClient().from("smt_settings").select("value").eq("key", key).maybeSingle();
+  if (!data) return null;
+  return (parseValue((data as { value: string }).value, null) as T | null) ?? null;
+}
+
 export async function writeSettings(patch: Partial<RuntimeSettings>): Promise<RuntimeSettings> {
   const current = await readSettings();
   const next = { ...current, ...patch };

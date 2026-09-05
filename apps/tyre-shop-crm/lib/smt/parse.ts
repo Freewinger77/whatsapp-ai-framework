@@ -41,17 +41,26 @@ export function extractAjaxUrl(html: string): string | null {
 }
 
 export function extractHeadlineNps(html: string): number | null {
-  const match = html.match(/Your NPS Score Is:\s*([0-9]+(?:\.[0-9]+)?)\s*%/i);
+  const percent = html.match(/id="percentage">\s*([0-9]+(?:\.[0-9]+)?)\s*%/i);
+  if (percent) {
+    const n = Number(percent[1]);
+    return Number.isFinite(n) ? n : null;
+  }
+  const match = html.match(/Your NPS Score Is:[\s\S]{0,80}?([0-9]+(?:\.[0-9]+)?)\s*%/i);
   if (!match) return null;
   const n = Number(match[1]);
   return Number.isFinite(n) ? n : null;
 }
 
+export function extractPageInfo(html: string): { page: number; pages: number } | null {
+  const page = html.match(/Page\s+(\d+)\s+of\s+(\d+)/i);
+  if (!page) return null;
+  return { page: Number(page[1]), pages: Number(page[2]) };
+}
+
 export function extractPaginationTotal(html: string): number | null {
   const showing = html.match(/Showing\s+\d+\s+to\s+\d+\s+of\s+([\d,]+)/i);
   if (showing) return Number(showing[1].replace(/,/g, ""));
-  const page = html.match(/Page\s+\d+\s+of\s+(\d+)/i);
-  if (page) return Number(page[1]);
   return null;
 }
 
@@ -60,15 +69,58 @@ function slugId(parts: Array<string | number | null | undefined>): string {
   return createHash("sha1").update(raw).digest("hex").slice(0, 16);
 }
 
+function londonWallToIso(
+  year: string,
+  month: string,
+  day: string,
+  hh: string,
+  mm: string,
+  ss: string,
+): string | null {
+  const wall = `${year}-${month}-${day}T${hh}:${mm}:${ss}`;
+  for (const offset of ["+01:00", "+00:00"] as const) {
+    const date = new Date(`${wall}${offset}`);
+    if (Number.isNaN(date.getTime())) continue;
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Europe/London",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+      })
+        .formatToParts(date)
+        .map((p) => [p.type, p.value]),
+    );
+    if (
+      parts.year === year &&
+      parts.month === month &&
+      parts.day === day &&
+      parts.hour === hh &&
+      parts.minute === mm &&
+      parts.second === ss
+    ) {
+      return date.toISOString();
+    }
+  }
+  const fallback = new Date(wall);
+  return Number.isNaN(fallback.getTime()) ? null : fallback.toISOString();
+}
+
 export function parseUkDate(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const text = decodeEntities(raw);
   if (!text) return null;
-  const iso = text.match(/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?/);
+  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(text)) {
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
   if (iso) {
-    const time = iso[2] ? (iso[2].length === 5 ? `${iso[2]}:00` : iso[2]) : "00:00:00";
-    const d = new Date(`${iso[1]}T${time}`);
-    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+    return londonWallToIso(iso[1], iso[2], iso[3], iso[4] || "00", iso[5] || "00", iso[6] || "00");
   }
   const uk = text.match(
     /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/,
@@ -80,8 +132,7 @@ export function parseUkDate(raw: string | null | undefined): string | null {
     const hh = (uk[4] || "0").padStart(2, "0");
     const mm = (uk[5] || "0").padStart(2, "0");
     const ss = (uk[6] || "0").padStart(2, "0");
-    const d = new Date(`${year}-${month}-${day}T${hh}:${mm}:${ss}`);
-    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+    return londonWallToIso(year, month, day, hh, mm, ss);
   }
   const parsed = new Date(text);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
@@ -125,15 +176,19 @@ export function parseHtmlTables(html: string): HtmlTable[] {
 
 export function extractRowId(rowHtml: string): string | null {
   const href = rowHtml.match(
-    /href="[^"]*(?:View|Details|Edit)\/(\d+)"/i,
+    /href="[^"]*(?:CustomerView|EnquiriesView|NPSView|View|Details|Edit)\/(\d+)"/i,
   );
   if (href?.[1]) return href[1];
+  const query = rowHtml.match(
+    /[?&](?:nps|TestimonialID|id|customerId|enquiryId)=(\d+)/i,
+  );
+  if (query?.[1]) return query[1];
+  const lbl = rowHtml.match(/id="(?:lbl_|enquiryTag-)(\d+)"/i);
+  if (lbl?.[1]) return lbl[1];
   const dataId =
     rowHtml.match(/data-(?:id|customerid|enquiryid|npsid)="(\d+)"/i) ||
     rowHtml.match(/data-id='(\d+)'/i);
-  if (dataId?.[1]) return dataId[1];
-  const query = rowHtml.match(/[?&](?:id|customerId|enquiryId)=(\d+)/i);
-  return query?.[1] ?? null;
+  return dataId?.[1] ?? null;
 }
 
 function headerIndex(headers: string[], ...names: string[]): number {
@@ -160,24 +215,30 @@ function splitName(full: string): { firstName: string; lastName: string } {
 
 export function customersFromTable(table: HtmlTable): SmtCustomer[] {
   const h = table.headers;
-  const nameI = headerIndex(h, "name", "customer", "customername");
+  const firstI = headerIndex(h, "firstname");
+  const lastI = headerIndex(h, "lastname");
+  const nameI = firstI >= 0 ? -1 : headerIndex(h, "name", "customer", "customername");
   const emailI = headerIndex(h, "email", "emailaddress");
-  const phoneI = headerIndex(h, "phone", "mobile", "telephone", "tel");
+  const phoneI = headerIndex(h, "contactnumber", "phone", "mobile", "telephone", "tel");
   const postI = headerIndex(h, "postcode", "post", "zip");
+  const vrnI = headerIndex(h, "vrn", "reg", "registration");
   const sourceI = headerIndex(h, "source");
   const stageI = headerIndex(h, "stage", "status");
   const bookingI = headerIndex(h, "lastbooking", "lastorder", "lastvisit");
   return table.rows.map((row, i) => {
-    const name = cell(row, nameI) || cell(row, 0);
+    const firstName = firstI >= 0 ? cell(row, firstI) : "";
+    const lastName = lastI >= 0 ? cell(row, lastI) : "";
+    const name =
+      firstName || lastName ? `${firstName} ${lastName}`.trim() : cell(row, nameI) || cell(row, 0);
     const phone = cell(row, phoneI) || null;
     const phoneE164 = toE164(phone);
     const smtId = table.ids[i] || phoneE164 || slugId(["customer", name, cell(row, emailI), phone]);
-    const { firstName, lastName } = splitName(name);
+    const split = firstName || lastName ? { firstName, lastName } : splitName(name);
     return {
       smtId,
       name,
-      firstName,
-      lastName,
+      firstName: split.firstName,
+      lastName: split.lastName,
       email: cell(row, emailI) || null,
       phone,
       phoneE164,
@@ -185,7 +246,10 @@ export function customersFromTable(table: HtmlTable): SmtCustomer[] {
       source: cell(row, sourceI) || null,
       stage: cell(row, stageI) || null,
       lastBookingAt: parseUkDate(cell(row, bookingI)),
-      raw: Object.fromEntries(h.map((header, idx) => [header || `col${idx}`, row[idx] ?? ""])),
+      raw: {
+        vrn: cell(row, vrnI) || null,
+        ...Object.fromEntries(h.map((header, idx) => [header || `col${idx}`, row[idx] ?? ""])),
+      },
     };
   });
 }
@@ -274,9 +338,13 @@ export function testimonialsFromTable(table: HtmlTable): SmtTestimonial[] {
 
 export function pickMainTable(tables: HtmlTable[], minCols = 3): HtmlTable | null {
   const ranked = tables
-    .filter((t) => t.rows.length && t.headers.length >= Math.min(minCols, t.headers.length))
+    .filter((t) => {
+      const head = t.headers.join(" ").toLowerCase();
+      if (head === "key" || head.includes("detractors")) return false;
+      return t.rows.length && t.headers.length >= Math.min(minCols, t.headers.length);
+    })
     .sort((a, b) => b.rows.length - a.rows.length);
-  return ranked[0] ?? tables.find((t) => t.rows.length) ?? null;
+  return ranked[0] ?? tables.find((t) => t.rows.length && t.headers.join(" ").toLowerCase() !== "key") ?? null;
 }
 
 export function parseCsv(text: string): string[][] {
