@@ -25,6 +25,13 @@ Live scrape needs `SMT_EMAIL`, `SMT_PASSWORD`, and `SUPABASE_SECRET_KEY`. Apply 
 
 ## Deploy
 
-New Vercel project from `apps/tyre-shop-crm`. Env: SMT login, dashboard password, Supabase secret, optional `WEBHOOK_URL` / `WEBHOOK_SECRET`, `CRON_SECRET`.
+New Vercel project **`tyres-4u-smt-crm`** from `apps/tyre-shop-crm`. Do not change the inbox project (`tyre-fighter-dundee-inbox`) or the repo-root `whatsapp-ai-framework` Vercel project.
+
+```bash
+# from apps/tyre-shop-crm, with VERCEL_TOKEN set
+npm run deploy:vercel
+```
+
+The script reads `.env.local` (never prints values) and sets Production + Preview + Development. Minute cron needs a Vercel Pro plan; Hobby still serves the UI and **Scrape now**.
 
 Inbox at https://tyre-fighter-dundee-inbox.vercel.app stays untouched.

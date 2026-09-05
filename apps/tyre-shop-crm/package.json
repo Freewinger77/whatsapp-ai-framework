@@ -4,12 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build --turbopack",
+    "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "test": "tsx --test lib/hours.test.ts lib/smt/parse.test.ts lib/conversion.test.ts",
     "backfill": "tsx --env-file=.env.local scripts/backfill.ts",
-    "db:schema": "node --env-file=.env.local scripts/apply-schema.mjs"
+    "db:schema": "node --env-file=.env.local scripts/apply-schema.mjs",
+    "deploy:vercel": "node scripts/deploy-vercel.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.115.0",
