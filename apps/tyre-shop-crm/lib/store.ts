@@ -3,7 +3,7 @@ import { buildLeadConversion } from "./conversion";
 import { npsHeadline } from "./hours";
 import { memory, memoryEnabled } from "./memory";
 import { adminClient, supabaseConfigured } from "./supabase/admin";
-import type { SmtCustomer, SmtEnquiry, SmtNps, SmtTestimonial } from "./smt/types";
+import type { SmtBooking, SmtCustomer, SmtEnquiry, SmtNps, SmtTestimonial } from "./smt/types";
 
 function usingMemory(): boolean {
   return memoryEnabled() && !supabaseConfigured();
@@ -288,6 +288,58 @@ export async function upsertTestimonial(row: SmtTestimonial): Promise<UpsertResu
   return { isNew: true };
 }
 
+export async function upsertBooking(row: SmtBooking): Promise<UpsertResult> {
+  const payload = {
+    smt_id: row.smtId,
+    customer_smt_id: row.customerSmtId,
+    customer_name: row.customerName,
+    customer_key: row.customerKey,
+    vrn: row.vrn,
+    vehicle_make: row.vehicleMake,
+    vehicle_model: row.vehicleModel,
+    status: row.status,
+    status_norm: row.statusNorm,
+    site_status: row.siteStatus,
+    created_at_smt: row.createdAt,
+    fitting_at: row.fittingAt,
+    in_hours: row.inHours,
+    order_total: row.orderTotal,
+    currency: row.currency,
+    tyre_qty: row.tyreQty,
+    services: row.services.join(", "),
+    tags: row.tags,
+    raw: row.raw,
+    last_seen_at: new Date().toISOString(),
+  };
+  if (usingMemory()) {
+    const isNew = memory.upsert("smt_bookings", "smt_id", payload);
+    return { isNew };
+  }
+  const db = adminClient();
+  const { data: existing } = await db.from("smt_bookings").select("smt_id").eq("smt_id", row.smtId).maybeSingle();
+  if (existing) {
+    await db.from("smt_bookings").update(payload).eq("smt_id", row.smtId);
+    return { isNew: false };
+  }
+  await db.from("smt_bookings").insert({ ...payload, first_seen_at: new Date().toISOString() });
+  return { isNew: true };
+}
+
+export async function stampCustomerBookingDates(
+  updates: Array<{ smtId: string; lastBookingAt: string }>,
+): Promise<void> {
+  if (usingMemory()) {
+    for (const row of updates) {
+      memory.update("smt_customers", "smt_id", row.smtId, { last_booking_at: row.lastBookingAt });
+    }
+    return;
+  }
+  const db = adminClient();
+  for (const row of updates) {
+    await db.from("smt_customers").update({ last_booking_at: row.lastBookingAt }).eq("smt_id", row.smtId);
+  }
+}
+
 export async function markWebhookSent(table: string, smtId: string): Promise<void> {
   if (usingMemory()) {
     memory.update(table, "smt_id", smtId, { webhook_sent_at: new Date().toISOString() });
@@ -356,12 +408,15 @@ export async function counts() {
       outHours: enquiries.filter((e) => !e.in_hours).length,
       emailLeads: enquiries.filter((e) => e.channel !== "phone").length,
       phoneLeads: enquiries.filter((e) => e.channel === "phone").length,
+      bookings: memory.all("smt_bookings").length,
+      fitted: memory.all("smt_bookings").filter((b) => b.status_norm === "fitted").length,
+      abandoned: memory.all("smt_bookings").filter((b) => b.status_norm === "abandoned").length,
       npsHeadline: npsHeadline(scores),
     };
   }
   const db = adminClient();
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const [customers, enquiries, nps, testimonials, newCustomers, inHours, outHours, emailLeads, phoneLeads] =
+  const [customers, enquiries, nps, testimonials, newCustomers, inHours, outHours, emailLeads, phoneLeads, bookings, fitted, abandoned] =
     await Promise.all([
       db.from("smt_customers").select("smt_id", { count: "exact", head: true }),
       db.from("smt_enquiries").select("smt_id", { count: "exact", head: true }),
@@ -372,6 +427,9 @@ export async function counts() {
       db.from("smt_enquiries").select("smt_id", { count: "exact", head: true }).eq("in_hours", false),
       db.from("smt_enquiries").select("smt_id", { count: "exact", head: true }).neq("channel", "phone"),
       db.from("smt_enquiries").select("smt_id", { count: "exact", head: true }).eq("channel", "phone"),
+      db.from("smt_bookings").select("smt_id", { count: "exact", head: true }),
+      db.from("smt_bookings").select("smt_id", { count: "exact", head: true }).eq("status_norm", "fitted"),
+      db.from("smt_bookings").select("smt_id", { count: "exact", head: true }).eq("status_norm", "abandoned"),
     ]);
   const scores = ((nps.data as Array<{ score: number }> | null) ?? []).map((r) => Number(r.score));
   return {
@@ -384,6 +442,9 @@ export async function counts() {
     outHours: outHours.count ?? 0,
     emailLeads: emailLeads.count ?? 0,
     phoneLeads: phoneLeads.count ?? 0,
+    bookings: bookings.count ?? 0,
+    fitted: fitted.count ?? 0,
+    abandoned: abandoned.count ?? 0,
     npsHeadline: npsHeadline(scores),
   };
 }
@@ -400,16 +461,25 @@ export async function analytics(days = 30) {
       first_seen_at: string;
     }>;
     const customers = memory.all("smt_customers") as Array<{ last_booking_at: string | null }>;
-    return buildAnalytics(windowDays, rows, customers, memory.all("smt_nps").map((r) => Number(r.score)));
+    const bookings = memory.all("smt_bookings") as Array<{ created_at_smt: string | null; fitting_at: string | null; status_norm: string }>;
+    return buildAnalytics(
+      windowDays,
+      rows,
+      customers,
+      memory.all("smt_nps").map((r) => Number(r.score)),
+      undefined,
+      bookings,
+    );
   }
   const db = adminClient();
-  const [{ data: enquiries }, { data: customerRows }, { data: nps }, kpi] = await Promise.all([
+  const [{ data: enquiries }, { data: customerRows }, { data: nps }, { data: bookingRows }, kpi] = await Promise.all([
     db
       .from("smt_enquiries")
       .select("enquired_at,in_hours,status,source,channel,first_seen_at")
       .gte("first_seen_at", since),
     db.from("smt_customers").select("last_booking_at").not("last_booking_at", "is", null).gte("last_booking_at", since),
     db.from("smt_nps").select("score,scored_at"),
+    db.from("smt_bookings").select("created_at_smt,fitting_at,status_norm").gte("created_at_smt", since),
     counts(),
   ]);
   const rows = (enquiries ?? []) as Array<{
@@ -421,7 +491,8 @@ export async function analytics(days = 30) {
   }>;
   const customers = (customerRows ?? []) as Array<{ last_booking_at: string | null }>;
   const scores = ((nps ?? []) as Array<{ score: number }>).map((r) => Number(r.score));
-  return buildAnalytics(windowDays, rows, customers, scores, kpi);
+  const bookings = (bookingRows ?? []) as Array<{ created_at_smt: string | null; fitting_at: string | null; status_norm: string }>;
+  return buildAnalytics(windowDays, rows, customers, scores, kpi, bookings);
 }
 
 async function buildAnalytics(
@@ -436,6 +507,7 @@ async function buildAnalytics(
   customers: Array<{ last_booking_at: string | null }>,
   scores: number[],
   kpiCounts?: Awaited<ReturnType<typeof counts>>,
+  bookingRows: Array<{ created_at_smt: string | null; fitting_at: string | null; status_norm: string }> = [],
 ) {
   const kpi = kpiCounts ?? (await counts());
   const dash = buildDashboardSeries(
@@ -448,6 +520,10 @@ async function buildAnalytics(
     })),
     customers.map((row) => ({ bookedAt: row.last_booking_at })),
     kpi.customers,
+    bookingRows.map((row) => ({
+      at: row.created_at_smt || row.fitting_at,
+      fitted: row.status_norm === "fitted",
+    })),
   );
   const byHour = Array.from({ length: 24 }, (_, hour) => ({ hour, total: 0, inHours: 0, outHours: 0 }));
   for (const row of rows) {

@@ -10,6 +10,7 @@ type Row = {
   source: string | null;
   stage: string | null;
   first_seen_at: string;
+  last_booking_at: string | null;
 };
 
 export default function CustomersPage() {
@@ -30,7 +31,7 @@ export default function CustomersPage() {
         { key: "phone", label: "Phone", render: (r) => r.phone },
         { key: "source", label: "Source", render: (r) => r.source },
         { key: "stage", label: "Stage", render: (r) => r.stage },
-        { key: "seen", label: "First seen", render: (r) => r.first_seen_at?.slice(0, 10) },
+        { key: "seen", label: "Last booking", render: (r) => r.last_booking_at?.slice(0, 10) || "—" },
       ]}
       renderFlyout={(r, events, onClose) => (
         <>
@@ -43,6 +44,7 @@ export default function CustomersPage() {
             ["Email", r.email],
             ["Source", r.source],
             ["Stage", r.stage],
+            ["Last booking", r.last_booking_at],
             ["First seen", r.first_seen_at],
             ["SMT id", r.smt_id],
           ].map(([k, v]) => (

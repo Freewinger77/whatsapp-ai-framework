@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { isInHours } from "../hours";
 import {
   activityFromHome,
+  bookingsFromCsv,
   customersFromTable,
   enquiriesFromExportCsv,
   enquiriesFromTable,
@@ -151,5 +152,19 @@ Alison Crawley,alcrawley77@gmail.com,07740677509,Hello screw in tyre,,04/09/2026
     assert.equal(row.smtId, "3001");
     assert.equal(row.score, 10);
     assert.equal(row.reason, "Fast fitting");
+  });
+  it("collapses booking export lines onto unique OrderIDs", () => {
+    const csv = `"OrderID","DateCreated","FittingDateTime","ServiceName","Quantity","OrderTotal","Currency","Status","Customer","VRN","VehicleMake","VehicleModel","SiteStatus","Tags"
+270564,26/03/2025 15:06:01,27/03/2025 15:00:00,All Fluid Check,1,105.00,Pound,Fitted / complete,ZEN PERVAZ,AL11ZEN,,,Online,
+270564,26/03/2025 15:06:01,27/03/2025 15:00:00,Tyre,2,105.00,Pound,Fitted / complete,ZEN PERVAZ,AL11ZEN,,,Online,
+270990,04/04/2025 08:37:49,05/04/2025 11:00:00,Tyre,1,120.99,Pound,Abandoned,Meghan Gormley,MJ19 AOY,Renault,Clio,Online,`;
+    const rows = bookingsFromCsv(csv);
+    assert.equal(rows.length, 2);
+    const fitted = rows.find((r) => r.smtId === "270564");
+    assert.equal(fitted?.statusNorm, "fitted");
+    assert.equal(fitted?.tyreQty, 2);
+    assert.ok(fitted?.services.includes("All Fluid Check"));
+    assert.equal(rows.find((r) => r.smtId === "270990")?.statusNorm, "abandoned");
+    assert.equal(fitted?.customerKey, "zen pervaz");
   });
 });

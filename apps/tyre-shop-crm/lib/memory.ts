@@ -5,6 +5,7 @@ type Row = Record<string, unknown>;
 const tables: Record<string, Row[]> = {
   smt_customers: [],
   smt_enquiries: [],
+  smt_bookings: [],
   smt_nps: [],
   smt_testimonials: [],
   smt_events: [],
