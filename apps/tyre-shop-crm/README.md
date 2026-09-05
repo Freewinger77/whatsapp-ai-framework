@@ -34,4 +34,5 @@ npm run deploy:vercel
 
 The script reads `.env.local` (never prints values) and sets Production + Preview + Development. Do not set `TZ` on Vercel (reserved); the app already defaults to `Europe/London`. Minute cron needs a Vercel Pro plan; Hobby still serves the UI and **Scrape now**.
 
+Production: https://tyres-4u-smt-crm.vercel.app  
 Inbox at https://tyre-fighter-dundee-inbox.vercel.app stays untouched.
