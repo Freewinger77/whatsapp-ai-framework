@@ -27,7 +27,7 @@ export function DashboardMobile({
   const series = data?.series ?? [];
   const labels = chartLabels(series);
   const vs = periodVsLabel(days);
-  const callList = callbacks(enquiries);
+  const callList = callbacks(enquiries, data?.from, data?.to);
   const oldest = callList[0];
 
   return (

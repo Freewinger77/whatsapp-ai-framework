@@ -1,4 +1,5 @@
 import type { DayBucket } from "./analytics-series";
+import { londonDateKey } from "./display";
 
 export type EnquiryRow = {
   smt_id: string;
@@ -89,9 +90,14 @@ export function chartLabels(series: DayBucket[]): string[] {
   return Array.from({ length: 7 }, (_, i) => series[Math.round(i * step)]?.label || "");
 }
 
-export function callbacks(enquiries: EnquiryRow[]): EnquiryRow[] {
+export function callbacks(enquiries: EnquiryRow[], from?: string, to?: string): EnquiryRow[] {
   return [...enquiries]
-    .filter((e) => !e.in_hours)
+    .filter((e) => {
+      if (e.in_hours) return false;
+      if (!from || !to) return true;
+      const key = londonDateKey(e.enquired_at || e.first_seen_at || "");
+      return Boolean(key && key >= from && key <= to);
+    })
     .sort((a, b) => String(a.enquired_at || a.first_seen_at || "").localeCompare(String(b.enquired_at || b.first_seen_at || "")));
 }
 

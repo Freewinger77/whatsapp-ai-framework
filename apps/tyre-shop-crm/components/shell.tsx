@@ -67,16 +67,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   async function refreshStatus() {
     try {
-      const [statusRes, leadRes] = await Promise.all([fetch("/api/status"), fetch("/api/enquiries?hours=out&limit=200")]);
+      const [statusRes, dashRes] = await Promise.all([fetch("/api/status"), fetch("/api/analytics?days=7")]);
       if (statusRes.ok) {
         const data = await statusRes.json();
         setMode(data.mode || "live");
         const at = data.latestPoll?.finished_at || data.latestPoll?.started_at;
         setLastPoll(at || null);
       }
-      if (leadRes.ok) {
-        const data = await leadRes.json();
-        setLeadBadge(Array.isArray(data.enquiries) ? data.enquiries.length : data.count || 0);
+      if (dashRes.ok) {
+        const data = await dashRes.json();
+        setLeadBadge(Number(data.mix?.outHours ?? 0));
       }
     } catch {
       /* ignore */

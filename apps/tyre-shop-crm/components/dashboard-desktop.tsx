@@ -50,7 +50,7 @@ export function DashboardDesktop({
   const series = data?.series ?? [];
   const labels = chartLabels(series);
   const vs = periodVsLabel(days);
-  const callList = callbacks(enquiries);
+  const callList = callbacks(enquiries, data?.from, data?.to);
   const recent = recentLeads(enquiries, 5);
   const after = pct?.afterHours;
   const range = data ? formatDayRange(data.from, data.to) : "";
