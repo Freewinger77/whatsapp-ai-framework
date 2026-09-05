@@ -1,0 +1,33 @@
+{
+  "name": "tyre-shop-crm",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "tsx --test lib/hours.test.ts lib/smt/parse.test.ts lib/conversion.test.ts lib/analytics-series.test.ts lib/chart-path.test.ts lib/display.test.ts",
+    "backfill": "tsx --env-file=.env.local scripts/backfill.ts",
+    "db:schema": "node --env-file=.env.local scripts/apply-schema.mjs",
+    "deploy:vercel": "node scripts/deploy-vercel.mjs",
+    "import:bookings": "tsx --env-file=.env.local scripts/import-bookings.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.115.0",
+    "next": "15.5.9",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.5.9",
+    "pg": "^8.23.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5"
+  }
+}

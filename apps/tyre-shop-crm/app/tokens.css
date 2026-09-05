@@ -1,0 +1,431 @@
+/* RapidScreen design tokens — copied verbatim from the design system. */
+
+/* Inter — the only text face the source Figma file uses (Regular 400, Medium 500, Semi Bold 600, Bold 700, plus italics).
+   Served from Google Fonts as a variable font; matches the file's family name exactly. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+
+/* "Figma Hand" appears twice in the source file, only inside two scratch/demo frames that are not part
+   of the product surface. It is a Figma-internal face with no public distribution; it is NOT declared here. */
+
+
+/* Generated from Figma Variables. First mode = :root default.
+   FLOAT tokens are unitless — multiply by 1px in calc() where a length is needed. */
+
+:root {
+  --10: 0; /* @kind spacing */
+  --12-2: 12; /* @kind spacing */
+  --12-3: 0; /* @kind spacing */
+  --12: 12; /* @kind spacing */
+  --14: 0; /* @kind spacing */
+  --16-2: 16; /* @kind spacing */
+  --16-3: 16; /* @kind spacing */
+  --16-4: 16; /* @kind spacing */
+  --16: 16; /* @kind spacing */
+  --18: 0; /* @kind spacing */
+  --20-2: 20; /* @kind spacing */
+  --20-3: 20; /* @kind spacing */
+  --20-4: 20; /* @kind spacing */
+  --20: 20; /* @kind spacing */
+  --24-2: 24; /* @kind spacing */
+  --24-3: 24; /* @kind spacing */
+  --24-4: 24; /* @kind spacing */
+  --24: 24; /* @kind spacing */
+  --28-2: 28; /* @kind spacing */
+  --28-3: 28; /* @kind spacing */
+  --28: 28; /* @kind spacing */
+  --32: 32; /* @kind spacing */
+  --4-2: 4; /* @kind spacing */
+  --40-2: 40; /* @kind spacing */
+  --40: 40; /* @kind spacing */
+  --48: 48; /* @kind spacing */
+  --4: 4; /* @kind spacing */
+  --8-2: 8; /* @kind spacing */
+  --8-3: 0; /* @kind spacing */
+  --80-2: 80; /* @kind spacing */
+  --80: 80; /* @kind spacing */
+  --8: 8; /* @kind spacing */
+  --background-1: rgb(255,255,255); /* @kind color */
+  --background-2: rgb(249,249,250); /* @kind color */
+  --background-3: rgba(255,255,255,0.8); /* @kind color */
+  --background-4: rgb(237,238,252); /* @kind color */
+  --background-5: rgb(230,241,253); /* @kind color */
+  --black-100-2: rgb(0,0,0); /* @kind color */
+  --black-100-3: rgb(0,0,0); /* @kind color */
+  --black-100-4: rgb(0,0,0); /* @kind color */
+  --black-100: rgb(0,0,0); /* @kind color */
+  --black-10: rgba(0,0,0,0.1); /* @kind color */
+  --black-20: rgba(0,0,0,0.2); /* @kind color */
+  --black-4-2: rgba(0,0,0,0.04); /* @kind color */
+  --black-4-3: rgba(0,0,0,0.04); /* @kind color */
+  --black-4-4: rgba(0,0,0,0.04); /* @kind color */
+  --black-40: rgba(0,0,0,0.4); /* @kind color */
+  --black-4: rgba(0,0,0,0.04); /* @kind color */
+  --black-80-2: rgba(0,0,0,0.8); /* @kind color */
+  --black-80: rgba(0,0,0,0.8); /* @kind color */
+  --color-1: rgb(230,241,253); /* @kind color */
+  --color-2: rgb(237,238,252); /* @kind color */
+  --font-family: "Inter"; /* @kind font */
+  --font: "Inter"; /* @kind font */
+  --letter-spacing-2: 0; /* @kind spacing */
+  --letter-spacing: 0; /* @kind spacing */
+  --logo-2: rgb(79,80,127); /* @kind color */
+  --logo: rgb(76,152,253); /* @kind color */
+  --primary: var(--black-100); /* @kind color */
+  --radius-4: 4; /* @kind radius */
+  --radius-8: 8; /* @kind radius */
+  --regular-2: 400; /* @kind font */
+  --regular: 400; /* @kind font */
+  --secondary-blue: rgb(125,187,255); /* @kind color */
+  --secondary-green: rgb(113,221,140); /* @kind color */
+  --secondary-indigo: rgb(173,173,251); /* @kind color */
+  --secondary-purple: rgb(184,153,235); /* @kind color */
+  --secondary-red: rgb(255,71,71); /* @kind color */
+  --secondary-yellow: rgb(255,204,0); /* @kind color */
+  --semi-bold: 600; /* @kind font */
+  --semibold: 600; /* @kind font */
+  --size-16: 16; /* @kind font */
+  --size-20: 20; /* @kind font */
+  --size-28: 28; /* @kind font */
+  --white-100: rgb(255,255,255); /* @kind color */
+  --white-10: rgba(255,255,255,0.1); /* @kind color */
+  --white-20: rgba(255,255,255,0.2); /* @kind color */
+  --white-40-2: rgba(255,255,255,0.4); /* @kind color */
+  --white-40: rgba(255,255,255,0.4); /* @kind color */
+}
+
+:root[data-mode="expanded-4"] {
+  --12-2: 16; /* @kind spacing */
+  --12: 16; /* @kind spacing */
+  --16-2: 20; /* @kind spacing */
+  --16-3: 20; /* @kind spacing */
+  --16-4: 20; /* @kind spacing */
+  --16: 20; /* @kind spacing */
+  --20-2: 24; /* @kind spacing */
+  --20-3: 24; /* @kind spacing */
+  --20-4: 24; /* @kind spacing */
+  --20: 24; /* @kind spacing */
+  --24-2: 28; /* @kind spacing */
+  --24-3: 28; /* @kind spacing */
+  --24-4: 28; /* @kind spacing */
+  --24: 28; /* @kind spacing */
+  --28-2: 32; /* @kind spacing */
+  --28-3: 32; /* @kind spacing */
+  --28: 32; /* @kind spacing */
+  --32: 36; /* @kind spacing */
+  --4-2: 8; /* @kind spacing */
+  --40-2: 44; /* @kind spacing */
+  --40: 44; /* @kind spacing */
+  --48: 52; /* @kind spacing */
+  --4: 8; /* @kind spacing */
+  --8-2: 12; /* @kind spacing */
+  --80-2: 84; /* @kind spacing */
+  --80: 84; /* @kind spacing */
+  --8: 12; /* @kind spacing */
+  --radius-4: 4; /* @kind radius */
+  --radius-8: 8; /* @kind radius */
+  --size-16: 20; /* @kind font */
+  --size-20: 24; /* @kind font */
+  --size-28: 32; /* @kind font */
+}
+
+:root[data-mode="expanded-8"] {
+  --12-2: 20; /* @kind spacing */
+  --12: 20; /* @kind spacing */
+  --16-2: 24; /* @kind spacing */
+  --16-3: 24; /* @kind spacing */
+  --16-4: 24; /* @kind spacing */
+  --16: 24; /* @kind spacing */
+  --20-2: 28; /* @kind spacing */
+  --20-3: 28; /* @kind spacing */
+  --20-4: 28; /* @kind spacing */
+  --20: 28; /* @kind spacing */
+  --24-2: 32; /* @kind spacing */
+  --24-3: 32; /* @kind spacing */
+  --24-4: 32; /* @kind spacing */
+  --24: 32; /* @kind spacing */
+  --28-2: 36; /* @kind spacing */
+  --28-3: 36; /* @kind spacing */
+  --28: 36; /* @kind spacing */
+  --32: 40; /* @kind spacing */
+  --4-2: 12; /* @kind spacing */
+  --40-2: 48; /* @kind spacing */
+  --40: 48; /* @kind spacing */
+  --48: 56; /* @kind spacing */
+  --4: 12; /* @kind spacing */
+  --8-2: 16; /* @kind spacing */
+  --80-2: 88; /* @kind spacing */
+  --80: 88; /* @kind spacing */
+  --8: 16; /* @kind spacing */
+  --radius-4: 4; /* @kind radius */
+  --radius-8: 8; /* @kind radius */
+  --size-16: 12; /* @kind font */
+  --size-20: 16; /* @kind font */
+  --size-28: 24; /* @kind font */
+}
+
+:root[data-mode="condensed-4"] {
+  --12-2: 8; /* @kind spacing */
+  --12: 8; /* @kind spacing */
+  --16-2: 12; /* @kind spacing */
+  --16-3: 12; /* @kind spacing */
+  --16-4: 12; /* @kind spacing */
+  --16: 12; /* @kind spacing */
+  --20-2: 16; /* @kind spacing */
+  --20-3: 16; /* @kind spacing */
+  --20-4: 16; /* @kind spacing */
+  --20: 16; /* @kind spacing */
+  --24-2: 20; /* @kind spacing */
+  --24-3: 20; /* @kind spacing */
+  --24-4: 20; /* @kind spacing */
+  --24: 20; /* @kind spacing */
+  --28-2: 24; /* @kind spacing */
+  --28-3: 24; /* @kind spacing */
+  --28: 24; /* @kind spacing */
+  --32: 28; /* @kind spacing */
+  --4-2: 0; /* @kind spacing */
+  --40-2: 36; /* @kind spacing */
+  --40: 36; /* @kind spacing */
+  --48: 44; /* @kind spacing */
+  --4: 0; /* @kind spacing */
+  --8-2: 4; /* @kind spacing */
+  --80-2: 76; /* @kind spacing */
+  --80: 76; /* @kind spacing */
+  --8: 4; /* @kind spacing */
+  --radius-4: 4; /* @kind radius */
+  --radius-8: 8; /* @kind radius */
+  --size-16: 16; /* @kind font */
+  --size-20: 20; /* @kind font */
+  --size-28: 28; /* @kind font */
+}
+
+:root[data-theme="dark"], .dark {
+  --background-1: rgb(51,51,51); /* @kind color */
+  --background-1: rgb(51,51,51); /* @kind color */
+  --background-2: rgba(255,255,255,0.04); /* @kind color */
+  --background-2: rgba(255,255,255,0.04); /* @kind color */
+  --background-3: rgba(0,0,0,0.1); /* @kind color */
+  --background-3: rgba(0,0,0,0.1); /* @kind color */
+  --background-4: rgb(237,238,252); /* @kind color */
+  --background-4: rgba(0,0,0,0.1); /* @kind color */
+  --background-5: rgb(230,241,253); /* @kind color */
+  --background-5: rgba(255,255,255,0.8); /* @kind color */
+  --black-100-2: rgb(255,255,255); /* @kind color */
+  --black-100-2: rgb(255,255,255); /* @kind color */
+  --black-100-3: rgb(255,255,255); /* @kind color */
+  --black-100-3: rgb(255,255,255); /* @kind color */
+  --black-100-4: rgb(255,255,255); /* @kind color */
+  --black-100-4: rgb(255,255,255); /* @kind color */
+  --black-100: rgb(255,255,255); /* @kind color */
+  --black-100: rgb(255,255,255); /* @kind color */
+  --black-10: rgba(255,255,255,0.15); /* @kind color */
+  --black-10: rgba(255,255,255,0.15); /* @kind color */
+  --black-20: rgba(255,255,255,0.2); /* @kind color */
+  --black-20: rgba(255,255,255,0.2); /* @kind color */
+  --black-4-2: rgba(255,255,255,0.1); /* @kind color */
+  --black-4-2: rgba(255,255,255,0.1); /* @kind color */
+  --black-4-3: rgba(255,255,255,0.1); /* @kind color */
+  --black-4-3: rgba(255,255,255,0.1); /* @kind color */
+  --black-4-4: rgba(255,255,255,0.1); /* @kind color */
+  --black-4-4: rgba(255,255,255,0.1); /* @kind color */
+  --black-40: rgba(255,255,255,0.4); /* @kind color */
+  --black-40: rgba(255,255,255,0.4); /* @kind color */
+  --black-4: rgba(255,255,255,0.1); /* @kind color */
+  --black-4: rgba(255,255,255,0.1); /* @kind color */
+  --black-80-2: rgba(255,255,255,0.8); /* @kind color */
+  --black-80-2: rgba(255,255,255,0.8); /* @kind color */
+  --black-80: rgba(255,255,255,0.8); /* @kind color */
+  --black-80: rgba(255,255,255,0.8); /* @kind color */
+  --color-1: rgb(230,241,253); /* @kind color */
+  --color-1: rgb(231,235,245); /* @kind color */
+  --color-2: rgb(231,231,238); /* @kind color */
+  --color-2: rgb(237,238,252); /* @kind color */
+  --logo-2: rgb(237,237,255); /* @kind color */
+  --logo-2: rgb(237,237,255); /* @kind color */
+  --logo: rgb(76,152,253); /* @kind color */
+  --logo: var(--primary); /* @kind color */
+  --primary: var(--secondary-blue); /* @kind color */
+  --primary: var(--secondary-indigo); /* @kind color */
+  --secondary-blue: rgb(10,132,255); /* @kind color */
+  --secondary-blue: rgb(125,187,255); /* @kind color */
+  --secondary-green: rgb(113,221,140); /* @kind color */
+  --secondary-green: rgb(48,209,88); /* @kind color */
+  --secondary-indigo: rgb(173,173,251); /* @kind color */
+  --secondary-indigo: rgb(94,92,230); /* @kind color */
+  --secondary-purple: rgb(184,153,235); /* @kind color */
+  --secondary-purple: rgb(191,90,242); /* @kind color */
+  --secondary-red: rgb(255,69,58); /* @kind color */
+  --secondary-red: rgb(255,71,71); /* @kind color */
+  --secondary-yellow: rgb(255,204,0); /* @kind color */
+  --secondary-yellow: rgb(255,214,10); /* @kind color */
+  --white-100: rgb(0,0,0); /* @kind color */
+  --white-100: rgb(0,0,0); /* @kind color */
+  --white-10: rgba(0,0,0,0.1); /* @kind color */
+  --white-10: rgba(0,0,0,0.1); /* @kind color */
+  --white-20: rgba(0,0,0,0.2); /* @kind color */
+  --white-20: rgba(0,0,0,0.2); /* @kind color */
+  --white-40-2: rgba(0,0,0,0.4); /* @kind color */
+  --white-40-2: rgba(0,0,0,0.4); /* @kind color */
+  --white-40: rgba(0,0,0,0.4); /* @kind color */
+  --white-40: rgba(0,0,0,0.4); /* @kind color */
+}
+
+:root[data-theme="light"], .light {
+  --background-1: rgb(245,245,246); /* @kind color */
+  --background-2: rgb(255,255,255); /* @kind color */
+  --background-3: rgba(0,0,0,0.03); /* @kind color */
+  --background-4: rgba(0,0,0,0.02); /* @kind color */
+  --background-5: rgb(255,255,255); /* @kind color */
+  --black-100-2: rgb(0,0,0); /* @kind color */
+  --black-100-3: rgb(0,0,0); /* @kind color */
+  --black-100-4: rgb(0,0,0); /* @kind color */
+  --black-100: rgb(0,0,0); /* @kind color */
+  --black-10: rgba(0,0,0,0.1); /* @kind color */
+  --black-20: rgba(0,0,0,0.2); /* @kind color */
+  --black-4-2: rgba(0,0,0,0.04); /* @kind color */
+  --black-4-3: rgba(0,0,0,0.04); /* @kind color */
+  --black-4-4: rgba(0,0,0,0.04); /* @kind color */
+  --black-40: rgba(0,0,0,0.4); /* @kind color */
+  --black-4: rgba(0,0,0,0.04); /* @kind color */
+  --black-80-2: rgba(0,0,0,0.8); /* @kind color */
+  --black-80: rgba(0,0,0,0.8); /* @kind color */
+  --color-1: rgb(231,235,245); /* @kind color */
+  --color-2: rgb(231,231,238); /* @kind color */
+  --logo-2: rgb(79,80,127); /* @kind color */
+  --logo: var(--primary); /* @kind color */
+  --primary: var(--secondary-blue); /* @kind color */
+  --secondary-blue: rgb(0,122,255); /* @kind color */
+  --secondary-green: rgb(52,199,89); /* @kind color */
+  --secondary-indigo: rgb(88,86,214); /* @kind color */
+  --secondary-purple: rgb(175,82,222); /* @kind color */
+  --secondary-red: rgb(255,59,48); /* @kind color */
+  --secondary-yellow: rgb(255,204,0); /* @kind color */
+  --white-100: rgb(255,255,255); /* @kind color */
+  --white-10: rgba(255,255,255,0.1); /* @kind color */
+  --white-20: rgba(255,255,255,0.2); /* @kind color */
+  --white-40-2: rgba(255,255,255,0.4); /* @kind color */
+  --white-40: rgba(255,255,255,0.4); /* @kind color */
+}
+
+:root[data-mode="paragraph"] {
+  --10: 10; /* @kind spacing */
+  --12-3: 12; /* @kind spacing */
+  --14: 14; /* @kind spacing */
+  --18: 18; /* @kind spacing */
+  --8-3: 8; /* @kind spacing */
+}
+
+:root[data-mode="sf-pro"] {
+  --font-family: "SF Pro"; /* @kind font */
+  --font: "SF Pro"; /* @kind font */
+  --letter-spacing-2: 0; /* @kind spacing */
+  --letter-spacing: 0; /* @kind spacing */
+}
+
+:root[data-mode="bai-jamjuree"] {
+  --font-family: "Bai Jamjuree"; /* @kind font */
+  --font: "Bai Jamjuree"; /* @kind font */
+  --letter-spacing-2: 0; /* @kind spacing */
+  --letter-spacing: 0; /* @kind spacing */
+}
+
+:root[data-mode="space-grotesk"] {
+  --font-family: "Space Grotesk"; /* @kind font */
+  --font: "Space Grotesk"; /* @kind font */
+  --letter-spacing-2: 0; /* @kind spacing */
+  --letter-spacing: 0; /* @kind spacing */
+}
+
+:root[data-mode="semi-bold-regular"] {
+  --regular-2: 600; /* @kind font */
+  --regular: 600; /* @kind font */
+  --semi-bold: 400; /* @kind font */
+  --semibold: 400; /* @kind font */
+}
+
+
+/* No TEXT/EFFECT styles in this file. */
+
+
+/* Semantic aliases layered over the raw Figma Variables in fig-tokens.css.
+   Raw names are the file's own (--black-100, --background-2, --24-2, …); these read better in product code.
+   FLOAT tokens are unitless — always wrap in calc(var(--x) * 1px). */
+
+:root {
+  /* Text */
+  --text-primary: var(--black-100);          /* rgb(0,0,0) — 674 uses, the workhorse */
+  --text-secondary: var(--black-80);         /* rgba(0,0,0,0.8) */
+  --text-muted: var(--black-40);             /* rgba(0,0,0,0.4) — placeholders, timestamps */
+  --text-disabled: var(--black-20);
+  --text-on-dark: var(--white-100);
+  --text-sidebar: rgb(58,58,58);             /* literal in the file: sidebar labels + wordmark */
+  --text-link: var(--logo-2);                /* rgb(79,80,127) — the indigo "Click here to…" links */
+
+  /* Surfaces */
+  --surface-page: var(--background-1);       /* rgb(255,255,255) */
+  --surface-sunken: var(--background-2);     /* rgb(249,249,250) — 174 uses: panels, card wells */
+  --surface-glass: var(--background-3);      /* rgba(255,255,255,0.8) — behind backdrop-filter */
+  --surface-tint-indigo: var(--background-4);/* rgb(237,238,252) */
+  --surface-tint-blue: var(--background-5);  /* rgb(230,241,253) */
+  --surface-hover: var(--black-4);           /* rgba(0,0,0,0.04) — the universal hover wash */
+  --surface-inverse: rgb(28,28,30);          /* section plates, filled buttons */
+
+  /* Lines */
+  --border-subtle: var(--black-4);
+  --border-default: var(--black-10);
+  --border-strong: var(--black-20);
+
+  /* Brand */
+  --brand-mark-bg: rgb(0,0,0);
+  --brand-logo-blue: var(--logo);            /* rgb(76,152,253) */
+  --brand-logo-indigo: var(--logo-2);        /* rgb(79,80,127) */
+
+  /* Status / channel colors (iOS-derived secondary ramp) */
+  --status-green: var(--secondary-green);
+  --status-red: var(--secondary-red);
+  --status-yellow: var(--secondary-yellow);
+  --status-blue: var(--secondary-blue);
+  --status-indigo: var(--secondary-indigo);
+  --status-purple: var(--secondary-purple);
+  --channel-whatsapp: rgb(37,211,102);
+
+  /* Type — the file's real ladder */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: var(--font-sans);
+  --size-body: 14px;      /* line-height 20px — 68 of the file's 96 text runs */
+  --size-body-lg: 16px;   /* line-height 24px */
+  --size-caption: 12px;   /* line-height 16px */
+  --size-micro: 10px;
+  --size-title: 24px;     /* Semi Bold, page + card headings */
+  --size-hero: 44px;      /* Semi Bold -2% tracking, login headline */
+  --size-plate: 80px;     /* Bold, section plates */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --tracking-hero: -0.02em;
+
+  /* Radii — the file's actual values, not a rounded scale */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+  --radius-card: 30px;    /* login side panel */
+  --radius-pill: 80px;    /* avatars, chips */
+
+  /* Elevation. The file leans on hairline insets, not drop shadows. */
+  --ring-hairline: inset 0 0 0 1px var(--black-10);
+  --ring-avatar: inset 0 0 0 3.2px rgb(249,249,250); /* @kind shadow */
+  --shadow-card: 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-float: 0 8px 24px rgba(0,0,0,0.08);
+  --blur-glass: blur(45.113px); /* @kind other */
+
+  /* Motion. Nothing in the file is animated; these are the house defaults for recreations. */
+  --ease-standard: cubic-bezier(0.2, 0, 0.2, 1); /* @kind other */
+  --duration-fast: 120ms; /* @kind other */
+  --duration-base: 200ms; /* @kind other */
+}
+
+a { color: var(--text-link); text-decoration: none; }
+a:hover { color: var(--text-primary); text-decoration: underline; }

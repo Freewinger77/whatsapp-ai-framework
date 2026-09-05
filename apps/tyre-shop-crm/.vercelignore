@@ -1,0 +1,11 @@
+.env
+.env.local
+.env*.local
+.vercel
+.next
+node_modules
+*.tsbuildinfo
+supabase/.tmp
+scripts/*.html
+scripts/*.json
+_scratch
