@@ -31,7 +31,7 @@ export default async function HomePage({
       .select("*")
       .eq("conversation_id", selectedId)
       .order("sent_at", { ascending: true })
-      .limit(400);
+      .limit(800);
     messages = (data || []) as DundeeMessage[];
   }
 

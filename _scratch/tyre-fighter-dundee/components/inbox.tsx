@@ -31,6 +31,26 @@ export function Inbox({
   const [activeId, setActiveId] = useState(selectedId);
 
   useEffect(() => {
+    if (!activeId) return;
+    let cancelled = false;
+    fetch(`/api/conversations/${activeId}/messages`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (cancelled || !payload?.messages) return;
+        setMessages((current) => {
+          const others = current.filter((item) => item.conversation_id !== activeId);
+          return [...others, ...payload.messages].sort((a, b) =>
+            a.sent_at.localeCompare(b.sent_at)
+          );
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId]);
+
+  useEffect(() => {
     const supabase = createClient();
     const channel = supabase
       .channel("dundee-inbox")
