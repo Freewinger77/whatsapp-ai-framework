@@ -52,6 +52,12 @@ The paid RapidScreen handoff is the dashboard. Do not restyle it.
 - Backend / APIs / Supabase fit the handoff. Numbers and lists are live; spacing, type, and colours stay as supplied
 - Switch desktop/mobile at 860px. No other media-query restyle of the handoff surfaces
 
+## Live
+
+- Custom domain: https://tyres4u.wasup.co
+- Vercel alias: https://tyres-4u-smt-crm.vercel.app
+- DNS: GoDaddy `CNAME tyres4u → cname.vercel-dns.com` TTL 600, plus `_vercel` TXT verify. Do not point this hostname at the Azure wasup VM.
+
 ## Verification
 
 1. Login to this dashboard → KPIs populate.
