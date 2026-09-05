@@ -58,6 +58,14 @@ export function extractPageInfo(html: string): { page: number; pages: number } |
   return { page: Number(page[1]), pages: Number(page[2]) };
 }
 
+export function isJunkListRow(cells: string[]): boolean {
+  const text = cells.join(" ").replace(/\s+/g, " ").trim();
+  if (!text) return true;
+  if (/^page\s+\d+\s+of\s+\d+/i.test(text)) return true;
+  if (/^(<<|< prev|next >|>>)$/i.test(text)) return true;
+  return false;
+}
+
 export function extractPaginationTotal(html: string): number | null {
   const showing = html.match(/Showing\s+\d+\s+to\s+\d+\s+of\s+([\d,]+)/i);
   if (showing) return Number(showing[1].replace(/,/g, ""));
@@ -166,6 +174,7 @@ export function parseHtmlTables(html: string): HtmlTable[] {
       let td: RegExpExecArray | null;
       while ((td = tdRe.exec(rowHtml))) cells.push(decodeEntities(td[1]));
       if (!cells.length) continue;
+      if (isJunkListRow(cells)) continue;
       rows.push(cells);
       ids.push(extractRowId(rowHtml));
     }
@@ -275,7 +284,7 @@ export function enquiriesFromTable(table: HtmlTable): SmtEnquiry[] {
       email: cell(row, emailI) || null,
       phone,
       phoneE164: toE164(phone),
-      status: cell(row, statusI) || "New Enquiry",
+      status: normalizeEnquiryStatus(cell(row, statusI)),
       source: cell(row, sourceI) || null,
       notes: cell(row, notesI) || null,
       enquiredAt,
@@ -296,7 +305,7 @@ export function npsFromTable(table: HtmlTable): SmtNps[] {
   const items: SmtNps[] = [];
   table.rows.forEach((row, i) => {
     const score = Number(cell(row, scoreI === -1 ? 0 : scoreI).replace(/[^\d.-]/g, ""));
-    if (!Number.isFinite(score)) return;
+    if (!Number.isFinite(score) || score < 0 || score > 10) return;
     const scoredAt = parseUkDate(cell(row, dateI));
     const name = cell(row, nameI) || null;
     const phone = cell(row, phoneI) || null;
@@ -322,18 +331,28 @@ export function testimonialsFromTable(table: HtmlTable): SmtTestimonial[] {
   const nameI = headerIndex(h, "name", "customer");
   const quoteI = headerIndex(h, "quote", "testimonial", "comment", "review");
   const dateI = headerIndex(h, "date", "published");
-  return table.rows.map((row, i) => {
-    const name = cell(row, nameI) || cell(row, 0);
-    const quote = cell(row, quoteI) || cell(row, Math.min(1, row.length - 1));
-    const publishedAt = parseUkDate(cell(row, dateI));
-    return {
-      smtId: table.ids[i] || slugId(["testimonial", name, quote, publishedAt]),
-      name,
-      quote,
-      publishedAt,
-      raw: Object.fromEntries(h.map((header, idx) => [header || `col${idx}`, row[idx] ?? ""])),
-    };
-  });
+  return table.rows
+    .map((row, i) => {
+      const name = cell(row, nameI) || cell(row, 0);
+      const quote = cell(row, quoteI) || cell(row, Math.min(1, row.length - 1));
+      const publishedAt = parseUkDate(cell(row, dateI));
+      return {
+        smtId: table.ids[i] || slugId(["testimonial", name, quote, publishedAt]),
+        name,
+        quote,
+        publishedAt,
+        raw: Object.fromEntries(h.map((header, idx) => [header || `col${idx}`, row[idx] ?? ""])),
+      };
+    })
+    .filter((row) => row.name.trim() || row.quote.trim());
+}
+
+function normalizeEnquiryStatus(raw: string): string {
+  const text = raw.trim();
+  if (!text) return "New enquiry";
+  if (/^resolved$/i.test(text)) return "Resolved";
+  if (/^new\s*enquir/i.test(text) || /^new$/i.test(text)) return "New enquiry";
+  return text;
 }
 
 export function pickMainTable(tables: HtmlTable[], minCols = 3): HtmlTable | null {

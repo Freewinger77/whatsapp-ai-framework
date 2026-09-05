@@ -150,11 +150,11 @@ export default function DashboardPage() {
 
       <div className="span-12 card">
         <h2>Reconcile vs SMT</h2>
-        <div className="hint">CRM list pages are the census. Reports → New/Existing Customer Bookings are booking charts (~243 new-customer bookings over ~12 months), not the customer list.</div>
-        <div className="row"><span>Customers</span><strong>SMT Page 1 of 14 → expect 289</strong></div>
-        <div className="row"><span>Enquiries</span><strong>SMT Page 1 of 4 → expect 84</strong></div>
-        <div className="row"><span>NPS rows</span><strong>SMT Page 1 of 3 → expect 31 · headline 71.43%</strong></div>
-        <div className="row"><span>Testimonials</span><strong>expect 6</strong></div>
+        <div className="hint">CRM list pages are the census (pager footer rows are ignored). Reports → New/Existing Customer Bookings are booking charts (~243 new-customer bookings over ~12 months), not the customer list.</div>
+        <div className="row"><span>Customers</span><strong>14 pages · 275 View ids (CSV export matches)</strong></div>
+        <div className="row"><span>Enquiries</span><strong>4 pages · 80 View ids</strong></div>
+        <div className="row"><span>NPS rows</span><strong>3 pages · 28 scores · SMT headline 71.43%</strong></div>
+        <div className="row"><span>Testimonials</span><strong>5 quotes</strong></div>
       </div>
     </div>
   );

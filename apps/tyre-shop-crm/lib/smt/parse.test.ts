@@ -87,6 +87,23 @@ describe("SMT HTML parse", () => {
     assert.equal(isInHours(lateAfternoon), true);
     assert.equal(isInHours(afterClose), false);
   });
+  it("drops SMT pager footer rows so they are not customers or scores", () => {
+    const html = `<table>
+      <tr><th>First Name</th><th>Last Name</th><th>Email</th><th>VRN</th><th>Contact number</th></tr>
+      <tr><td>Sam</td><td>Lee</td><td>a@b.com</td><td>AB12CDE</td><td>07700900001</td>
+        <td><a href="/FittingCentre/CRM/CustomerView/1">View</a></td></tr>
+      <tr><td colspan="8"><ul class="pager"><li>Page 1 of 14</li><li><a href="?page=2">Next &gt;</a></li></ul></td></tr>
+    </table>`;
+    const [row, ...rest] = customersFromTable(parseHtmlTables(html)[0]);
+    assert.equal(rest.length, 0);
+    assert.equal(row.smtId, "1");
+    const npsHtml = `<table><tr><th>Score</th><th>Date</th></tr>
+      <tr><td>10</td><td>04/09/2026</td><td><a href="/FittingCentre/CRM/NPSView?nps=9">View</a></td></tr>
+      <tr><td colspan="8">Page 1 of 3 Next > >></td></tr></table>`;
+    const nps = npsFromTable(parseHtmlTables(npsHtml)[0]);
+    assert.equal(nps.length, 1);
+    assert.equal(nps[0].score, 10);
+  });
   it("keeps NPS Score / Date / Reason / Comment columns from the screenshot", () => {
     const table = parseHtmlTables(NPS)[0];
     const [row] = npsFromTable(table);

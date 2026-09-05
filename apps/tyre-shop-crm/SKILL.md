@@ -50,6 +50,6 @@ Unknown id → insert + optional webhook. Known id → refresh, **no second webh
 3. Enquiries in-hours filter: weekday 09:00–17:00 UK vs evenings/Sunday.
 4. Scraper → Scrape now → Activity shows `poll.ok`.
 5. API docs sample matches `GET /api/health`.
-6. SMT **CRM lists** vs `GET /api/analytics`: 289 customers / 84 enquiries / 31 NPS / 6 testimonials. NPS chrome `71.43%` vs table math (`74.19%` on all 31). Reports new-customer bookings (~243/year) are a different metric.
+6. SMT **CRM lists** vs `GET /api/analytics`: 275 customers / 80 enquiries / 28 NPS / 5 testimonials. NPS chrome `71.43%` matches table math on the 28 real scores. Skip pager footer rows (`Page X of Y`). Reports new-customer bookings (~243/year) are a different metric.
 
 Backfill first (`npm run backfill`, `announce: false`), then turn cron on.

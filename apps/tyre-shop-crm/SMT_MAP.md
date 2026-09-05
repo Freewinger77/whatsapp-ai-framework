@@ -14,18 +14,17 @@ Lists are **server-rendered HTML** with `?page=N`. There is **no DataTables XHR*
 
 | Path | Columns / notes | Census |
 |---|---|---|
-| `/FittingCentre/CRM/Customers` | First Name, Last Name, Email, VRN, Contact number. View `/CRM/CustomerView/:id`. Export `POST /FittingCentre/CRM/Export` (275 rows, **no SMT ids**) | **Page 1 of 14 → 289** unique View ids |
-| `/FittingCentre/CRM/Enquiries` | Date submitted, Name, Email, Telephone, Status (New / Resolved). View `/CRM/EnquiriesView/:id`. Export `POST /CRM/ExportEnquiries` | **Page 1 of 4 → 84** |
-| `/FittingCentre/CRM/NPS` | Score, Date, Reason, Comment. View `/CRM/NPSView?nps=:id`. Headline `<h3>Your NPS Score Is:</h3><p id="percentage">71.43%</p>` | **Page 1 of 3 → 31** |
-| `/FittingCentre/CRM/Testimonials` | Testimonial By, Date created, Approved, Comment. View `/CRM/Testimonial?TestimonialID=:id` | **6** |
+| `/FittingCentre/CRM/Customers` | First Name, Last Name, Email, VRN, Contact number. View `/CRM/CustomerView/:id`. Export `POST /FittingCentre/CRM/Export` (275 rows, no SMT ids). Each list table ends with a pager `<tr><td colspan>` — skip it. | **Page 1 of 14 → 275** View ids (CSV count matches) |
+| `/FittingCentre/CRM/Enquiries` | Date submitted, Name, Email, Telephone, Status (New / Resolved). View `/CRM/EnquiriesView/:id`. Same pager footer. | **Page 1 of 4 → 80** |
+| `/FittingCentre/CRM/NPS` | Score, Date, Reason, Comment. View `/CRM/NPSView?nps=:id`. Headline `<h3>Your NPS Score Is:</h3><p id="percentage">71.43%</p>`. Pager text like `Page 1 of 3` must not be parsed as score `13`. | **Page 1 of 3 → 28** scores |
+| `/FittingCentre/CRM/Testimonials` | Testimonial By, Date created, Approved, Comment. View `/CRM/Testimonial?TestimonialID=:id` | **5** |
 
-Do **not** upsert the Customers CSV: it has no `CustomerView` ids, so the parser would invent phone-hash keys and duplicate the HTML walk.
+Customers CSV is a useful **count check** (275) but has no View ids — do not upsert it.
 
 ## NPS headline vs table math
 
 - SMT chrome: **71.43%**
-- All 31 scored rows: 25 promoters, 4 passive, 2 detractors → **74.19%**
-- Headline likely uses a different window or filter. Dashboard shows both.
+- After dropping pager-as-score fakes (13 / 23 / 33 from `Page X of 3`): 22 promoters, 4 passive, 2 detractors on **28** rows → **71.43%**. Matches the headline.
 
 ## Reports (not the CRM census)
 
