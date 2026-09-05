@@ -7,7 +7,7 @@ import {
   extractHeadlineNps,
   npsFromTable,
   parseHtmlTables,
-} from "./parse.ts";
+} from "./parse";
 
 const LOGIN = `<input name="__RequestVerificationToken" type="hidden" value="abcTOKEN" />`;
 

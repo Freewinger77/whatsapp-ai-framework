@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isInHours, npsHeadline } from "./hours.ts";
+import { isInHours, npsHeadline } from "./hours";
 
 describe("isInHours", () => {
   it("treats weekday mid-morning London as in hours", () => {

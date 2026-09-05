@@ -31,7 +31,11 @@ export async function GET(request: Request) {
     return asCsv(
       "smt-customers.csv",
       ["smt_id", "name", "phone", "email", "postcode", "source", "stage", "first_seen_at"],
-      customers.map((r) => [r.smt_id, r.name, r.phone, r.email, r.postcode, r.source, r.stage, r.first_seen_at]),
+      customers.map((r) =>
+        [r.smt_id, r.name, r.phone, r.email, r.postcode, r.source, r.stage, r.first_seen_at].map((v) =>
+          v == null ? "" : String(v),
+        ),
+      ),
     );
   }
   return NextResponse.json({ customers, count: customers.length });

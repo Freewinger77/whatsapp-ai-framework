@@ -16,7 +16,9 @@ export async function GET(request: Request) {
     return asCsv(
       "smt-testimonials.csv",
       ["smt_id", "name", "quote", "published_at"],
-      testimonials.map((r) => [r.smt_id, r.name, r.quote, r.published_at]),
+      testimonials.map((r) =>
+        [r.smt_id, r.name, r.quote, r.published_at].map((v) => (v == null ? "" : String(v))),
+      ),
     );
   }
   return NextResponse.json({ testimonials, count: testimonials.length });

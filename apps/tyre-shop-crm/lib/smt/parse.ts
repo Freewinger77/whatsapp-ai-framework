@@ -229,30 +229,28 @@ export function npsFromTable(table: HtmlTable): SmtNps[] {
   const commentI = headerIndex(h, "comment", "comments");
   const nameI = headerIndex(h, "name", "customer");
   const phoneI = headerIndex(h, "phone", "mobile");
-  return table.rows
-    .map((row, i) => {
-      const score = Number(cell(row, scoreI === -1 ? 0 : scoreI).replace(/[^\d.-]/g, ""));
-      if (!Number.isFinite(score)) return null;
-      const scoredAt = parseUkDate(cell(row, dateI));
-      const name = cell(row, nameI) || null;
-      const phone = cell(row, phoneI) || null;
-      const reason = cell(row, reasonI) || null;
-      const comment = cell(row, commentI) || null;
-      const smtId =
-        table.ids[i] || slugId(["nps", score, scoredAt, phone, name, reason, comment]);
-      return {
-        smtId,
-        score,
-        reason,
-        comment,
-        name,
-        phone,
-        phoneE164: toE164(phone),
-        scoredAt,
-        raw: Object.fromEntries(h.map((header, idx) => [header || `col${idx}`, row[idx] ?? ""])),
-      } satisfies SmtNps;
-    })
-    .filter((row): row is SmtNps => Boolean(row));
+  const items: SmtNps[] = [];
+  table.rows.forEach((row, i) => {
+    const score = Number(cell(row, scoreI === -1 ? 0 : scoreI).replace(/[^\d.-]/g, ""));
+    if (!Number.isFinite(score)) return;
+    const scoredAt = parseUkDate(cell(row, dateI));
+    const name = cell(row, nameI) || null;
+    const phone = cell(row, phoneI) || null;
+    const reason = cell(row, reasonI) || null;
+    const comment = cell(row, commentI) || null;
+    items.push({
+      smtId: table.ids[i] || slugId(["nps", score, scoredAt, phone, name, reason, comment]),
+      score,
+      reason,
+      comment,
+      name,
+      phone,
+      phoneE164: toE164(phone),
+      scoredAt,
+      raw: Object.fromEntries(h.map((header, idx) => [header || `col${idx}`, row[idx] ?? ""])),
+    });
+  });
+  return items;
 }
 
 export function testimonialsFromTable(table: HtmlTable): SmtTestimonial[] {

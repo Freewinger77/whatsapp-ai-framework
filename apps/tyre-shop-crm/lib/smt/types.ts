@@ -66,6 +66,18 @@ export interface SmtPing {
   headlineNps?: number | null;
 }
 
+export interface SmtClient {
+  login(): Promise<void>;
+  ensureSession(): Promise<void>;
+  ping(): Promise<SmtPing>;
+  listCustomers(page?: number, pageSize?: number): Promise<ListPage<SmtCustomer>>;
+  listEnquiries(page?: number, pageSize?: number): Promise<ListPage<SmtEnquiry>>;
+  listNps(page?: number, pageSize?: number): Promise<ListPage<SmtNps>>;
+  listTestimonials(page?: number, pageSize?: number): Promise<ListPage<SmtTestimonial>>;
+  exportCustomersCsv(): Promise<SmtCustomer[]>;
+  headlineNps(): Promise<number | null>;
+}
+
 export const CRM_PATHS = {
   login: "/Account/Login",
   loginPost: "/",

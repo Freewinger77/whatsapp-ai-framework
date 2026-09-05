@@ -30,7 +30,11 @@ export async function GET(request: Request) {
     return asCsv(
       "smt-enquiries.csv",
       ["smt_id", "name", "phone", "email", "status", "in_hours", "enquired_at"],
-      enquiries.map((r) => [r.smt_id, r.name, r.phone, r.email, r.status, r.in_hours, r.enquired_at]),
+      enquiries.map((r) =>
+        [r.smt_id, r.name, r.phone, r.email, r.status, r.in_hours, r.enquired_at].map((v) =>
+          v == null ? "" : String(v),
+        ),
+      ),
     );
   }
   return NextResponse.json({ enquiries, count: enquiries.length });

@@ -1,4 +1,4 @@
-import { tick } from "../lib/poller.ts";
+import { tick } from "../lib/poller";
 
 const result = await tick({
   announce: false,

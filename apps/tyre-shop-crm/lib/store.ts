@@ -3,7 +3,7 @@ import { memory, memoryEnabled } from "./memory";
 import { adminClient, supabaseConfigured } from "./supabase/admin";
 import type { SmtCustomer, SmtEnquiry, SmtNps, SmtTestimonial } from "./smt/types";
 
-function useMemory(): boolean {
+function usingMemory(): boolean {
   return memoryEnabled() && !supabaseConfigured();
 }
 
@@ -14,7 +14,7 @@ export async function logEvent(
   recordId?: string | null,
   payload?: unknown,
 ): Promise<void> {
-  if (useMemory()) {
+  if (usingMemory()) {
     memory.insert("smt_events", { kind, message, record_type: recordType ?? null, record_id: recordId ?? null, payload: payload ?? null });
     return;
   }
@@ -32,7 +32,7 @@ export async function logEvent(
 }
 
 export async function startPollRun(announce: boolean): Promise<string | null> {
-  if (useMemory()) {
+  if (usingMemory()) {
     return String(memory.insert("smt_poll_runs", { announce, ok: false, scraped: 0 }).id);
   }
   if (!supabaseConfigured()) return null;
@@ -60,7 +60,7 @@ export async function finishPollRun(
   },
 ): Promise<void> {
   if (!id) return;
-  if (useMemory()) {
+  if (usingMemory()) {
     memory.update("smt_poll_runs", "id", id, {
       finished_at: new Date().toISOString(),
       ok: stats.ok,
@@ -90,7 +90,7 @@ export async function finishPollRun(
 type UpsertResult = { isNew: boolean };
 
 export async function upsertCustomer(row: SmtCustomer): Promise<UpsertResult> {
-  if (useMemory()) {
+  if (usingMemory()) {
     const isNew = memory.upsert("smt_customers", "smt_id", {
       smt_id: row.smtId,
       phone_e164: row.phoneE164,
@@ -146,7 +146,7 @@ export async function upsertCustomer(row: SmtCustomer): Promise<UpsertResult> {
 }
 
 export async function upsertEnquiry(row: SmtEnquiry): Promise<UpsertResult> {
-  if (useMemory()) {
+  if (usingMemory()) {
     const isNew = memory.upsert("smt_enquiries", "smt_id", {
       smt_id: row.smtId,
       customer_smt_id: row.customerSmtId,
@@ -199,7 +199,7 @@ export async function upsertEnquiry(row: SmtEnquiry): Promise<UpsertResult> {
 }
 
 export async function upsertNps(row: SmtNps): Promise<UpsertResult> {
-  if (useMemory()) {
+  if (usingMemory()) {
     const isNew = memory.upsert("smt_nps", "smt_id", {
       smt_id: row.smtId,
       score: row.score,
@@ -242,7 +242,7 @@ export async function upsertNps(row: SmtNps): Promise<UpsertResult> {
 }
 
 export async function upsertTestimonial(row: SmtTestimonial): Promise<UpsertResult> {
-  if (useMemory()) {
+  if (usingMemory()) {
     const isNew = memory.upsert("smt_testimonials", "smt_id", {
       smt_id: row.smtId,
       name: row.name,
@@ -281,7 +281,7 @@ export async function upsertTestimonial(row: SmtTestimonial): Promise<UpsertResu
 }
 
 export async function markWebhookSent(table: string, smtId: string): Promise<void> {
-  if (useMemory()) {
+  if (usingMemory()) {
     memory.update(table, "smt_id", smtId, { webhook_sent_at: new Date().toISOString() });
     return;
   }
@@ -292,7 +292,7 @@ export async function markWebhookSent(table: string, smtId: string): Promise<voi
 }
 
 export async function listEvents(limit = 150) {
-  if (useMemory()) return memory.all("smt_events").slice(0, limit);
+  if (usingMemory()) return memory.all("smt_events").slice(0, limit);
   const { data, error } = await adminClient()
     .from("smt_events")
     .select("*")
@@ -303,7 +303,7 @@ export async function listEvents(limit = 150) {
 }
 
 export async function listEventsFor(recordType: string, recordId: string, limit = 80) {
-  if (useMemory()) {
+  if (usingMemory()) {
     return memory
       .all("smt_events")
       .filter((e) => e.record_type === recordType && e.record_id === recordId)
@@ -321,7 +321,7 @@ export async function listEventsFor(recordType: string, recordId: string, limit 
 }
 
 export async function latestPoll() {
-  if (useMemory()) return memory.all("smt_poll_runs")[0] ?? null;
+  if (usingMemory()) return memory.all("smt_poll_runs")[0] ?? null;
   const { data } = await adminClient()
     .from("smt_poll_runs")
     .select("*")
@@ -332,7 +332,7 @@ export async function latestPoll() {
 }
 
 export async function counts() {
-  if (useMemory()) {
+  if (usingMemory()) {
     const customers = memory.all("smt_customers");
     const enquiries = memory.all("smt_enquiries");
     const nps = memory.all("smt_nps");
@@ -375,7 +375,7 @@ export async function counts() {
 
 export async function analytics(days = 30) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-  if (useMemory()) {
+  if (usingMemory()) {
     const rows = memory.all("smt_enquiries").filter((r) => String(r.first_seen_at || r.enquired_at) >= since) as Array<{
       enquired_at: string | null;
       in_hours: boolean;
@@ -441,7 +441,7 @@ async function buildAnalytics(
 }
 
 export async function listTable(table: string) {
-  if (useMemory()) return memory.all(table);
+  if (usingMemory()) return memory.all(table);
   const { data, error } = await adminClient().from(table).select("*");
   if (error) throw error;
   return data ?? [];

@@ -7,8 +7,8 @@
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --test lib/**/*.test.ts",
-    "backfill": "node --experimental-strip-types --env-file=.env.local scripts/backfill.ts",
+    "test": "tsx --test lib/hours.test.ts lib/smt/parse.test.ts",
+    "backfill": "tsx --env-file=.env.local scripts/backfill.ts",
     "db:schema": "node --env-file=.env.local scripts/apply-schema.mjs"
   },
   "dependencies": {
@@ -25,6 +25,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.5.9",
     "pg": "^8.23.0",
+    "tsx": "^4.23.13",
     "typescript": "^5"
   }
 }

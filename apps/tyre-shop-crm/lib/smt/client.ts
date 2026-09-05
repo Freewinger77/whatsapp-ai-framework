@@ -17,7 +17,7 @@ import {
   testimonialsFromTable,
 } from "./parse";
 import { createMockClient } from "./mock";
-import { CRM_PATHS, type ListPage, type SmtCustomer, type SmtEnquiry, type SmtNps, type SmtPing, type SmtTestimonial } from "./types";
+import { CRM_PATHS, type ListPage, type SmtClient, type SmtCustomer, type SmtEnquiry, type SmtNps, type SmtPing, type SmtTestimonial } from "./types";
 
 interface CookieJar {
   [name: string]: string;
@@ -37,17 +37,7 @@ function parseSetCookie(header: string): CookieJar {
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36";
 
-export interface SmtClient {
-  login(): Promise<void>;
-  ensureSession(): Promise<void>;
-  ping(): Promise<SmtPing>;
-  listCustomers(page?: number, pageSize?: number): Promise<ListPage<SmtCustomer>>;
-  listEnquiries(page?: number, pageSize?: number): Promise<ListPage<SmtEnquiry>>;
-  listNps(page?: number, pageSize?: number): Promise<ListPage<SmtNps>>;
-  listTestimonials(page?: number, pageSize?: number): Promise<ListPage<SmtTestimonial>>;
-  exportCustomersCsv(): Promise<SmtCustomer[]>;
-  headlineNps(): Promise<number | null>;
-}
+export type { SmtClient };
 
 export class LiveSmtClient implements SmtClient {
   private cookies: CookieJar = {};

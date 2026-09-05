@@ -17,7 +17,11 @@ export async function GET(request: Request) {
     return asCsv(
       "smt-nps.csv",
       ["smt_id", "score", "reason", "comment", "name", "phone", "scored_at"],
-      rows.map((r) => [r.smt_id, r.score, r.reason, r.comment, r.name, r.phone, r.scored_at]),
+      rows.map((r) =>
+        [r.smt_id, r.score, r.reason, r.comment, r.name, r.phone, r.scored_at].map((v) =>
+          v == null ? "" : String(v),
+        ),
+      ),
     );
   }
   return NextResponse.json({

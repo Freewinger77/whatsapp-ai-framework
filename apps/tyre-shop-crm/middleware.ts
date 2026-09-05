@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { COOKIE_NAME, cronAuthorized, gateToken, tokensMatch } from "@/lib/auth";
+import { COOKIE_NAME, cronAuthorized, gateToken, tokensMatch } from "@/lib/auth-core";
+
+export const runtime = "nodejs";
 
 const PUBLIC = new Set(["/login", "/api/login", "/api/health"]);
 
