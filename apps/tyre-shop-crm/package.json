@@ -7,7 +7,7 @@
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test lib/hours.test.ts lib/smt/parse.test.ts",
+    "test": "tsx --test lib/hours.test.ts lib/smt/parse.test.ts lib/conversion.test.ts",
     "backfill": "tsx --env-file=.env.local scripts/backfill.ts",
     "db:schema": "node --env-file=.env.local scripts/apply-schema.mjs"
   },

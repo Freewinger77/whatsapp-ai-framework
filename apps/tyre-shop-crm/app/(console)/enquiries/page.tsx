@@ -22,9 +22,11 @@ type Row = {
 export default function EnquiriesPage() {
   const [hours, setHours] = useState<"all" | "in" | "out">("all");
   const [channel, setChannel] = useState<"all" | "email" | "phone">("all");
+  const [booked, setBooked] = useState<"all" | "yes" | "no">("all");
   const extra = [
     hours === "all" ? "" : `hours=${hours}`,
     channel === "all" ? "" : `channel=${channel}`,
+    booked === "all" ? "" : `booked=${booked}`,
   ]
     .filter(Boolean)
     .join("&");
@@ -40,6 +42,9 @@ export default function EnquiriesPage() {
         <button className={`chip ${channel === "all" ? "on" : ""}`} onClick={() => setChannel("all")}>All channels</button>
         <button className={`chip ${channel === "email" ? "on" : ""}`} onClick={() => setChannel("email")}>Email</button>
         <button className={`chip ${channel === "phone" ? "on" : ""}`} onClick={() => setChannel("phone")}>Phone</button>
+        <button className={`chip ${booked === "all" ? "on" : ""}`} onClick={() => setBooked("all")}>All outcomes</button>
+        <button className={`chip ${booked === "yes" ? "on" : ""}`} onClick={() => setBooked("yes")}>Booked</button>
+        <button className={`chip ${booked === "no" ? "on" : ""}`} onClick={() => setBooked("no")}>Open</button>
       </div>
       <RecordsTable<Row>
         endpoint="/api/enquiries"

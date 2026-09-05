@@ -29,27 +29,41 @@ type Enquiry = {
   enquired_at: string | null;
 };
 
+type Conversion = {
+  emailLeadRows: number;
+  uniqueBooked: number;
+  matchedRows: number;
+  openRows: number;
+  rowPct: number;
+  peoplePct: number;
+  uniqueLeadPeople: number;
+  people: Array<{ key: string; name: string; phone: string | null; enquiryCount: number }>;
+};
+
 type EventRow = { id: string; kind: string; message: string; created_at: string };
 
 export default function DashboardPage() {
   const [data, setData] = useState<Analytics | null>(null);
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [events, setEvents] = useState<EventRow[]>([]);
+  const [conversion, setConversion] = useState<Conversion | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const [a, e, v] = await Promise.all([
+        const [a, e, v, c] = await Promise.all([
           fetch("/api/analytics").then((r) => r.json()),
           fetch("/api/enquiries?limit=8").then((r) => r.json()),
           fetch("/api/events?limit=8").then((r) => r.json()),
+          fetch("/api/conversion").then((r) => r.json()),
         ]);
         if (cancelled) return;
         setData(a);
         setEnquiries(e.enquiries || []);
         setEvents(v.events || []);
+        setConversion(c.error ? null : c);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       }
@@ -113,6 +127,21 @@ export default function DashboardPage() {
           </div>
         ))}
         {!data?.typeMix?.length ? <p className="hint">Waiting for rows.</p> : null}
+      </div>
+
+      <div className="span-12 card">
+        <h2>Email enquiry → booked</h2>
+        <div className="hint">Same phone or email on the Customers list. Open Lead → booked in the sidebar for the full list.</div>
+        <div className="row"><span>Email enquiries</span><strong>{conversion?.emailLeadRows ?? "—"}</strong></div>
+        <div className="row"><span>Unique people booked</span><strong>{conversion?.uniqueBooked ?? "—"} · {conversion?.peoplePct ?? 0}%</strong></div>
+        <div className="row"><span>Enquiry rows that match</span><strong>{conversion?.matchedRows ?? "—"} · {conversion?.rowPct ?? 0}%</strong></div>
+        <div className="row"><span>Still open</span><strong>{conversion?.openRows ?? "—"}</strong></div>
+        {(conversion?.people || []).slice(0, 6).map((p) => (
+          <div className="row" key={p.key}>
+            <span>{p.name}{p.enquiryCount > 1 ? ` · ${p.enquiryCount} enquiries` : ""}</span>
+            <strong className="phone">{p.phone || "—"}</strong>
+          </div>
+        ))}
       </div>
 
       <div className="span-8 card">

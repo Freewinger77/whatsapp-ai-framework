@@ -36,6 +36,7 @@ export default function DocsPage() {
           ["GET", "/api/status", "SMT ping, counts, latest poll.", ""],
           ["GET", "/api/customers?format=csv", "Customers. Also /enquiries /nps /testimonials.", ""],
           ["GET", "/api/analytics", "30-day volume, by-hour, in vs out of hours, NPS vs SMT headline.", ""],
+          ["GET", "/api/conversion", "Email leads matched to booked customers by phone or email.", ""],
           ["GET", "/api/events", "poll.ok, webhook.sent, customer.created, …", ""],
           ["POST", "/api/poll", "One scrape tick. GET also works for Vercel cron.", '{ "scraped": 12, "newCount": 1, "webhooked": 1 }'],
           ["POST", "/api/webhooks/outbound", "Internal send helper.", JSON.stringify(outbound, null, 2)],

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { asCsv, requireSession } from "@/lib/api";
-import { listTable } from "@/lib/store";
+import { bookedLeadIds } from "@/lib/conversion";
+import { leadConversion, listTable } from "@/lib/store";
 
 export async function GET(request: Request) {
   const denied = await requireSession();
@@ -10,6 +11,7 @@ export async function GET(request: Request) {
   const filter = url.searchParams.get("filter") || "all";
   const hours = url.searchParams.get("hours");
   const channel = url.searchParams.get("channel");
+  const booked = url.searchParams.get("booked");
   const limit = Math.min(Number(url.searchParams.get("limit") || 200), 5000);
   let enquiries = [] as Array<Record<string, unknown>>;
   try {
@@ -28,6 +30,13 @@ export async function GET(request: Request) {
   if (hours === "out") enquiries = enquiries.filter((r) => !r.in_hours);
   if (channel === "phone") enquiries = enquiries.filter((r) => r.channel === "phone");
   if (channel === "email") enquiries = enquiries.filter((r) => r.channel !== "phone");
+  if (booked === "yes" || booked === "no") {
+    const bookedIds = bookedLeadIds(await leadConversion());
+    enquiries = enquiries.filter((r) => {
+      const hit = bookedIds.has(String(r.smt_id));
+      return booked === "yes" ? hit : !hit && r.channel !== "phone";
+    });
+  }
   enquiries.sort((a, b) => String(b.enquired_at || "").localeCompare(String(a.enquired_at || "")));
   enquiries = enquiries.slice(0, limit);
   if (url.searchParams.get("format") === "csv") {
