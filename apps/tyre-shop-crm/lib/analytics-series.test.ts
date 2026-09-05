@@ -80,6 +80,7 @@ describe("buildDashboardSeries", () => {
     assert.equal(built.pct.afterHours, 66.7);
     assert.equal(built.pct.phoneOfLeads, 33.3);
     assert.equal(built.pct.vsPrevious.leads, 200);
+    assert.equal(built.previous.leads, 1);
     assert.equal(built.pct.vsPrevious.customers, 0);
     assert.equal(built.series.find((d) => d.date === "2026-09-01")?.phone, 1);
     assert.equal(built.series.length, 7);

@@ -60,6 +60,13 @@ export type DashboardSeries = {
       bookings: number | null;
     };
   };
+  previous: {
+    leads: number;
+    email: number;
+    phone: number;
+    customers: number;
+    bookings: number;
+  };
 };
 
 export function londonDateKey(at: Date | string): string {
@@ -209,5 +216,6 @@ export function buildDashboardSeries(
         bookings: pctChange(mix.bookings, prev.bookings),
       },
     },
+    previous: prev,
   };
 }

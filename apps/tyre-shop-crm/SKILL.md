@@ -43,6 +43,15 @@ Unknown id → insert + optional webhook. Known id → refresh, **no second webh
 - Do not write CRM rows into `dundee_*` or `chat_history`.
 - Do not commit SMT passwords or the dashboard cookie secret.
 
+## Frontend
+
+The paid RapidScreen handoff is the dashboard. Do not restyle it.
+
+- Source: `handoff/desktop.html`, `handoff/mobile.html`, `handoff/css/tokens.css`
+- Production copies those screens: desktop chrome + dashboard at `/`, mobile Overview + Needs calling back
+- Backend / APIs / Supabase fit the handoff. Numbers and lists are live; spacing, type, and colours stay as supplied
+- Switch desktop/mobile at 860px. No other media-query restyle of the handoff surfaces
+
 ## Verification
 
 1. Login to this dashboard → KPIs populate.

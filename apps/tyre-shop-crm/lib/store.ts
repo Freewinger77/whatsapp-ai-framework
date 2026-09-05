@@ -411,12 +411,13 @@ export async function counts() {
       bookings: memory.all("smt_bookings").length,
       fitted: memory.all("smt_bookings").filter((b) => b.status_norm === "fitted").length,
       abandoned: memory.all("smt_bookings").filter((b) => b.status_norm === "abandoned").length,
+      cancelled: memory.all("smt_bookings").filter((b) => b.status_norm === "cancelled").length,
       npsHeadline: npsHeadline(scores),
     };
   }
   const db = adminClient();
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const [customers, enquiries, nps, testimonials, newCustomers, inHours, outHours, emailLeads, phoneLeads, bookings, fitted, abandoned] =
+  const [customers, enquiries, nps, testimonials, newCustomers, inHours, outHours, emailLeads, phoneLeads, bookings, fitted, abandoned, cancelled] =
     await Promise.all([
       db.from("smt_customers").select("smt_id", { count: "exact", head: true }),
       db.from("smt_enquiries").select("smt_id", { count: "exact", head: true }),
@@ -430,6 +431,7 @@ export async function counts() {
       db.from("smt_bookings").select("smt_id", { count: "exact", head: true }),
       db.from("smt_bookings").select("smt_id", { count: "exact", head: true }).eq("status_norm", "fitted"),
       db.from("smt_bookings").select("smt_id", { count: "exact", head: true }).eq("status_norm", "abandoned"),
+      db.from("smt_bookings").select("smt_id", { count: "exact", head: true }).eq("status_norm", "cancelled"),
     ]);
   const scores = ((nps.data as Array<{ score: number }> | null) ?? []).map((r) => Number(r.score));
   return {
@@ -445,6 +447,7 @@ export async function counts() {
     bookings: bookings.count ?? 0,
     fitted: fitted.count ?? 0,
     abandoned: abandoned.count ?? 0,
+    cancelled: cancelled.count ?? 0,
     npsHeadline: npsHeadline(scores),
   };
 }

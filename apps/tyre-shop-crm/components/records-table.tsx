@@ -68,7 +68,7 @@ export function RecordsTable<T extends { smt_id: string }>({
         </div>
       ) : null}
       {error ? <p className="err">{error}</p> : null}
-      <div className="card" style={{ padding: 0 }}>
+      <div className="rs-table-wrap">
         <table className="data">
           <thead>
             <tr>
