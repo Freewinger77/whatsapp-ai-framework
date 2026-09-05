@@ -30,7 +30,7 @@ In-hours is fixed in v1: **Mon–Sat 09:00–17:00 Europe/London**.
 4. Confirm View hrefs expose integer ids (`CustomerView/:id`, `EnquiriesView/:id`, `NPSView?nps=`, `TestimonialID=`). Those are dedupe keys.
 5. Customers CSV export may omit SMT ids and under-count the HTML walk (275 vs 289 here). **Do not upsert CSV** unless each row has a View id.
 6. Do not guess a selector that the screenshot contradicts.
-7. Reports → New/Existing Customer Bookings are **booking charts**, not CRM list totals. Reconcile KPIs against list pagination (`Page X of Y`) and unique View ids.
+7. Reports → New/Existing Customer Bookings are **booking charts**, not CRM list totals. Reconcile KPIs against list pagination (`Page X of Y`) and unique View ids. A BookingsExport CSV is **orders** (OrderID). Import with `npm run import:bookings -- file.csv` into `smt_bookings`. Do not upsert those rows as customers or leads — no View ids, no phone.
 
 Dedupe: customer View id; enquiry View id; NPS View id; testimonial id.
 

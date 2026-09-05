@@ -35,7 +35,7 @@ export function RecordsTable<T extends { smt_id: string }>({
     fetch(`${endpoint}?${qs}`)
       .then((r) => r.json())
       .then((data) => {
-        setRows((data.customers || data.enquiries || data.nps || data.testimonials || []) as T[]);
+        setRows((data.bookings || data.customers || data.enquiries || data.nps || data.testimonials || []) as T[]);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [endpoint, extraQuery, filter]);

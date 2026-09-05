@@ -1,4 +1,5 @@
-export type RecordKind = "customer" | "enquiry" | "nps" | "testimonial";
+export type RecordKind = "customer" | "enquiry" | "nps" | "testimonial" | "booking";
+export type BookingStatus = "fitted" | "abandoned" | "cancelled" | "new" | "other";
 export type EnquiryChannel = "email" | "phone";
 
 export interface SmtCustomer {
@@ -43,6 +44,28 @@ export interface SmtNps {
   phone: string | null;
   phoneE164: string | null;
   scoredAt: string | null;
+  raw: Record<string, unknown>;
+}
+
+export interface SmtBooking {
+  smtId: string;
+  customerName: string;
+  customerKey: string;
+  customerSmtId: string | null;
+  vrn: string | null;
+  vehicleMake: string | null;
+  vehicleModel: string | null;
+  status: string | null;
+  statusNorm: BookingStatus;
+  siteStatus: string | null;
+  createdAt: string | null;
+  fittingAt: string | null;
+  inHours: boolean;
+  orderTotal: number | null;
+  currency: string | null;
+  tyreQty: number;
+  services: string[];
+  tags: string | null;
   raw: Record<string, unknown>;
 }
 

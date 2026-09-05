@@ -67,6 +67,7 @@ describe("buildDashboardSeries", () => {
         { bookedAt: "2026-08-26T09:30:00+01:00" },
       ],
       275,
+      [],
       now,
     );
 

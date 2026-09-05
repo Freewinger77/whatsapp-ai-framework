@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 const NAV = [
   { href: "/", label: "Dashboard" },
   { href: "/customers", label: "Customers" },
+  { href: "/bookings", label: "Bookings" },
   { href: "/enquiries", label: "Leads" },
   { href: "/conversion", label: "Lead → booked" },
   { href: "/nps", label: "NPS" },
@@ -19,6 +20,7 @@ const NAV = [
 const TITLES: Record<string, string> = {
   "/": "Dashboard",
   "/customers": "Customers",
+  "/bookings": "Bookings",
   "/enquiries": "Leads",
   "/conversion": "Lead → booked",
   "/nps": "NPS",

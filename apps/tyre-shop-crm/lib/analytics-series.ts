@@ -13,6 +13,11 @@ export type CustomerPoint = {
   bookedAt: string | null;
 };
 
+export type BookingPoint = {
+  at: string | null;
+  fitted: boolean;
+};
+
 export type DayBucket = {
   date: string;
   label: string;
@@ -20,6 +25,8 @@ export type DayBucket = {
   email: number;
   phone: number;
   customers: number;
+  bookings: number;
+  fitted: number;
   inHours: number;
   outHours: number;
 };
@@ -34,6 +41,8 @@ export type DashboardSeries = {
     phone: number;
     leads: number;
     customers: number;
+    bookings: number;
+    fitted: number;
     inHours: number;
     outHours: number;
   };
@@ -42,11 +51,13 @@ export type DashboardSeries = {
     phoneOfLeads: number | null;
     emailOfLeads: number | null;
     newCustomersOfAll: number | null;
+    fittedOfBookings: number | null;
     vsPrevious: {
       leads: number | null;
       email: number | null;
       phone: number | null;
       customers: number | null;
+      bookings: number | null;
     };
   };
 };
@@ -99,6 +110,8 @@ function emptyBucket(date: string): DayBucket {
     email: 0,
     phone: 0,
     customers: 0,
+    bookings: 0,
+    fitted: 0,
     inHours: 0,
     outHours: 0,
   };
@@ -113,6 +126,7 @@ export function buildDashboardSeries(
   leads: LeadPoint[],
   customers: CustomerPoint[],
   allCustomerCount: number,
+  bookings: BookingPoint[] = [],
   now = new Date(),
 ): DashboardSeries {
   const keys = lastLondonDays(days, now);
@@ -122,7 +136,7 @@ export function buildDashboardSeries(
   const previous = Array.from({ length: keys.length }, (_, i) => shiftDateKey(from, i - keys.length));
 
   const map = new Map(keys.map((k) => [k, emptyBucket(k)]));
-  const prev = { leads: 0, email: 0, phone: 0, customers: 0 };
+  const prev = { leads: 0, email: 0, phone: 0, customers: 0, bookings: 0 };
 
   for (const row of leads) {
     const key = londonDateKey(row.at || row.firstSeenAt || "");
@@ -149,6 +163,16 @@ export function buildDashboardSeries(
     else if (previous.includes(key)) prev.customers += 1;
   }
 
+  for (const row of bookings) {
+    const key = londonDateKey(row.at || "");
+    if (!key) continue;
+    const bucket = map.get(key);
+    if (bucket) {
+      bucket.bookings += 1;
+      if (row.fitted) bucket.fitted += 1;
+    } else if (previous.includes(key)) prev.bookings += 1;
+  }
+
   const series = keys.map((k) => map.get(k) || emptyBucket(k));
   const mix = series.reduce(
     (acc, d) => {
@@ -156,11 +180,13 @@ export function buildDashboardSeries(
       acc.phone += d.phone;
       acc.leads += d.leads;
       acc.customers += d.customers;
+      acc.bookings += d.bookings;
+      acc.fitted += d.fitted;
       acc.inHours += d.inHours;
       acc.outHours += d.outHours;
       return acc;
     },
-    { email: 0, phone: 0, leads: 0, customers: 0, inHours: 0, outHours: 0 },
+    { email: 0, phone: 0, leads: 0, customers: 0, bookings: 0, fitted: 0, inHours: 0, outHours: 0 },
   );
 
   return {
@@ -174,11 +200,13 @@ export function buildDashboardSeries(
       phoneOfLeads: pct(mix.phone, mix.leads),
       emailOfLeads: pct(mix.email, mix.leads),
       newCustomersOfAll: pct(mix.customers, allCustomerCount),
+      fittedOfBookings: pct(mix.fitted, mix.bookings),
       vsPrevious: {
         leads: pctChange(mix.leads, prev.leads),
         email: pctChange(mix.email, prev.email),
         phone: pctChange(mix.phone, prev.phone),
         customers: pctChange(mix.customers, prev.customers),
+        bookings: pctChange(mix.bookings, prev.bookings),
       },
     },
   };

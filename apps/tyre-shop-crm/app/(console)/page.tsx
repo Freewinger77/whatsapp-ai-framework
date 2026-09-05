@@ -10,6 +10,8 @@ type DayPoint = {
   email: number;
   phone: number;
   customers: number;
+  bookings: number;
+  fitted: number;
   inHours: number;
   outHours: number;
 };
@@ -23,6 +25,9 @@ type Analytics = {
     outHours: number;
     emailLeads: number;
     phoneLeads: number;
+    bookings: number;
+    fitted: number;
+    abandoned: number;
     npsHeadline: number | null;
   };
   series: DayPoint[];
@@ -31,6 +36,8 @@ type Analytics = {
     phone: number;
     leads: number;
     customers: number;
+    bookings: number;
+    fitted: number;
     inHours: number;
     outHours: number;
   };
@@ -39,11 +46,13 @@ type Analytics = {
     phoneOfLeads: number | null;
     emailOfLeads: number | null;
     newCustomersOfAll: number | null;
+    fittedOfBookings: number | null;
     vsPrevious: {
       leads: number | null;
       email: number | null;
       phone: number | null;
       customers: number | null;
+      bookings: number | null;
     };
   };
   byDay: Array<{ date: string; total: number; inHours: number; outHours: number }>;
@@ -121,6 +130,7 @@ export default function DashboardPage() {
           { label: "Customers", value: kpi?.customers ?? "—", sub: "Booked CRM list · not leads" },
           { label: "Email leads", value: kpi?.emailLeads ?? kpi?.enquiries ?? "—", sub: "Enquiry Received · name + phone" },
           { label: "Phone leads", value: kpi?.phoneLeads ?? 0, sub: "Phone Enquiry Received · SMT home" },
+          { label: "Bookings", value: kpi?.fitted ?? 0, sub: `${kpi?.bookings ?? 0} orders · ${kpi?.abandoned ?? 0} abandoned` },
           { label: "NPS", value: kpi?.npsHeadline != null ? `${kpi.npsHeadline}%` : "—", sub: data?.smtHeadlineNps != null ? `SMT headline ${data.smtHeadlineNps}%` : "vs SMT headline" },
         ].map((m) => (
           <div className="card" key={m.label}>
@@ -232,6 +242,28 @@ export default function DashboardPage() {
         <LineChart series={series.map((d) => ({ label: d.label, values: [d.email] }))} colors={["rgb(76, 152, 253)"]} />
         <LineLabels labels={labels} />
         <Change value={pct?.vsPrevious.email} />
+      </div>
+
+      <div className="span-6 card">
+        <div className="chart-head">
+          <h2>Bookings</h2>
+          <span className="hint">{mix?.bookings ?? 0} created</span>
+        </div>
+        <div className="legend">
+          <span><i className="store" /> Created {mix?.bookings ?? 0}</span>
+          <span><i className="after" /> Fitted {mix?.fitted ?? 0}</span>
+        </div>
+        <LineChart
+          series={series.map((d) => ({ label: d.label, values: [d.bookings, d.fitted] }))}
+          colors={["rgb(28,28,30)", "rgb(122, 86, 168)"]}
+        />
+        <LineLabels labels={labels} />
+        <p className="hint" style={{ margin: "10px 0 0" }}>
+          {pct?.fittedOfBookings != null
+            ? `${pct.fittedOfBookings}% of bookings created in this period were fitted / complete.`
+            : "No bookings in this period."}{" "}
+          <Change value={pct?.vsPrevious.bookings} />
+        </p>
       </div>
 
       <div className="span-6 card">

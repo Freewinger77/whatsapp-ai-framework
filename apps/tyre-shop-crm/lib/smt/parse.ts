@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { isInHours } from "../hours";
+import { normPersonName } from "../names";
 import { toE164 } from "../phone";
-import type { SmtCustomer, SmtEnquiry, SmtHomeActivity, SmtNps, SmtTestimonial } from "./types";
+import type { BookingStatus, SmtBooking, SmtCustomer, SmtEnquiry, SmtHomeActivity, SmtNps, SmtTestimonial } from "./types";
 
 export function decodeEntities(value: string): string {
   return value
@@ -563,6 +564,80 @@ export function parseCsv(text: string): string[][] {
   row.push(cell.trim());
   if (row.some((c) => c)) rows.push(row);
   return rows;
+}
+
+export function normalizeBookingStatus(raw: string | null | undefined): BookingStatus {
+  const text = String(raw || "").toLowerCase();
+  if (/fitted|complete/.test(text)) return "fitted";
+  if (/abandon/.test(text)) return "abandoned";
+  if (/cancel/.test(text)) return "cancelled";
+  if (/new booking|pending|confirmed/.test(text)) return "new";
+  return "other";
+}
+
+export function bookingsFromCsv(text: string): SmtBooking[] {
+  const rows = parseCsv(text);
+  if (rows.length < 2) return [];
+  const headers = rows[0].map((h) => h.replace(/^\uFEFF/, "").trim());
+  const idx = (name: string) => headers.findIndex((h) => h.toLowerCase() === name.toLowerCase());
+  const orderI = idx("OrderID");
+  const createdI = idx("DateCreated");
+  const fittingI = idx("FittingDateTime");
+  const serviceI = idx("ServiceName");
+  const qtyI = idx("Quantity");
+  const totalI = idx("OrderTotal");
+  const currencyI = idx("Currency");
+  const statusI = idx("Status");
+  const customerI = idx("Customer");
+  const vrnI = idx("VRN");
+  const makeI = idx("VehicleMake");
+  const modelI = idx("VehicleModel");
+  const siteI = idx("SiteStatus");
+  const tagsI = idx("Tags");
+  const orders = new Map<string, SmtBooking>();
+  for (const row of rows.slice(1)) {
+    const smtId = (row[orderI] || "").trim();
+    if (!smtId) continue;
+    const customerName = (row[customerI] || "").trim();
+    const createdAt = parseUkDate(row[createdI]);
+    const fittingAt = parseUkDate(row[fittingI]);
+    const status = row[statusI] || null;
+    const qty = Number(row[qtyI] || 0);
+    const service = (row[serviceI] || "").trim();
+    const existing = orders.get(smtId);
+    if (existing) {
+      if (service && !existing.services.includes(service)) existing.services.push(service);
+      if (/^tyre$/i.test(service) && Number.isFinite(qty)) existing.tyreQty += qty;
+      existing.raw.lines = [
+        ...((existing.raw.lines as unknown[]) || []),
+        Object.fromEntries(headers.map((h, i) => [h, row[i] ?? ""])),
+      ];
+      continue;
+    }
+    const total = Number(row[totalI]);
+    orders.set(smtId, {
+      smtId,
+      customerName,
+      customerKey: normPersonName(customerName),
+      customerSmtId: null,
+      vrn: (row[vrnI] || "").trim() || null,
+      vehicleMake: (row[makeI] || "").trim() || null,
+      vehicleModel: (row[modelI] || "").trim() || null,
+      status,
+      statusNorm: normalizeBookingStatus(status),
+      siteStatus: (row[siteI] || "").trim() || null,
+      createdAt,
+      fittingAt,
+      inHours: isInHours(createdAt),
+      orderTotal: Number.isFinite(total) ? total : null,
+      currency: (row[currencyI] || "").trim() || null,
+      tyreQty: /^tyre$/i.test(service) && Number.isFinite(qty) ? qty : 0,
+      services: service ? [service] : [],
+      tags: (row[tagsI] || "").trim() || null,
+      raw: { lines: [Object.fromEntries(headers.map((h, i) => [h, row[i] ?? ""]))] },
+    });
+  }
+  return [...orders.values()];
 }
 
 export function customersFromCsv(text: string): SmtCustomer[] {
