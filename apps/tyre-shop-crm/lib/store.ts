@@ -157,6 +157,9 @@ export async function upsertEnquiry(row: SmtEnquiry): Promise<UpsertResult> {
       status: row.status,
       source: row.source,
       notes: row.notes,
+      channel: row.channel,
+      message: row.message,
+      tags: row.tags,
       enquired_at: row.enquiredAt,
       in_hours: row.inHours,
       first_seen_at: memory.find("smt_enquiries", "smt_id", row.smtId)?.first_seen_at || new Date().toISOString(),
@@ -183,6 +186,9 @@ export async function upsertEnquiry(row: SmtEnquiry): Promise<UpsertResult> {
     status: row.status,
     source: row.source,
     notes: row.notes,
+    channel: row.channel,
+    message: row.message,
+    tags: row.tags,
     enquired_at: row.enquiredAt,
     in_hours: row.inHours,
     last_seen_at: now,
@@ -346,20 +352,25 @@ export async function counts() {
       newCustomers30d: customers.filter((c) => new Date(String(c.first_seen_at)).getTime() >= since).length,
       inHours: enquiries.filter((e) => e.in_hours).length,
       outHours: enquiries.filter((e) => !e.in_hours).length,
+      emailLeads: enquiries.filter((e) => e.channel !== "phone").length,
+      phoneLeads: enquiries.filter((e) => e.channel === "phone").length,
       npsHeadline: npsHeadline(scores),
     };
   }
   const db = adminClient();
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const [customers, enquiries, nps, testimonials, newCustomers, inHours, outHours] = await Promise.all([
-    db.from("smt_customers").select("smt_id", { count: "exact", head: true }),
-    db.from("smt_enquiries").select("smt_id", { count: "exact", head: true }),
-    db.from("smt_nps").select("score"),
-    db.from("smt_testimonials").select("smt_id", { count: "exact", head: true }),
-    db.from("smt_customers").select("smt_id", { count: "exact", head: true }).gte("first_seen_at", since),
-    db.from("smt_enquiries").select("smt_id", { count: "exact", head: true }).eq("in_hours", true),
-    db.from("smt_enquiries").select("smt_id", { count: "exact", head: true }).eq("in_hours", false),
-  ]);
+  const [customers, enquiries, nps, testimonials, newCustomers, inHours, outHours, emailLeads, phoneLeads] =
+    await Promise.all([
+      db.from("smt_customers").select("smt_id", { count: "exact", head: true }),
+      db.from("smt_enquiries").select("smt_id", { count: "exact", head: true }),
+      db.from("smt_nps").select("score"),
+      db.from("smt_testimonials").select("smt_id", { count: "exact", head: true }),
+      db.from("smt_customers").select("smt_id", { count: "exact", head: true }).gte("first_seen_at", since),
+      db.from("smt_enquiries").select("smt_id", { count: "exact", head: true }).eq("in_hours", true),
+      db.from("smt_enquiries").select("smt_id", { count: "exact", head: true }).eq("in_hours", false),
+      db.from("smt_enquiries").select("smt_id", { count: "exact", head: true }).neq("channel", "phone"),
+      db.from("smt_enquiries").select("smt_id", { count: "exact", head: true }).eq("channel", "phone"),
+    ]);
   const scores = ((nps.data as Array<{ score: number }> | null) ?? []).map((r) => Number(r.score));
   return {
     customers: customers.count ?? 0,
@@ -369,6 +380,8 @@ export async function counts() {
     newCustomers30d: newCustomers.count ?? 0,
     inHours: inHours.count ?? 0,
     outHours: outHours.count ?? 0,
+    emailLeads: emailLeads.count ?? 0,
+    phoneLeads: phoneLeads.count ?? 0,
     npsHeadline: npsHeadline(scores),
   };
 }
@@ -380,6 +393,7 @@ export async function analytics(days = 30) {
       enquired_at: string | null;
       in_hours: boolean;
       status: string | null;
+      channel: string | null;
       first_seen_at: string;
     }>;
     return buildAnalytics(days, rows, memory.all("smt_nps").map((r) => Number(r.score)));
@@ -387,12 +401,13 @@ export async function analytics(days = 30) {
   const db = adminClient();
   const { data: enquiries } = await db
     .from("smt_enquiries")
-    .select("enquired_at,in_hours,status,source,first_seen_at")
+    .select("enquired_at,in_hours,status,source,channel,first_seen_at")
     .gte("first_seen_at", since);
   const rows = (enquiries ?? []) as Array<{
     enquired_at: string | null;
     in_hours: boolean;
     status: string | null;
+    channel: string | null;
     first_seen_at: string;
   }>;
   const { data: nps } = await db.from("smt_nps").select("score,scored_at");
@@ -402,7 +417,13 @@ export async function analytics(days = 30) {
 
 async function buildAnalytics(
   days: number,
-  rows: Array<{ enquired_at: string | null; in_hours: boolean; status: string | null; first_seen_at: string }>,
+  rows: Array<{
+    enquired_at: string | null;
+    in_hours: boolean;
+    status: string | null;
+    channel: string | null;
+    first_seen_at: string;
+  }>,
   scores: number[],
 ) {
   const byDay: Record<string, { total: number; inHours: number; outHours: number }> = {};
@@ -424,7 +445,8 @@ async function buildAnalytics(
       if (row.in_hours) byHour[hour].inHours += 1;
       else byHour[hour].outHours += 1;
     }
-    const key = row.status || "Unknown";
+    const key =
+      row.channel === "phone" ? "Phone enquiry" : row.channel === "email" ? "Email enquiry" : row.status || "Lead";
     typeMix[key] = (typeMix[key] || 0) + 1;
   }
   return {

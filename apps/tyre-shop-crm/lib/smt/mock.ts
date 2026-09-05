@@ -56,8 +56,11 @@ function enquiry(
     phone,
     phoneE164: toE164(phone),
     status,
-    source: "Website",
+    source: "Enquiry Received",
     notes: null,
+    channel: "email",
+    message: null,
+    tags: null,
     enquiredAt: at,
     inHours: isInHours(at),
     raw: { id: smtId },
@@ -111,6 +114,27 @@ export function createMockClient(): SmtClient {
     },
     async exportCustomersCsv() {
       return CUSTOMERS;
+    },
+    async exportEnquiriesCsv() {
+      return ENQUIRIES;
+    },
+    async listHomeActivity() {
+      return [
+        {
+          kind: "phone_enquiry" as const,
+          title: "Phone Enquiry Received",
+          at: "2026-09-05T09:25:00.000Z",
+          href: null,
+          viewId: null,
+        },
+        {
+          kind: "email_enquiry" as const,
+          title: "Enquiry Received",
+          at: "2026-09-04T16:02:00.000Z",
+          href: "/FittingCentre/CRM/EnquiriesView/2002",
+          viewId: "2002",
+        },
+      ];
     },
     async headlineNps() {
       return 71.43;

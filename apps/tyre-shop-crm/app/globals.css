@@ -60,6 +60,9 @@ table.data tr:hover td { background: rgba(0,0,0,0.02); }
 .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 80px; font: 500 11px/16px var(--font); }
 .badge.in { background: var(--green-soft); color: var(--green); }
 .badge.out { background: rgba(245,190,70,0.2); color: #8a6a12; }
+.badge.email { background: rgba(76, 152, 253, 0.14); color: rgb(45, 102, 175); }
+.badge.phone { background: rgba(79, 80, 127, 0.12); color: var(--indigo); }
+td.phone { font-variant-numeric: tabular-nums; font-weight: 600; }
 .flyout { position: fixed; inset: 0; background: rgba(0,0,0,0.2); display: flex; justify-content: flex-end; z-index: 40; }
 .flyout-card { width: min(480px, 100%); background: #fff; height: 100%; padding: 24px; overflow: auto; box-shadow: -8px 0 24px rgba(0,0,0,0.08); }
 .field { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }

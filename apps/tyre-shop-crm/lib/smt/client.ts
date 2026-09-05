@@ -3,8 +3,10 @@ import { isInHours } from "../hours";
 import { toE164 } from "../phone";
 import {
   coerceJsonList,
+  activityFromHome,
   customersFromCsv,
   customersFromTable,
+  enquiriesFromExportCsv,
   enquiriesFromTable,
   extractAjaxUrl,
   extractAntiforgery,
@@ -328,6 +330,34 @@ export class LiveSmtClient implements SmtClient {
       return [];
     }
     return customersFromCsv(res.text);
+  }
+
+  async exportEnquiriesCsv(): Promise<SmtEnquiry[]> {
+    await this.ensureSession();
+    const res = await this.raw("GET", CRM_PATHS.enquiriesExport, undefined, {
+      Accept: "text/csv,application/vnd.ms-excel,*/*",
+      Referer: `${this.origin}${CRM_PATHS.enquiries}`,
+    });
+    if (res.status !== 200 || /Admin Login/i.test(res.text) || /<html/i.test(res.text.slice(0, 200))) {
+      const page = await this.raw("GET", CRM_PATHS.enquiries);
+      const token = extractAntiforgery(page.text);
+      const body = new URLSearchParams({ btn: "Export" });
+      if (token) body.set("__RequestVerificationToken", token);
+      const posted = await this.raw("POST", CRM_PATHS.enquiriesExport, body.toString(), {
+        Accept: "text/csv,application/vnd.ms-excel,*/*",
+        "Content-Type": "application/x-www-form-urlencoded",
+        Referer: `${this.origin}${CRM_PATHS.enquiries}`,
+      });
+      if (posted.status !== 200 || /<html/i.test(posted.text.slice(0, 200))) return [];
+      return enquiriesFromExportCsv(posted.text);
+    }
+    return enquiriesFromExportCsv(res.text);
+  }
+
+  async listHomeActivity() {
+    await this.ensureSession();
+    const page = await this.raw("GET", CRM_PATHS.home);
+    return activityFromHome(page.text);
   }
 }
 

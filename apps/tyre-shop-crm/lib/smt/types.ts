@@ -1,4 +1,5 @@
 export type RecordKind = "customer" | "enquiry" | "nps" | "testimonial";
+export type EnquiryChannel = "email" | "phone";
 
 export interface SmtCustomer {
   smtId: string;
@@ -25,6 +26,9 @@ export interface SmtEnquiry {
   status: string | null;
   source: string | null;
   notes: string | null;
+  channel: EnquiryChannel;
+  message: string | null;
+  tags: string | null;
   enquiredAt: string | null;
   inHours: boolean;
   raw: Record<string, unknown>;
@@ -75,7 +79,17 @@ export interface SmtClient {
   listNps(page?: number, pageSize?: number): Promise<ListPage<SmtNps>>;
   listTestimonials(page?: number, pageSize?: number): Promise<ListPage<SmtTestimonial>>;
   exportCustomersCsv(): Promise<SmtCustomer[]>;
+  exportEnquiriesCsv(): Promise<SmtEnquiry[]>;
+  listHomeActivity(): Promise<SmtHomeActivity[]>;
   headlineNps(): Promise<number | null>;
+}
+
+export interface SmtHomeActivity {
+  kind: "phone_enquiry" | "email_enquiry" | "nps" | "order" | "other";
+  title: string;
+  at: string | null;
+  href: string | null;
+  viewId: string | null;
 }
 
 export const CRM_PATHS = {
@@ -94,4 +108,6 @@ export const CRM_PATHS = {
   testimonialsList: "/FittingCentre/CRM/Testimonials/List",
   reports: "/FittingCentre/Reports",
   reportsBrandsSold: "/FittingCentre/Reports/BrandsSold",
+  home: "/FittingCentre",
+  enquiryView: "/FittingCentre/CRM/EnquiriesView",
 } as const;

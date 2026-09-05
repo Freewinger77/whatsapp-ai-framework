@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { isInHours } from "../hours";
 import { toE164 } from "../phone";
-import type { SmtCustomer, SmtEnquiry, SmtNps, SmtTestimonial } from "./types";
+import type { SmtCustomer, SmtEnquiry, SmtHomeActivity, SmtNps, SmtTestimonial } from "./types";
 
 export function decodeEntities(value: string): string {
   return value
@@ -285,8 +285,11 @@ export function enquiriesFromTable(table: HtmlTable): SmtEnquiry[] {
       phone,
       phoneE164: toE164(phone),
       status: normalizeEnquiryStatus(cell(row, statusI)),
-      source: cell(row, sourceI) || null,
+      source: cell(row, sourceI) || "Enquiry Received",
       notes: cell(row, notesI) || null,
+      channel: "email",
+      message: null,
+      tags: null,
       enquiredAt,
       inHours: isInHours(enquiredAt),
       raw: Object.fromEntries(h.map((header, idx) => [header || `col${idx}`, row[idx] ?? ""])),
@@ -345,6 +348,166 @@ export function testimonialsFromTable(table: HtmlTable): SmtTestimonial[] {
       };
     })
     .filter((row) => row.name.trim() || row.quote.trim());
+}
+
+const MONTHS: Record<string, string> = {
+  jan: "01",
+  feb: "02",
+  mar: "03",
+  apr: "04",
+  may: "05",
+  jun: "06",
+  jul: "07",
+  aug: "08",
+  sep: "09",
+  oct: "10",
+  nov: "11",
+  dec: "12",
+};
+
+export function parseSmtHomeClock(time: string, day: string): string | null {
+  const clock = time.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  const date = day.match(/(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})/);
+  if (!clock || !date) return parseUkDate(`${day} ${time}`);
+  let hour = Number(clock[1]);
+  const minute = clock[2];
+  const ap = clock[3].toUpperCase();
+  if (ap === "PM" && hour < 12) hour += 12;
+  if (ap === "AM" && hour === 12) hour = 0;
+  const month = MONTHS[date[2].toLowerCase()];
+  if (!month) return null;
+  return londonWallToIso(date[3], month, date[1].padStart(2, "0"), String(hour).padStart(2, "0"), minute, "00");
+}
+
+export function activityFromHome(html: string): SmtHomeActivity[] {
+  const block = html.match(/<section class="recent-activity">([\s\S]*?)<\/section>/i)?.[1] || html;
+  const items: SmtHomeActivity[] = [];
+  const liRe = /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
+  let li: RegExpExecArray | null;
+  const seen = new Set<string>();
+  while ((li = liRe.exec(block))) {
+    const chunk = li[1];
+    const title = decodeEntities(chunk.match(/<h4\b[^>]*>([\s\S]*?)<\/h4>/i)?.[1] || "");
+    if (!title) continue;
+    const time = decodeEntities(chunk.match(/at\s*<strong>([^<]+)<\/strong>/i)?.[1] || "");
+    const day = decodeEntities(chunk.match(/on\s*<strong>([^<]+)<\/strong>/i)?.[1] || "");
+    const href =
+      chunk.match(/href="([^"]*(?:EnquiriesView|NPSView|Bookings\/View)[^"]*)"/i)?.[1] || null;
+    const viewId =
+      href?.match(/EnquiriesView\/(\d+)/i)?.[1] ||
+      href?.match(/[?&]nps=(\d+)/i)?.[1] ||
+      href?.match(/Bookings\/View\/(\d+)/i)?.[1] ||
+      null;
+    const at = time && day ? parseSmtHomeClock(time, day) : null;
+    let kind: SmtHomeActivity["kind"] = "other";
+    if (/phone enquiry/i.test(title) || /fa-phone/i.test(chunk)) kind = "phone_enquiry";
+    else if (/^enquiry received/i.test(title) || /fa-envelope/i.test(chunk)) kind = "email_enquiry";
+    else if (/nps/i.test(title)) kind = "nps";
+    else if (/order received/i.test(title)) kind = "order";
+    const key = `${kind}|${at || title}|${viewId || ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push({ kind, title, at, href, viewId });
+  }
+  return items;
+}
+
+export function phoneLeadsFromActivity(items: SmtHomeActivity[]): SmtEnquiry[] {
+  return items
+    .filter((item) => item.kind === "phone_enquiry")
+    .map((item) => {
+      const smtId = item.viewId || slugId(["phone", item.at, item.title]);
+      return {
+        smtId,
+        customerSmtId: null,
+        name: "Phone enquiry",
+        email: null,
+        phone: null,
+        phoneE164: null,
+        status: "New enquiry",
+        source: "Phone Enquiry Received",
+        notes: null,
+        channel: "phone" as const,
+        message: null,
+        tags: null,
+        enquiredAt: item.at,
+        inHours: isInHours(item.at),
+        raw: { ...item },
+      };
+    });
+}
+
+export function enquiriesFromExportCsv(text: string): SmtEnquiry[] {
+  const rows = parseCsv(text);
+  if (rows.length < 2) return [];
+  const headers = rows[0].map((h) => h.replace(/^\uFEFF/, "").trim());
+  const idx = (...names: string[]) => headerIndex(headers, ...names);
+  const nameI = idx("name");
+  const emailI = idx("email");
+  const phoneI = idx("phone", "telephone");
+  const messageI = idx("message");
+  const notesI = idx("notes");
+  const dateI = idx("datecreated", "date", "created");
+  const tagsI = idx("tags");
+  return rows.slice(1).map((row) => {
+    const name = cell(row, nameI) || cell(row, 0);
+    const phone = cell(row, phoneI) || null;
+    const email = cell(row, emailI) || null;
+    const enquiredAt = parseUkDate(cell(row, dateI));
+    const message = decodeEntities(cell(row, messageI)) || null;
+    const notes = decodeEntities(cell(row, notesI)) || null;
+    const tags = cell(row, tagsI) || null;
+    return {
+      smtId: slugId(["enquiry-export", name, phone, email, enquiredAt]),
+      customerSmtId: null,
+      name,
+      email,
+      phone,
+      phoneE164: toE164(phone),
+      status: "New enquiry",
+      source: "Enquiry Received",
+      notes,
+      channel: "email" as const,
+      message,
+      tags,
+      enquiredAt,
+      inHours: isInHours(enquiredAt),
+      raw: Object.fromEntries(headers.map((header, i) => [header || `col${i}`, row[i] ?? ""])),
+    };
+  });
+}
+
+export function londonDayKey(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/London",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+      .formatToParts(date)
+      .map((p) => [p.type, p.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+export function enquiryExportMatchKey(row: {
+  phoneE164?: string | null;
+  email?: string | null;
+  name?: string | null;
+  enquiredAt?: string | null;
+}): string | null {
+  const day = londonDayKey(row.enquiredAt);
+  const phone = (row.phoneE164 || "").replace(/\s+/g, "");
+  const email = (row.email || "").trim().toLowerCase();
+  if (phone && day) return `p:${phone}|${day}`;
+  if (email && day) return `e:${email}|${day}`;
+  if (phone) return `p:${phone}`;
+  if (email) return `e:${email}`;
+  return null;
 }
 
 function normalizeEnquiryStatus(raw: string): string {

@@ -9,6 +9,8 @@ type Analytics = {
     enquiries: number;
     inHours: number;
     outHours: number;
+    emailLeads: number;
+    phoneLeads: number;
     npsHeadline: number | null;
   };
   byDay: Array<{ date: string; total: number; inHours: number; outHours: number }>;
@@ -20,7 +22,9 @@ type Enquiry = {
   smt_id: string;
   name: string;
   phone: string | null;
+  channel: string | null;
   status: string | null;
+  message: string | null;
   in_hours: boolean;
   enquired_at: string | null;
 };
@@ -69,9 +73,9 @@ export default function DashboardPage() {
     <div className="grid-12">
       <div className="span-12 kpis">
         {[
-          { label: "Customers discovered", value: kpi?.customers ?? "—", sub: "HTML walk · not Reports bookings" },
-          { label: "New this 30d", value: kpi?.newCustomers30d ?? "—", sub: "first seen in this CRM" },
-          { label: "Enquiries", value: kpi?.enquiries ?? "—", sub: `${kpi?.inHours ?? 0} in-hours · ${kpi?.outHours ?? 0} out` },
+          { label: "Customers", value: kpi?.customers ?? "—", sub: "Booked CRM list · not leads" },
+          { label: "Email leads", value: kpi?.emailLeads ?? kpi?.enquiries ?? "—", sub: "Enquiry Received · name + phone" },
+          { label: "Phone leads", value: kpi?.phoneLeads ?? 0, sub: "Phone Enquiry Received · SMT home" },
           { label: "NPS", value: kpi?.npsHeadline != null ? `${kpi.npsHeadline}%` : "—", sub: data?.smtHeadlineNps != null ? `SMT headline ${data.smtHeadlineNps}%` : "vs SMT headline" },
         ].map((m) => (
           <div className="card" key={m.label}>
@@ -83,8 +87,8 @@ export default function DashboardPage() {
       </div>
 
       <div className="span-8 card">
-        <h2>Enquiries by day</h2>
-        <div className="hint">Last 30 days · in-hours Mon–Sat 09:00–17:00 UK</div>
+        <h2>Leads by day</h2>
+        <div className="hint">Email + phone enquiries · in-hours Mon–Sat 09:00–17:00 UK</div>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 160, marginTop: 16 }}>
           {chart.days.length ? (
             chart.days.map((d) => (
@@ -100,8 +104,8 @@ export default function DashboardPage() {
       </div>
 
       <div className="span-4 card">
-        <h2>Type mix</h2>
-        <div className="hint">Enquiry status</div>
+        <h2>Lead mix</h2>
+        <div className="hint">Email form vs click-to-call</div>
         {(data?.typeMix || []).map((t) => (
           <div key={t.name} className="row">
             <span>{t.name}</span>
@@ -112,25 +116,33 @@ export default function DashboardPage() {
       </div>
 
       <div className="span-8 card">
-        <h2>Recent enquiries</h2>
+        <h2>Recent leads</h2>
+        <div className="hint">Name and phone from SMT. Phone-channel home items often have no caller ID.</div>
         <table className="data">
           <thead>
             <tr>
               <th>Name</th>
               <th>Phone</th>
+              <th>Channel</th>
               <th>Hours</th>
-              <th>Status</th>
             </tr>
           </thead>
           <tbody>
             {enquiries.map((e) => (
               <tr key={e.smt_id}>
-                <td>{e.name}</td>
-                <td>{e.phone}</td>
+                <td>
+                  <div>{e.name}</div>
+                  {e.message ? <div className="hint">{e.message.slice(0, 72)}{e.message.length > 72 ? "…" : ""}</div> : null}
+                </td>
+                <td className="phone">{e.phone || "—"}</td>
+                <td>
+                  <span className={`badge ${e.channel === "phone" ? "phone" : "email"}`}>
+                    {e.channel === "phone" ? "Phone enquiry" : "Email enquiry"}
+                  </span>
+                </td>
                 <td>
                   <span className={`badge ${e.in_hours ? "in" : "out"}`}>{e.in_hours ? "In hours" : "Out of hours"}</span>
                 </td>
-                <td>{e.status}</td>
               </tr>
             ))}
           </tbody>

@@ -33,6 +33,9 @@ create table if not exists public.smt_enquiries (
   status text,
   source text,
   notes text,
+  channel text,
+  message text,
+  tags text,
   enquired_at timestamptz,
   in_hours boolean not null default false,
   first_seen_at timestamptz not null default now(),
@@ -135,3 +138,8 @@ grant all on public.smt_testimonials to service_role;
 grant all on public.smt_events to service_role;
 grant all on public.smt_poll_runs to service_role;
 grant all on public.smt_settings to service_role;
+
+alter table public.smt_enquiries add column if not exists channel text;
+alter table public.smt_enquiries add column if not exists message text;
+alter table public.smt_enquiries add column if not exists tags text;
+create index if not exists smt_enquiries_channel_idx on public.smt_enquiries (channel);

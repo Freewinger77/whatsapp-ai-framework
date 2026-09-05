@@ -14,6 +14,10 @@ type Row = {
 
 export default function CustomersPage() {
   return (
+    <>
+      <p className="hint" style={{ margin: "0 0 12px" }}>
+        Booked / existing SMT customers. Enquiry leads live on the Leads page — they are not mixed in here.
+      </p>
     <RecordsTable<Row>
       endpoint="/api/customers"
       filters={[
@@ -61,5 +65,6 @@ export default function CustomersPage() {
         </>
       )}
     />
+    </>
   );
 }

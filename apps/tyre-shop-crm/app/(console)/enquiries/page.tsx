@@ -10,6 +10,10 @@ type Row = {
   email: string | null;
   status: string | null;
   source: string | null;
+  channel: string | null;
+  message: string | null;
+  notes: string | null;
+  tags: string | null;
   in_hours: boolean;
   enquired_at: string | null;
   first_seen_at: string;
@@ -17,16 +21,29 @@ type Row = {
 
 export default function EnquiriesPage() {
   const [hours, setHours] = useState<"all" | "in" | "out">("all");
+  const [channel, setChannel] = useState<"all" | "email" | "phone">("all");
+  const extra = [
+    hours === "all" ? "" : `hours=${hours}`,
+    channel === "all" ? "" : `channel=${channel}`,
+  ]
+    .filter(Boolean)
+    .join("&");
   return (
     <>
+      <p className="hint" style={{ margin: "0 0 12px" }}>
+        Leads, not booked customers. Email = SMT “Enquiry Received”. Phone = SMT “Phone Enquiry Received”.
+      </p>
       <div className="filters">
         <button className={`chip ${hours === "all" ? "on" : ""}`} onClick={() => setHours("all")}>All hours</button>
         <button className={`chip ${hours === "in" ? "on" : ""}`} onClick={() => setHours("in")}>In hours</button>
         <button className={`chip ${hours === "out" ? "on" : ""}`} onClick={() => setHours("out")}>Out of hours</button>
+        <button className={`chip ${channel === "all" ? "on" : ""}`} onClick={() => setChannel("all")}>All channels</button>
+        <button className={`chip ${channel === "email" ? "on" : ""}`} onClick={() => setChannel("email")}>Email</button>
+        <button className={`chip ${channel === "phone" ? "on" : ""}`} onClick={() => setChannel("phone")}>Phone</button>
       </div>
       <RecordsTable<Row>
         endpoint="/api/enquiries"
-        extraQuery={hours === "all" ? "" : `hours=${hours}`}
+        extraQuery={extra}
         filters={[
           { id: "all", label: "All" },
           { id: "new", label: "New" },
@@ -34,9 +51,17 @@ export default function EnquiriesPage() {
         ]}
         columns={[
           { key: "name", label: "Name", render: (r) => r.name },
-          { key: "phone", label: "Phone", render: (r) => r.phone },
+          { key: "phone", label: "Phone", render: (r) => <span className="phone">{r.phone || "—"}</span> },
+          {
+            key: "channel",
+            label: "Channel",
+            render: (r) => (
+              <span className={`badge ${r.channel === "phone" ? "phone" : "email"}`}>
+                {r.channel === "phone" ? "Phone enquiry" : "Email enquiry"}
+              </span>
+            ),
+          },
           { key: "hours", label: "Hours", render: (r) => <span className={`badge ${r.in_hours ? "in" : "out"}`}>{r.in_hours ? "In hours" : "Out of hours"}</span> },
-          { key: "status", label: "Status", render: (r) => r.status },
           { key: "at", label: "Enquired", render: (r) => (r.enquired_at || r.first_seen_at)?.replace("T", " ").slice(0, 16) },
         ]}
         renderFlyout={(r, events, onClose) => (
@@ -48,8 +73,10 @@ export default function EnquiriesPage() {
             {[
               ["Phone", r.phone],
               ["Email", r.email],
+              ["Channel", r.channel === "phone" ? "Phone Enquiry Received" : "Enquiry Received"],
               ["Source", r.source],
               ["Status", r.status],
+              ["Tags", r.tags],
               ["In hours", r.in_hours ? "Yes · Mon–Sat 09:00–17:00 UK" : "No"],
               ["Enquired", r.enquired_at],
               ["SMT id", r.smt_id],
@@ -59,6 +86,18 @@ export default function EnquiriesPage() {
                 <span>{String(v || "—")}</span>
               </div>
             ))}
+            {r.message ? (
+              <>
+                <h2 style={{ marginTop: 24 }}>Message</h2>
+                <div className="quote">{r.message}</div>
+              </>
+            ) : null}
+            {r.notes ? (
+              <>
+                <h2 style={{ marginTop: 24 }}>Notes</h2>
+                <div className="quote">{r.notes.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()}</div>
+              </>
+            ) : null}
             <h2 style={{ marginTop: 24 }}>Events</h2>
             {(events as Array<{ id: string; kind: string; message: string }>).map((e) => (
               <div key={e.id} className="hint" style={{ padding: "6px 0" }}>{e.kind} · {e.message}</div>

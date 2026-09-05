@@ -9,6 +9,7 @@ export async function GET(request: Request) {
   const q = url.searchParams.get("q")?.trim().toLowerCase() || "";
   const filter = url.searchParams.get("filter") || "all";
   const hours = url.searchParams.get("hours");
+  const channel = url.searchParams.get("channel");
   const limit = Math.min(Number(url.searchParams.get("limit") || 200), 5000);
   let enquiries = [] as Array<Record<string, unknown>>;
   try {
@@ -25,13 +26,16 @@ export async function GET(request: Request) {
   if (filter === "needs") enquiries = enquiries.filter((r) => !r.webhook_sent_at);
   if (hours === "in") enquiries = enquiries.filter((r) => r.in_hours);
   if (hours === "out") enquiries = enquiries.filter((r) => !r.in_hours);
+  if (channel === "phone") enquiries = enquiries.filter((r) => r.channel === "phone");
+  if (channel === "email") enquiries = enquiries.filter((r) => r.channel !== "phone");
+  enquiries.sort((a, b) => String(b.enquired_at || "").localeCompare(String(a.enquired_at || "")));
   enquiries = enquiries.slice(0, limit);
   if (url.searchParams.get("format") === "csv") {
     return asCsv(
-      "smt-enquiries.csv",
-      ["smt_id", "name", "phone", "email", "status", "in_hours", "enquired_at"],
+      "smt-leads.csv",
+      ["smt_id", "name", "phone", "email", "channel", "status", "message", "in_hours", "enquired_at"],
       enquiries.map((r) =>
-        [r.smt_id, r.name, r.phone, r.email, r.status, r.in_hours, r.enquired_at].map((v) =>
+        [r.smt_id, r.name, r.phone, r.email, r.channel, r.status, r.message, r.in_hours, r.enquired_at].map((v) =>
           v == null ? "" : String(v),
         ),
       ),

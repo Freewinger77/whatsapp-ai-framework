@@ -1,4 +1,5 @@
 import { createSmtClient, type SmtClient } from "./smt/client";
+import { enquiryExportMatchKey, phoneLeadsFromActivity } from "./smt/parse";
 import type { SmtCustomer, SmtEnquiry, SmtNps, SmtTestimonial } from "./smt/types";
 import { memoryEnabled } from "./memory";
 import { readSettings, writeKv } from "./settings";
@@ -8,6 +9,7 @@ import {
   logEvent,
   markWebhookSent,
   startPollRun,
+  listTable,
   upsertCustomer,
   upsertEnquiry,
   upsertNps,
@@ -160,6 +162,73 @@ export async function tick(opts: TickOptions = {}, client?: SmtClient): Promise<
       newCount += walked.newCount;
       refreshed += walked.refreshed;
       pages.enquiries = walked.pages;
+
+      try {
+        const exported = await smt.exportEnquiriesCsv();
+        const existing = (await listTable("smt_enquiries")) as Array<Record<string, unknown>>;
+        const byKey = new Map<string, Record<string, unknown>>();
+        for (const row of existing) {
+          const key = enquiryExportMatchKey({
+            phoneE164: row.phone_e164 as string | null,
+            email: row.email as string | null,
+            name: row.name as string | null,
+            enquiredAt: row.enquired_at as string | null,
+          });
+          if (key) byKey.set(key, row);
+        }
+        let enriched = 0;
+        for (const csv of exported) {
+          const key = enquiryExportMatchKey(csv);
+          const match = key ? byKey.get(key) : null;
+          if (!match || match.channel === "phone") continue;
+          const { isNew } = await upsertEnquiry({
+            smtId: String(match.smt_id),
+            customerSmtId: (match.customer_smt_id as string | null) || null,
+            name: String(match.name || csv.name),
+            email: (match.email as string | null) || csv.email,
+            phone: (match.phone as string | null) || csv.phone,
+            phoneE164: (match.phone_e164 as string | null) || csv.phoneE164,
+            status: (match.status as string | null) || csv.status,
+            source: "Enquiry Received",
+            notes: csv.notes || (match.notes as string | null),
+            channel: "email",
+            message: csv.message,
+            tags: csv.tags,
+            enquiredAt: (match.enquired_at as string | null) || csv.enquiredAt,
+            inHours: Boolean(match.in_hours),
+            raw: { ...(typeof match.raw === "object" && match.raw ? match.raw : {}), export: csv.raw },
+          });
+          enriched += 1;
+          if (isNew) newCount += 1;
+          else refreshed += 1;
+        }
+        pages.enquiriesCsv = exported.length;
+        pages.enquiriesEnriched = enriched;
+      } catch (err) {
+        await logEvent("enquiry.export_failed", err instanceof Error ? err.message : String(err));
+      }
+
+      try {
+        const activity = await smt.listHomeActivity();
+        const phoneLeads = phoneLeadsFromActivity(activity);
+        for (const row of phoneLeads) {
+          const { isNew } = await upsertEnquiry(row);
+          scraped += 1;
+          if (isNew) {
+            newCount += 1;
+            await maybeAnnounce(
+              "enquiries",
+              "enquiry.created",
+              "smt_enquiries",
+              { id: row.smtId, name: row.name, phone: row.phoneE164 || row.phone, at: row.enquiredAt },
+              true,
+            );
+          } else refreshed += 1;
+        }
+        pages.phoneLeads = phoneLeads.length;
+      } catch (err) {
+        await logEvent("enquiry.activity_failed", err instanceof Error ? err.message : String(err));
+      }
     }
 
     if (kinds.includes("nps")) {

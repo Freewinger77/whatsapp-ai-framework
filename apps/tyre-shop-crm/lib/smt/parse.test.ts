@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { isInHours } from "../hours";
 import {
+  activityFromHome,
   customersFromTable,
+  enquiriesFromExportCsv,
   enquiriesFromTable,
   extractAntiforgery,
   extractHeadlineNps,
   npsFromTable,
   parseHtmlTables,
+  parseSmtHomeClock,
   parseUkDate,
+  phoneLeadsFromActivity,
 } from "./parse";
 
 const LOGIN = `<input name="__RequestVerificationToken" type="hidden" value="abcTOKEN" />`;
@@ -103,6 +107,43 @@ describe("SMT HTML parse", () => {
     const nps = npsFromTable(parseHtmlTables(npsHtml)[0]);
     assert.equal(nps.length, 1);
     assert.equal(nps[0].score, 10);
+  });
+  it("marks CRM list rows as email leads with name and phone", () => {
+    const [row] = enquiriesFromTable(parseHtmlTables(ENQUIRIES)[0]);
+    assert.equal(row.channel, "email");
+    assert.equal(row.phoneE164, "+447700900011");
+    assert.equal(row.name, "Liam Scott");
+  });
+  it("reads SMT home Phone Enquiry Received vs Enquiry Received", () => {
+    const html = `<section class="recent-activity"><ul>
+      <li><span class="fa fa-phone icon"></span><h4>Phone Enquiry Received</h4>
+        <span class="time">at <strong>10:25 AM</strong> on <strong>05 Sep 2026</strong></span></li>
+      <li><span class="fa fa-envelope icon"></span><h4>Enquiry Received</h4>
+        <span class="time">at <strong>5:02 PM</strong> on <strong>04 Sep 2026</strong></span>
+        <a href="/FittingCentre/CRM/EnquiriesView/110103">Reply to Customer</a></li>
+      <li><span class="fa fa-phone icon"></span><h4>Phone Enquiry Received</h4>
+        <span class="time">at <strong>12:28 PM</strong> on <strong>04 Sep 2026</strong></span></li>
+      <li><span class="fa fa-phone icon"></span><h4>Phone Enquiry Received</h4>
+        <span class="time">at <strong>12:28 PM</strong> on <strong>04 Sep 2026</strong></span></li>
+    </ul></section>`;
+    const items = activityFromHome(html);
+    assert.equal(items.filter((i) => i.kind === "phone_enquiry").length, 2);
+    assert.equal(items.find((i) => i.kind === "email_enquiry")?.viewId, "110103");
+    const phone = phoneLeadsFromActivity(items);
+    assert.equal(phone.length, 2);
+    assert.equal(phone[0].channel, "phone");
+    assert.equal(phone[0].name, "Phone enquiry");
+    assert.equal(isInHours(parseSmtHomeClock("10:25 AM", "05 Sep 2026")), true);
+    assert.equal(isInHours(parseSmtHomeClock("5:02 PM", "04 Sep 2026")), false);
+  });
+  it("reads enquiry export CSV message and phone", () => {
+    const csv = `Name,Email,Phone,Message,Notes,Date Created,Tags
+Alison Crawley,alcrawley77@gmail.com,07740677509,Hello screw in tyre,,04/09/2026,`;
+    const [row] = enquiriesFromExportCsv(csv);
+    assert.equal(row.name, "Alison Crawley");
+    assert.equal(row.phoneE164, "+447740677509");
+    assert.match(row.message || "", /screw in tyre/);
+    assert.equal(row.channel, "email");
   });
   it("keeps NPS Score / Date / Reason / Comment columns from the screenshot", () => {
     const table = parseHtmlTables(NPS)[0];

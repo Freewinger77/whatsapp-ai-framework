@@ -15,7 +15,7 @@ Lists are **server-rendered HTML** with `?page=N`. There is **no DataTables XHR*
 | Path | Columns / notes | Census |
 |---|---|---|
 | `/FittingCentre/CRM/Customers` | First Name, Last Name, Email, VRN, Contact number. View `/CRM/CustomerView/:id`. Export `POST /FittingCentre/CRM/Export` (275 rows, no SMT ids). Each list table ends with a pager `<tr><td colspan>` — skip it. | **Page 1 of 14 → 275** View ids (CSV count matches) |
-| `/FittingCentre/CRM/Enquiries` | Date submitted, Name, Email, Telephone, Status (New / Resolved). View `/CRM/EnquiriesView/:id`. Same pager footer. | **Page 1 of 4 → 80** |
+| `/FittingCentre/CRM/Enquiries` | Date submitted, Name, Email, Telephone, Status (New / Resolved). View `/CRM/EnquiriesView/:id`. Same pager footer. These are **email / form leads**, not booked customers. Export `GET/POST /CRM/ExportEnquiries` has Name, Email, Phone, Message, Notes, Date, Tags. | **Page 1 of 4 → 80** |
 | `/FittingCentre/CRM/NPS` | Score, Date, Reason, Comment. View `/CRM/NPSView?nps=:id`. Headline `<h3>Your NPS Score Is:</h3><p id="percentage">71.43%</p>`. Pager text like `Page 1 of 3` must not be parsed as score `13`. | **Page 1 of 3 → 28** scores |
 | `/FittingCentre/CRM/Testimonials` | Testimonial By, Date created, Approved, Comment. View `/CRM/Testimonial?TestimonialID=:id` | **5** |
 
@@ -40,6 +40,15 @@ Hub: `/FittingCentre/Reports`
 | `/Reports/ViewTyreBookings` | Tyre bookings |
 
 Reconcile dashboard KPIs against the CRM list pages (289 / 84 / 31 / 6), not these booking charts.
+
+## Leads vs customers
+
+SMT home **Recent Activity** shows two enquiry kinds:
+
+- `Phone Enquiry Received` (`fa-phone`) — usually **no Reply / View link** and no caller ID in admin.
+- `Enquiry Received` (`fa-envelope`) — `Reply to Customer` → `/CRM/EnquiriesView/:id` with name, email, telephone, message.
+
+Treat both as **leads**. Do not mix them into `smt_customers`. Dashboard KPIs: Customers (booked list) vs Email leads vs Phone leads.
 
 ## In-hours
 
