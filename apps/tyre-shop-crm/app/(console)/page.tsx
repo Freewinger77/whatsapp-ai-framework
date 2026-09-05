@@ -237,15 +237,15 @@ export default function DashboardPage() {
       <div className="span-6 card">
         <div className="chart-head">
           <h2>Customers</h2>
-          <span className="hint">{mix?.customers ?? 0} new</span>
+          <span className="hint">{mix?.customers ?? 0} booked</span>
         </div>
-        <div className="legend"><span><i className="store" /> First seen on the booked list</span></div>
+        <div className="legend"><span><i className="store" /> Last booking date from SMT</span></div>
         <LineChart series={series.map((d) => ({ label: d.label, values: [d.customers] }))} colors={["rgb(28,28,30)"]} />
         <LineLabels labels={labels} />
         <p className="hint" style={{ margin: "10px 0 0" }}>
           {pct?.newCustomersOfAll != null
-            ? `${pct.newCustomersOfAll}% of all ${kpi?.customers ?? 0} booked customers landed in this period.`
-            : "No new booked customers in this period."}{" "}
+            ? `${pct.newCustomersOfAll}% of all ${kpi?.customers ?? 0} booked customers have a booking date in this period.`
+            : `KPI is ${kpi?.customers ?? 0} on the booked list. SMT did not give a booking date on those rows, so the daily line stays empty.`}{" "}
           <Change value={pct?.vsPrevious.customers} />
         </p>
       </div>

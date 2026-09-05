@@ -10,7 +10,7 @@ export type LeadPoint = {
 };
 
 export type CustomerPoint = {
-  firstSeenAt: string | null;
+  bookedAt: string | null;
 };
 
 export type DayBucket = {
@@ -142,7 +142,7 @@ export function buildDashboardSeries(
   }
 
   for (const row of customers) {
-    const key = londonDateKey(row.firstSeenAt || "");
+    const key = londonDateKey(row.bookedAt || "");
     if (!key) continue;
     const bucket = map.get(key);
     if (bucket) bucket.customers += 1;

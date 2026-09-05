@@ -63,8 +63,8 @@ describe("buildDashboardSeries", () => {
         { at: "2026-08-25T11:00:00+01:00", inHours: true, channel: "email" },
       ],
       [
-        { firstSeenAt: "2026-09-03T09:30:00+01:00" },
-        { firstSeenAt: "2026-08-26T09:30:00+01:00" },
+        { bookedAt: "2026-09-03T09:30:00+01:00" },
+        { bookedAt: "2026-08-26T09:30:00+01:00" },
       ],
       275,
       now,

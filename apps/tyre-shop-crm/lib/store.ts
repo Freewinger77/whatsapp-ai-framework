@@ -399,7 +399,7 @@ export async function analytics(days = 30) {
       channel: string | null;
       first_seen_at: string;
     }>;
-    const customers = memory.all("smt_customers") as Array<{ first_seen_at: string | null }>;
+    const customers = memory.all("smt_customers") as Array<{ last_booking_at: string | null }>;
     return buildAnalytics(windowDays, rows, customers, memory.all("smt_nps").map((r) => Number(r.score)));
   }
   const db = adminClient();
@@ -408,7 +408,7 @@ export async function analytics(days = 30) {
       .from("smt_enquiries")
       .select("enquired_at,in_hours,status,source,channel,first_seen_at")
       .gte("first_seen_at", since),
-    db.from("smt_customers").select("first_seen_at").gte("first_seen_at", since),
+    db.from("smt_customers").select("last_booking_at").not("last_booking_at", "is", null).gte("last_booking_at", since),
     db.from("smt_nps").select("score,scored_at"),
     counts(),
   ]);
@@ -419,7 +419,7 @@ export async function analytics(days = 30) {
     channel: string | null;
     first_seen_at: string;
   }>;
-  const customers = (customerRows ?? []) as Array<{ first_seen_at: string | null }>;
+  const customers = (customerRows ?? []) as Array<{ last_booking_at: string | null }>;
   const scores = ((nps ?? []) as Array<{ score: number }>).map((r) => Number(r.score));
   return buildAnalytics(windowDays, rows, customers, scores, kpi);
 }
@@ -433,7 +433,7 @@ async function buildAnalytics(
     channel: string | null;
     first_seen_at: string;
   }>,
-  customers: Array<{ first_seen_at: string | null }>,
+  customers: Array<{ last_booking_at: string | null }>,
   scores: number[],
   kpiCounts?: Awaited<ReturnType<typeof counts>>,
 ) {
@@ -446,7 +446,7 @@ async function buildAnalytics(
       inHours: Boolean(row.in_hours),
       channel: row.channel,
     })),
-    customers.map((row) => ({ firstSeenAt: row.first_seen_at })),
+    customers.map((row) => ({ bookedAt: row.last_booking_at })),
     kpi.customers,
   );
   const byHour = Array.from({ length: 24 }, (_, hour) => ({ hour, total: 0, inHours: 0, outHours: 0 }));
