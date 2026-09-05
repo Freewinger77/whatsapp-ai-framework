@@ -1,6 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Change, Donut, LineChart, LineLabels } from "@/components/charts";
+
+type DayPoint = {
+  date: string;
+  label: string;
+  leads: number;
+  email: number;
+  phone: number;
+  customers: number;
+  inHours: number;
+  outHours: number;
+};
 
 type Analytics = {
   kpi: {
@@ -12,6 +24,27 @@ type Analytics = {
     emailLeads: number;
     phoneLeads: number;
     npsHeadline: number | null;
+  };
+  series: DayPoint[];
+  mix: {
+    email: number;
+    phone: number;
+    leads: number;
+    customers: number;
+    inHours: number;
+    outHours: number;
+  };
+  pct: {
+    afterHours: number | null;
+    phoneOfLeads: number | null;
+    emailOfLeads: number | null;
+    newCustomersOfAll: number | null;
+    vsPrevious: {
+      leads: number | null;
+      email: number | null;
+      phone: number | null;
+      customers: number | null;
+    };
   };
   byDay: Array<{ date: string; total: number; inHours: number; outHours: number }>;
   typeMix: Array<{ name: string; value: number }>;
@@ -43,6 +76,7 @@ type Conversion = {
 type EventRow = { id: string; kind: string; message: string; created_at: string };
 
 export default function DashboardPage() {
+  const [days, setDays] = useState(7);
   const [data, setData] = useState<Analytics | null>(null);
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [events, setEvents] = useState<EventRow[]>([]);
@@ -54,7 +88,7 @@ export default function DashboardPage() {
     async function load() {
       try {
         const [a, e, v, c] = await Promise.all([
-          fetch("/api/analytics").then((r) => r.json()),
+          fetch(`/api/analytics?days=${days}`).then((r) => r.json()),
           fetch("/api/enquiries?limit=8").then((r) => r.json()),
           fetch("/api/events?limit=8").then((r) => r.json()),
           fetch("/api/conversion").then((r) => r.json()),
@@ -72,16 +106,13 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [days]);
 
-  const chart = useMemo(() => {
-    const days = data?.byDay ?? [];
-    const max = Math.max(1, ...days.map((d) => d.total));
-    return { days, max };
-  }, [data]);
-
+  const series = useMemo(() => data?.series ?? [], [data]);
+  const labels = useMemo(() => series.map((d) => d.label), [series]);
   const kpi = data?.kpi;
-  const mixTotal = (data?.typeMix || []).reduce((s, x) => s + x.value, 0) || 1;
+  const mix = data?.mix;
+  const pct = data?.pct;
 
   return (
     <div className="grid-12">
@@ -100,33 +131,123 @@ export default function DashboardPage() {
         ))}
       </div>
 
+      <div className="span-12 period">
+        {[7, 30, 90].map((n) => (
+          <button key={n} className={`chip ${days === n ? "on" : ""}`} type="button" onClick={() => setDays(n)}>
+            Last {n} days
+          </button>
+        ))}
+      </div>
+
       <div className="span-8 card">
-        <h2>Leads by day</h2>
-        <div className="hint">Email + phone enquiries · in-hours Mon–Sat 09:00–17:00 UK</div>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 160, marginTop: 16 }}>
-          {chart.days.length ? (
-            chart.days.map((d) => (
-              <div key={d.date} title={`${d.date}: ${d.total}`} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 2 }}>
-                <div style={{ height: `${(d.outHours / chart.max) * 140}px`, background: "rgba(245,190,70,0.7)", borderRadius: 3 }} />
-                <div style={{ height: `${(d.inHours / chart.max) * 140}px`, background: "rgb(28,28,30)", borderRadius: 3 }} />
-              </div>
-            ))
-          ) : (
-            <div className="hint">No enquiry volume yet — run a scrape or backfill.</div>
-          )}
+        <div className="chart-head">
+          <h2>After hours / store hours</h2>
+          <span className="hint">{mix?.leads ?? 0} leads this period</span>
+        </div>
+        <div className="legend">
+          <span><i className="store" /> Store hours {mix?.inHours ?? 0}</span>
+          <span><i className="after" /> After hours {mix?.outHours ?? 0}</span>
+        </div>
+        <LineChart
+          series={series.map((d) => ({ label: d.label, values: [d.inHours, d.outHours] }))}
+          colors={["rgb(28,28,30)", "rgb(122, 86, 168)"]}
+        />
+        <LineLabels labels={labels} />
+        <p className="hint" style={{ margin: "12px 0 0" }}>
+          {pct?.afterHours != null
+            ? `${pct.afterHours}% of leads arrive outside store hours.`
+            : "No leads in this period."}{" "}
+          Mon–Sat 09:00–17:00 UK.
+        </p>
+      </div>
+
+      <div className="span-4 card">
+        <h2>Lead split</h2>
+        <div className="hint">Email form vs phone enquiry</div>
+        <div className="donut-card" style={{ marginTop: 12 }}>
+          <Donut
+            slices={[
+              { label: "Email", value: mix?.email ?? 0, color: "rgb(76, 152, 253)" },
+              { label: "Phone", value: mix?.phone ?? 0, color: "rgb(79, 80, 127)" },
+            ]}
+            center={String(mix?.leads ?? 0)}
+          />
+          <div className="donut-key">
+            <div className="row"><span className="legend"><i className="email" /> Email</span><strong>{mix?.email ?? 0} · {pct?.emailOfLeads ?? 0}%</strong></div>
+            <div className="row"><span className="legend"><i className="phone" /> Phone</span><strong>{mix?.phone ?? 0} · {pct?.phoneOfLeads ?? 0}%</strong></div>
+            <Change value={pct?.vsPrevious.leads} />
+          </div>
         </div>
       </div>
 
       <div className="span-4 card">
-        <h2>Lead mix</h2>
-        <div className="hint">Email form vs click-to-call</div>
-        {(data?.typeMix || []).map((t) => (
-          <div key={t.name} className="row">
-            <span>{t.name}</span>
-            <strong>{t.value} · {Math.round((t.value / mixTotal) * 100)}%</strong>
+        <h2>Hours split</h2>
+        <div className="hint">Same period · store vs after hours</div>
+        <div className="donut-card" style={{ marginTop: 12 }}>
+          <Donut
+            slices={[
+              { label: "Store hours", value: mix?.inHours ?? 0, color: "rgb(28,28,30)" },
+              { label: "After hours", value: mix?.outHours ?? 0, color: "rgb(122, 86, 168)" },
+            ]}
+            center={pct?.afterHours != null ? `${Math.round(pct.afterHours)}%` : "0"}
+          />
+          <div className="donut-key">
+            <div className="row"><span className="legend"><i className="store" /> Store hours</span><strong>{mix?.inHours ?? 0}</strong></div>
+            <div className="row"><span className="legend"><i className="after" /> After hours</span><strong>{mix?.outHours ?? 0}</strong></div>
+            <p className="hint" style={{ margin: "8px 0 0" }}>
+              {pct?.afterHours != null ? `${pct.afterHours}% after hours` : "No leads yet"}
+            </p>
           </div>
-        ))}
-        {!data?.typeMix?.length ? <p className="hint">Waiting for rows.</p> : null}
+        </div>
+      </div>
+
+      <div className="span-4 card">
+        <div className="chart-head">
+          <h2>Leads per day</h2>
+          <span className="hint">{mix?.leads ?? 0}</span>
+        </div>
+        <div className="legend"><span><i className="leads" /> Email + phone</span></div>
+        <LineChart series={series.map((d) => ({ label: d.label, values: [d.leads] }))} colors={["rgb(28,28,30)"]} />
+        <LineLabels labels={labels} />
+        <Change value={pct?.vsPrevious.leads} />
+      </div>
+
+      <div className="span-4 card">
+        <div className="chart-head">
+          <h2>Phone enquiries</h2>
+          <span className="hint">{mix?.phone ?? 0}</span>
+        </div>
+        <div className="legend"><span><i className="phone" /> Phone Enquiry Received</span></div>
+        <LineChart series={series.map((d) => ({ label: d.label, values: [d.phone] }))} colors={["rgb(79, 80, 127)"]} />
+        <LineLabels labels={labels} />
+        <Change value={pct?.vsPrevious.phone} />
+      </div>
+
+      <div className="span-6 card">
+        <div className="chart-head">
+          <h2>Emails</h2>
+          <span className="hint">{mix?.email ?? 0}</span>
+        </div>
+        <div className="legend"><span><i className="email" /> Enquiry Received</span></div>
+        <LineChart series={series.map((d) => ({ label: d.label, values: [d.email] }))} colors={["rgb(76, 152, 253)"]} />
+        <LineLabels labels={labels} />
+        <Change value={pct?.vsPrevious.email} />
+      </div>
+
+      <div className="span-6 card">
+        <div className="chart-head">
+          <h2>Customers</h2>
+          <span className="hint">{mix?.customers ?? 0} new</span>
+        </div>
+        <div className="legend"><span><i className="store" /> First seen on the booked list</span></div>
+        <LineChart series={series.map((d) => ({ label: d.label, values: [d.customers] }))} colors={["rgb(28,28,30)"]} />
+        <LineLabels labels={labels} />
+        <p className="hint" style={{ margin: "10px 0 0" }}>
+          {pct?.newCustomersOfAll != null
+            ? `${pct.newCustomersOfAll}% of all ${kpi?.customers ?? 0} booked customers landed in this period.`
+            : "No new booked customers in this period."}{" "}
+          <Change value={pct?.vsPrevious.customers} />
+        </p>
       </div>
 
       <div className="span-12 card">
