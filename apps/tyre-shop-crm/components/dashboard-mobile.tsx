@@ -34,7 +34,7 @@ export function DashboardMobile({
   return (
     <div style={{ height: "100%", boxSizing: "border-box", padding: 0, display: "flex", flexDirection: "column", background: "rgb(255,255,255)" }}>
       <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "8px 16px 12px", borderBottom: "1px solid var(--black-4)" }}>
-        <BrandLogo height={28} />
+        <BrandLogo size="mobile" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ font: "600 16px/20px Inter,sans-serif" }}>{periodTitle(days)}</div>
           <div style={{ font: "400 10px/14px Inter,sans-serif", color: "var(--black-40)" }}>Tyres 4 U · poller live · {pollClock}</div>

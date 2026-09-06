@@ -29,7 +29,7 @@ export default function LoginPage() {
   return (
     <div className="gate">
       <section className="gate-brand">
-        <BrandLogo height={44} subtitle="SMT CRM" />
+        <BrandLogo size="login" subtitle="SMT CRM" />
         <div className="gate-copy">
           <h1>
             Every lead and every booking for the <em>tyre fitting</em> shop, in one place.
