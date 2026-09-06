@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import {
   ChangeLine,
   Chip,
@@ -22,15 +22,19 @@ import {
   formatUkPhone,
   leadDisplayName,
   listPages,
+  periodKpiLabel,
+  periodScope,
   periodTitle,
   periodVsLabel,
   whatsappHref,
 } from "@/lib/display";
 import { callbacks, chartLabels, npsLabel, recentLeads, type AnalyticsData, type ConversionData, type EnquiryRow, type EventRow } from "@/lib/dashboard-model";
+import { DashboardDesktopSkeleton } from "./skeleton";
 
 export function DashboardDesktop({
   days,
   setDays,
+  loading,
   data,
   enquiries,
   events,
@@ -38,6 +42,7 @@ export function DashboardDesktop({
 }: {
   days: number;
   setDays: (n: number) => void;
+  loading?: boolean;
   data: AnalyticsData | null;
   enquiries: EnquiryRow[];
   events: EventRow[];
@@ -54,6 +59,7 @@ export function DashboardDesktop({
   const recent = recentLeads(enquiries, 5);
   const after = pct?.afterHours;
   const range = data ? formatDayRange(data.from, data.to) : "";
+  const [callbacksOpen, setCallbacksOpen] = useState(true);
 
   return (
     <div style={{ flex: 1, padding: "25px 23px 46px 33px", boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 28 }}>
@@ -71,14 +77,18 @@ export function DashboardDesktop({
         </div>
       </div>
 
+      {loading ? (
+        <DashboardDesktopSkeleton />
+      ) : (
+        <>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
         <Hero
-          label="Leads this week"
+          label={periodKpiLabel("Leads", days)}
           value={mix?.leads ?? "—"}
           sub={<ChangeLine value={pct?.vsPrevious.leads} vs={vs} extra={prev ? `${prev.leads} lead${prev.leads === 1 ? "" : "s"}` : undefined} />}
         />
         <Hero
-          label="Bookings this week"
+          label={periodKpiLabel("Bookings", days)}
           value={mix?.bookings ?? "—"}
           sub={<ChangeLine value={pct?.vsPrevious.bookings} vs={vs} extra={prev ? `${prev.bookings} created` : undefined} />}
         />
@@ -86,49 +96,8 @@ export function DashboardDesktop({
           invert
           label="Lead → booked"
           value={conversion ? `${conversion.peoplePct}%` : "—"}
-          sub={`${conversion?.uniqueBooked ?? "—"} of ${conversion?.uniqueLeadPeople ?? "—"} unique people who emailed`}
+          sub={`${conversion?.uniqueBooked ?? "—"} of ${conversion?.uniqueLeadPeople ?? "—"} unique people who emailed ${periodScope(days)}`}
         />
-      </div>
-
-      <div style={{ background: "var(--background-2)", borderRadius: 16, boxShadow: "inset 0 0 0 1px var(--black-4)", padding: 16, boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <h2 style={{ font: "600 16px/24px Inter,sans-serif", color: "rgb(0,0,0)", margin: 0 }}>Needs calling back</h2>
-          <CountPill n={callList.length} />
-          <div style={{ flex: 1 }} />
-          <span style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>After hours first</span>
-        </div>
-        <div style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)", textWrap: "pretty" }}>
-          Leads that came in outside store hours, so nobody answered the phone. Oldest at the top.
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", marginTop: 8 }}>
-          {callList.length ? callList.map((row) => {
-            const name = leadDisplayName(row.name);
-            const phone = formatUkPhone(row.phone);
-            return (
-              <div key={row.smt_id} style={{ display: "flex", alignItems: "center", gap: 16, padding: "12px 0", borderTop: "1px solid var(--black-4)" }}>
-                <div style={{ flex: "2 1 180px", minWidth: 0, font: "500 14px/20px Inter,sans-serif", color: name.missing ? "var(--black-40)" : undefined }}>{name.text}</div>
-                <div style={{ flex: "1 1 140px", minWidth: 0, font: "400 14px/20px Inter,sans-serif", color: phone ? "var(--black-80)" : "var(--black-20)" }}>{phone || "—"}</div>
-                <div style={{ flex: "1 1 130px", minWidth: 0, font: "400 12px/16px Inter,sans-serif", color: "var(--black-80)" }}>{formatLeadWhen(row.enquired_at)}</div>
-                <div style={{ flex: "1 1 110px", minWidth: 0, display: "flex", alignItems: "center", gap: 6, font: "400 12px/16px Inter,sans-serif", color: "var(--black-80)" }}>
-                  <Dot color="var(--logo-2)" />After hours
-                </div>
-                <WhatsAppButton href={whatsappHref(row.phone)} />
-              </div>
-            );
-          }) : (
-            <div style={{ padding: "12px 0", borderTop: "1px solid var(--black-4)", font: "400 14px/20px Inter,sans-serif", color: "var(--black-40)" }}>No after-hours leads in the feed.</div>
-          )}
-        </div>
-      </div>
-
-      <SectionRule label="Totals on the CRM lists" />
-
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
-        <Total label="Customers" value={kpi?.customers ?? "—"} sub="Booked CRM list · not leads" />
-        <Total label="Email leads" value={kpi?.emailLeads ?? "—"} sub="Enquiry Received · name + phone" />
-        <Total label="Phone leads" value={kpi?.phoneLeads ?? "—"} sub="Phone Enquiry Received · SMT home" />
-        <Total label="Bookings" value={kpi?.fitted ?? "—"} sub={`${kpi?.bookings ?? 0} orders · ${kpi?.abandoned ?? 0} abandoned`} />
-        <Total label="NPS" value={npsLabel(kpi?.npsHeadline)} sub={data?.smtHeadlineNps != null ? `SMT headline ${data.smtHeadlineNps}%` : "SMT headline"} />
       </div>
 
       <SectionRule label="Where the leads come from" />
@@ -200,6 +169,79 @@ export function DashboardDesktop({
         </DonutCard>
       </div>
 
+      <SectionRule label="Totals on the CRM lists" />
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
+        <Total label="Customers" value={kpi?.customers ?? "—"} sub="Booked CRM list · not leads" />
+        <Total label="Email leads" value={kpi?.emailLeads ?? "—"} sub="Enquiry Received · name + phone" />
+        <Total label="Phone leads" value={kpi?.phoneLeads ?? "—"} sub="Phone Enquiry Received · SMT home" />
+        <Total label="Bookings" value={kpi?.fitted ?? "—"} sub={`${kpi?.bookings ?? 0} orders · ${kpi?.abandoned ?? 0} abandoned`} />
+        <Total label="NPS" value={npsLabel(kpi?.npsHeadline)} sub={data?.smtHeadlineNps != null ? `SMT headline ${data.smtHeadlineNps}%` : "SMT headline"} />
+      </div>
+
+      <div style={{ background: "var(--background-2)", borderRadius: 16, boxShadow: "inset 0 0 0 1px var(--black-4)", padding: 16, boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 4 }}>
+        <button
+          type="button"
+          onClick={() => setCallbacksOpen((v) => !v)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            width: "100%",
+            border: 0,
+            background: "transparent",
+            padding: 0,
+            cursor: "pointer",
+            textAlign: "left",
+          }}
+        >
+          <span style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)", width: 12, flexShrink: 0 }}>{callbacksOpen ? "▾" : "▸"}</span>
+          <h2 style={{ font: "600 16px/24px Inter,sans-serif", color: "rgb(0,0,0)", margin: 0 }}>Needs calling back</h2>
+          <CountPill n={callList.length} />
+          <div style={{ flex: 1 }} />
+          <span style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>{callbacksOpen ? "Hide list" : "After hours first"}</span>
+        </button>
+        {callbacksOpen ? (
+          <>
+            <div style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)", textWrap: "pretty" }}>
+              Leads that came in outside store hours, so nobody answered the phone. Oldest at the top.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", marginTop: 8 }}>
+              <div style={{ ...callbackGrid, height: 32 }}>
+                <span style={callbackHead}>Name</span>
+                <span style={callbackHead}>Phone</span>
+                <span style={callbackHead}>Received</span>
+                <span style={callbackHead}>Hours</span>
+                <span style={{ ...callbackHead, textAlign: "right" }}>Action</span>
+              </div>
+              {callList.length ? callList.map((row) => {
+                const name = leadDisplayName(row.name);
+                const phone = formatUkPhone(row.phone);
+                return (
+                  <div key={row.smt_id} style={callbackGrid}>
+                    <div style={{ ...callbackCell, fontWeight: 500, color: name.missing ? "var(--black-40)" : "rgb(0,0,0)" }}>{name.text}</div>
+                    <div style={{ ...callbackCell, color: phone ? "var(--black-80)" : "var(--black-20)", fontVariantNumeric: "tabular-nums" }}>{phone || "—"}</div>
+                    <div style={{ ...callbackCell, color: "var(--black-80)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{formatLeadWhen(row.enquired_at)}</div>
+                    <div style={{ ...callbackCell, display: "flex", alignItems: "center", gap: 6, color: "var(--black-80)", whiteSpace: "nowrap" }}>
+                      <Dot color="var(--logo-2)" />After hours
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
+                      <WhatsAppButton href={whatsappHref(row.phone)} />
+                    </div>
+                  </div>
+                );
+              }) : (
+                <div style={{ padding: "12px 0", borderTop: "1px solid var(--black-4)", font: "400 14px/20px Inter,sans-serif", color: "var(--black-40)" }}>No after-hours leads in the feed.</div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>
+            {callList.length ? `${callList.length} after-hours lead${callList.length === 1 ? "" : "s"} · tap to open` : "No after-hours leads in this period."}
+          </div>
+        )}
+      </div>
+
       <SectionRule label="Turning into bookings" />
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
@@ -232,7 +274,7 @@ export function DashboardDesktop({
       </div>
 
       <div style={{ background: "var(--background-2)", borderRadius: 16, boxShadow: "inset 0 0 0 1px var(--black-4)", padding: 16, boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 4 }}>
-        <h2 style={{ font: "500 14px/20px Inter,sans-serif", color: "rgb(28,28,28)", margin: 0 }}>Email enquiry → booked</h2>
+        <h2 style={{ font: "500 14px/20px Inter,sans-serif", color: "rgb(28,28,28)", margin: 0 }}>Email enquiry → booked · {periodTitle(days)}</h2>
         <div style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)", textWrap: "pretty" }}>
           Same phone or email on the Customers list. This is not a proven “booked after the enquiry” timestamp — SMT does not give that.
         </div>
@@ -339,9 +381,10 @@ export function DashboardDesktop({
           <RecRow label="Enquiries" value={`${listPages(kpi?.emailLeads ?? 0, 20)} pages · ${kpi?.emailLeads ?? 0} View ids`} />
           <RecRow label="NPS rows" value={`${listPages(kpi?.nps ?? 0, 10)} pages · ${kpi?.nps ?? 0} scores · SMT headline ${data?.smtHeadlineNps ?? kpi?.npsHeadline ?? "—"}%`} />
           <RecRow label="Bookings export" value={`${kpi?.bookings ?? 0} orders · ${kpi?.fitted ?? 0} fitted · ${kpi?.abandoned ?? 0} abandoned · ${kpi?.cancelled ?? 0} cancelled`} />
-          <RecRow label="Testimonials" value={`${kpi?.testimonials ?? 0} quotes`} />
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }
@@ -429,6 +472,36 @@ function Stat({ label, value, sub }: { label: string; value: ReactNode; sub: str
     </div>
   );
 }
+
+const callbackGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(140px, 1.4fr) 148px 158px 118px 150px",
+  alignItems: "center",
+  columnGap: 16,
+  height: 52,
+  padding: 0,
+  borderTop: "1px solid var(--black-4)",
+  boxSizing: "border-box",
+};
+
+const callbackHead: CSSProperties = {
+  font: "500 12px/16px Inter,sans-serif",
+  color: "var(--black-40)",
+  display: "flex",
+  alignItems: "center",
+  height: "100%",
+};
+
+const callbackCell: CSSProperties = {
+  font: "400 14px/20px Inter,sans-serif",
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  display: "flex",
+  alignItems: "center",
+  height: "100%",
+};
 
 function RecRow({ label, value }: { label: string; value: string }) {
   return (

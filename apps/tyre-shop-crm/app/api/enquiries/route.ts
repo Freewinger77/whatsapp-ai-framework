@@ -37,7 +37,9 @@ export async function GET(request: Request) {
       return booked === "yes" ? hit : !hit && r.channel !== "phone";
     });
   }
-  enquiries.sort((a, b) => String(b.enquired_at || "").localeCompare(String(a.enquired_at || "")));
+  enquiries.sort((a, b) =>
+    String(b.enquired_at || b.first_seen_at || "").localeCompare(String(a.enquired_at || a.first_seen_at || "")),
+  );
   enquiries = enquiries.slice(0, limit);
   if (url.searchParams.get("format") === "csv") {
     return asCsv(

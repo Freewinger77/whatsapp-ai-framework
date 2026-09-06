@@ -1,3 +1,5 @@
+import { lastLondonDays, londonDateKey } from "./analytics-series";
+
 export interface ConversionLead {
   smt_id: string;
   name: string | null;
@@ -145,4 +147,16 @@ export function buildLeadConversion(
 
 export function bookedLeadIds(conversion: LeadConversion): Set<string> {
   return new Set(conversion.matches.map((m) => m.leadSmtId));
+}
+
+export function leadsInLondonWindow<T extends { enquired_at: string | null }>(
+  leads: T[],
+  days: number,
+  now = new Date(),
+): T[] {
+  const keys = new Set(lastLondonDays(days, now));
+  return leads.filter((lead) => {
+    const key = londonDateKey(lead.enquired_at || "");
+    return Boolean(key && keys.has(key));
+  });
 }

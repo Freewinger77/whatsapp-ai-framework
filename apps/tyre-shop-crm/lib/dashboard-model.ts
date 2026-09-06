@@ -101,10 +101,14 @@ export function callbacks(enquiries: EnquiryRow[], from?: string, to?: string): 
     .sort((a, b) => String(a.enquired_at || a.first_seen_at || "").localeCompare(String(b.enquired_at || b.first_seen_at || "")));
 }
 
+export function latestFirst(rows: EnquiryRow[]): EnquiryRow[] {
+  return [...rows].sort((a, b) =>
+    String(b.enquired_at || b.first_seen_at || "").localeCompare(String(a.enquired_at || a.first_seen_at || "")),
+  );
+}
+
 export function recentLeads(enquiries: EnquiryRow[], n = 5): EnquiryRow[] {
-  return [...enquiries]
-    .sort((a, b) => String(b.enquired_at || b.first_seen_at || "").localeCompare(String(a.enquired_at || a.first_seen_at || "")))
-    .slice(0, n);
+  return latestFirst(enquiries).slice(0, n);
 }
 
 export function npsLabel(value: number | null | undefined): string {

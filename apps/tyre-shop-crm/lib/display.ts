@@ -128,6 +128,18 @@ export function periodVsLabel(days: number): string {
   return "last 90 days";
 }
 
+export function periodKpiLabel(noun: string, days: number): string {
+  if (days <= 7) return `${noun} this week`;
+  if (days <= 30) return `${noun} last 30 days`;
+  return `${noun} last 90 days`;
+}
+
+export function periodScope(days: number): string {
+  if (days <= 7) return "this week";
+  if (days <= 30) return "the last 30 days";
+  return "the last 90 days";
+}
+
 export function changeArrow(value: number | null | undefined): { arrow: string; color: string; abs: string } | null {
   if (value == null) return null;
   if (value === 0) return { arrow: "", color: "var(--black-80)", abs: "0" };

@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Tyres 4 U · SMT CRM",
-  description: "Sell More Tyres CRM dashboard for Tyres 4 U",
+  title: "Tyres 4 U",
+  description: "Every lead and every booking for the tyre fitting shop, in one place.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

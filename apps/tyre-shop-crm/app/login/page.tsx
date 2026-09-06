@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { BrandLogo } from "@/components/brand-logo";
 
 export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [show, setShow] = useState(false);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -25,20 +27,41 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="login-wrap">
-      <form className="login-card" onSubmit={onSubmit}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 80, background: "url(/rapidscreen-mark.png) center / cover no-repeat" }} />
-          <span style={{ font: "400 14px/20px Inter,sans-serif", fontStyle: "italic", color: "var(--text-sidebar)" }}>TYRES4U.WASUP</span>
+    <div className="gate">
+      <section className="gate-brand">
+        <BrandLogo size="login" />
+        <div className="gate-copy">
+          <h1>
+            Every lead and every booking for the <em>tyre fitting</em> shop, in one place.
+          </h1>
         </div>
-        <h1>Tyres 4 U</h1>
-        <p className="hint">Password gate for the SMT CRM dashboard. Same password as the Dundee inbox.</p>
-        <input name="password" type="password" placeholder="Password" required autoComplete="current-password" />
-        {error ? <p className="err">{error}</p> : null}
-        <button className="btn" type="submit" disabled={pending}>
-          {pending ? "Checking…" : "Open dashboard"}
-        </button>
-      </form>
+        <p className="gate-foot">Internal tool. Authorised users only.</p>
+      </section>
+
+      <section className="gate-form">
+        <form onSubmit={onSubmit}>
+          <h2>Sign in</h2>
+          <p className="gate-sub">Use the shared shop password.</p>
+          <label htmlFor="password">Password</label>
+          <div className="gate-field">
+            <input
+              id="password"
+              name="password"
+              type={show ? "text" : "password"}
+              required
+              autoComplete="current-password"
+              autoFocus
+            />
+            <button type="button" className="gate-show" onClick={() => setShow((v) => !v)}>
+              {show ? "Hide" : "Show"}
+            </button>
+          </div>
+          {error ? <p className="err">{error}</p> : null}
+          <button className="gate-submit" type="submit" disabled={pending}>
+            {pending ? "Checking…" : "Sign in"}
+          </button>
+        </form>
+      </section>
     </div>
   );
 }

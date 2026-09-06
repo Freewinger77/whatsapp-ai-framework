@@ -1,13 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { BrandLogo } from "./brand-logo";
 import { ChangeLine, Chip, CountPill, Dot, RsLineChart, WhatsAppButton } from "./rs";
-import { formatCallbackWhen, formatUkPhone, leadDisplayName, periodTitle, periodVsLabel, whatsappHref } from "@/lib/display";
-import { callbacks, chartLabels, npsLabel, type AnalyticsData, type ConversionData, type EnquiryRow } from "@/lib/dashboard-model";
+import { formatCallbackWhen, formatUkPhone, leadDisplayName, periodKpiLabel, periodScope, periodTitle, periodVsLabel, whatsappHref } from "@/lib/display";
+import { callbacks, chartLabels, latestFirst, npsLabel, type AnalyticsData, type ConversionData, type EnquiryRow } from "@/lib/dashboard-model";
+import { DashboardMobileSkeleton } from "./skeleton";
 
 export function DashboardMobile({
   days,
   setDays,
+  loading,
   data,
   enquiries,
   conversion,
@@ -15,6 +18,7 @@ export function DashboardMobile({
 }: {
   days: number;
   setDays: (n: number) => void;
+  loading?: boolean;
   data: AnalyticsData | null;
   enquiries: EnquiryRow[];
   conversion: ConversionData | null;
@@ -27,13 +31,14 @@ export function DashboardMobile({
   const series = data?.series ?? [];
   const labels = chartLabels(series);
   const vs = periodVsLabel(days);
-  const callList = callbacks(enquiries, data?.from, data?.to);
+  const inPeriod = callbacks(enquiries, data?.from, data?.to);
+  const callList = inPeriod.length ? inPeriod : latestFirst(callbacks(enquiries)).slice(0, 8);
   const oldest = callList[0];
 
   return (
     <div style={{ height: "100%", boxSizing: "border-box", padding: 0, display: "flex", flexDirection: "column", background: "rgb(255,255,255)" }}>
       <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "8px 16px 12px", borderBottom: "1px solid var(--black-4)" }}>
-        <div style={{ width: 28, height: 28, borderRadius: 80, flexShrink: 0, background: "url(/rapidscreen-mark.png) center / cover no-repeat" }} />
+        <BrandLogo size="mobile" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ font: "600 16px/20px Inter,sans-serif" }}>{periodTitle(days)}</div>
           <div style={{ font: "400 10px/14px Inter,sans-serif", color: "var(--black-40)" }}>Tyres 4 U · poller live · {pollClock}</div>
@@ -48,8 +53,12 @@ export function DashboardMobile({
           <Chip height={36} on={days === 90} onClick={() => setDays(90)}>90 days</Chip>
         </div>
 
+        {loading ? (
+          <DashboardMobileSkeleton />
+        ) : (
+          <>
         <div style={{ background: "var(--surface-inverse)", borderRadius: 20, padding: 20, display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ font: "500 14px/20px Inter,sans-serif", color: "rgba(255,255,255,0.8)" }}>Leads this week</span>
+          <span style={{ font: "500 14px/20px Inter,sans-serif", color: "rgba(255,255,255,0.8)" }}>{periodKpiLabel("Leads", days)}</span>
           <span style={{ font: "600 44px/52px Inter,sans-serif", letterSpacing: "-0.02em", color: "rgb(255,255,255)" }}>{mix?.leads ?? "—"}</span>
           <span style={{ font: "400 12px/16px Inter,sans-serif", color: "rgba(255,255,255,0.8)" }}>
             <ChangeLine light value={pct?.vsPrevious.leads} vs={vs} extra={prev ? `${prev.leads} lead${prev.leads === 1 ? "" : "s"}` : undefined} />
@@ -58,32 +67,40 @@ export function DashboardMobile({
 
         <div style={{ display: "flex", gap: 12 }}>
           <Mini label="Bookings" value={mix?.bookings ?? "—"} sub={<ChangeLine value={pct?.vsPrevious.bookings} vs={vs} />} />
-          <Mini label="Lead → booked" value={conversion ? `${conversion.peoplePct}%` : "—"} sub={`${conversion?.uniqueBooked ?? "—"} of ${conversion?.uniqueLeadPeople ?? "—"} people`} />
+          <Mini label="Lead → booked" value={conversion ? `${conversion.peoplePct}%` : "—"} sub={`${conversion?.uniqueBooked ?? "—"} of ${conversion?.uniqueLeadPeople ?? "—"} who emailed ${periodScope(days)}`} />
         </div>
 
-        <Link
-          href="/enquiries"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            minHeight: 56,
-            padding: "12px 16px",
-            borderRadius: 16,
-            boxShadow: "inset 0 0 0 1px var(--black-10)",
-            boxSizing: "border-box",
-            color: "rgb(28,28,28)",
-            textDecoration: "none",
-          }}
-        >
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: "block", font: "500 14px/20px Inter,sans-serif" }}>Needs calling back</span>
+        <div style={{ borderRadius: 16, boxShadow: "inset 0 0 0 1px var(--black-10)", overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px" }}>
+            <span style={{ display: "block", font: "500 14px/20px Inter,sans-serif" }}>Needs calling back · {callList.length}</span>
             <span style={{ display: "block", font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>
-              After hours first{oldest ? ` · oldest ${formatCallbackWhen(oldest.enquired_at)}` : ""}
+              After-hours leads to chase{oldest ? ` · oldest ${formatCallbackWhen(oldest.enquired_at)}` : ""}
             </span>
-          </span>
-          <CountPill n={callList.length} height={24} />
-        </Link>
+          </div>
+          {callList.length ? callList.map((row) => {
+            const name = leadDisplayName(row.name);
+            const href = whatsappHref(row.phone);
+            return (
+              <div key={row.smt_id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderTop: "1px solid var(--black-4)" }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span style={{ font: "500 14px/20px Inter,sans-serif", color: name.missing ? "var(--black-40)" : undefined }}>{name.text}</span>
+                  <span style={{ font: "400 12px/16px Inter,sans-serif", color: href ? "var(--black-80)" : "var(--black-20)" }}>
+                    {href ? `${formatUkPhone(row.phone)} · ${row.channel === "phone" ? "phone lead" : "email lead"}` : "No number to call"}
+                  </span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6, font: "400 10px/14px Inter,sans-serif", color: "var(--black-40)" }}>
+                    <Dot color="var(--logo-2)" size={6} />
+                    After hours · {formatCallbackWhen(row.enquired_at)}
+                  </span>
+                </div>
+                <WhatsAppButton href={href} label={false} />
+              </div>
+            );
+          }) : (
+            <div style={{ padding: "12px 16px 16px", borderTop: "1px solid var(--black-4)", font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>
+              No after-hours leads in this period.
+            </div>
+          )}
+        </div>
 
         <div style={{ background: "var(--background-2)", borderRadius: 16, boxShadow: "inset 0 0 0 1px var(--black-4)", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
@@ -113,6 +130,8 @@ export function DashboardMobile({
         >
           See the full dashboard
         </Link>
+          </>
+        )}
       </div>
     </div>
   );
@@ -137,8 +156,9 @@ export function CallbacksMobile({
   hours: "out" | "all" | "in";
   setHours: (h: "out" | "all" | "in") => void;
 }) {
-  const rows =
-    hours === "out" ? callbacks(enquiries) : hours === "in" ? enquiries.filter((e) => e.in_hours) : [...enquiries].sort((a, b) => String(a.enquired_at || "").localeCompare(String(b.enquired_at || "")));
+  const rows = latestFirst(
+    hours === "out" ? callbacks(enquiries) : hours === "in" ? enquiries.filter((e) => e.in_hours) : enquiries,
+  );
   const after = callbacks(enquiries);
   const store = enquiries.filter((e) => e.in_hours);
   const noNumber = after.filter((e) => !whatsappHref(e.phone)).length;
@@ -150,7 +170,7 @@ export function CallbacksMobile({
           <div style={{ font: "600 16px/20px Inter,sans-serif" }}>Needs calling back</div>
           <CountPill n={after.length} />
         </div>
-        <div style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>Nobody answered the phone. Oldest first.</div>
+        <div style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>Nobody answered the phone. Latest first.</div>
       </div>
       <div style={{ flexShrink: 0, display: "flex", gap: 8, padding: "12px 16px" }}>
         <Chip height={36} on={hours === "out"} onClick={() => setHours("out")}>After hours</Chip>

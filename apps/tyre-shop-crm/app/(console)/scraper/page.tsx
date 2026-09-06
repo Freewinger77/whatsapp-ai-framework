@@ -16,7 +16,7 @@ export default function ScraperPage() {
     webhookUrl: "",
     signWebhooks: true,
     sendEachOnce: true,
-    announceKinds: KINDS,
+    announceKinds: ["enquiries"],
     pollIntervalMs: 60_000,
   });
   const [flash, setFlash] = useState("");
@@ -100,7 +100,7 @@ export default function ScraperPage() {
         <input
           value={settings.webhookUrl}
           onChange={(e) => setSettings({ ...settings, webhookUrl: e.target.value })}
-          placeholder="https://n8n…/webhook/tyres4u-smt"
+          placeholder="https://n8n…/webhook/tyres4u-fresh-enquiry"
           style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(0,0,0,0.1)" }}
         />
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>

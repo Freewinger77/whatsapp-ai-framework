@@ -16,7 +16,7 @@ const DEFAULTS: RuntimeSettings = {
   webhookSecret: process.env.WEBHOOK_SECRET || "",
   signWebhooks: Boolean(process.env.WEBHOOK_SECRET),
   sendEachOnce: true,
-  announceKinds: ["customers", "enquiries", "nps", "testimonials"],
+  announceKinds: ["enquiries"],
   pollIntervalMs: POLL_INTERVAL_MS,
 };
 

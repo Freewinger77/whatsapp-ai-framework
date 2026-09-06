@@ -11,11 +11,10 @@ import {
   IconCustomers,
   IconDocs,
   IconLeads,
-  IconMore,
   IconNps,
   IconScraper,
-  IconTestimonials,
 } from "./icons";
+import { BrandLogo } from "./brand-logo";
 import { CountPill } from "./rs";
 import { formatPollTime } from "@/lib/display";
 
@@ -26,7 +25,6 @@ const NAV = [
   { href: "/enquiries", label: "Leads", icon: <IconLeads />, badge: true },
   { href: "/conversion", label: "Lead → booked", icon: <IconConvert /> },
   { href: "/nps", label: "NPS", icon: <span style={{ width: 20, height: 20, display: "grid", placeItems: "center", flexShrink: 0 }}><IconNps /></span> },
-  { href: "/testimonials", label: "Testimonials", icon: <IconTestimonials /> },
   { href: "/activity", label: "Activity", icon: <span style={{ width: 20, height: 20, display: "grid", placeItems: "center", flexShrink: 0 }}><IconActivity /></span> },
   { href: "/scraper", label: "Scraper", icon: <IconScraper /> },
   { href: "/docs", label: "API docs", icon: <IconDocs /> },
@@ -39,23 +37,15 @@ const TITLES: Record<string, string> = {
   "/enquiries": "Leads",
   "/conversion": "Lead → booked",
   "/nps": "NPS",
-  "/testimonials": "Testimonials",
   "/activity": "Activity",
   "/scraper": "Scraper",
   "/docs": "API docs",
-  "/more": "More",
 };
 
 const MOBILE_TABS = [
   { href: "/", label: "Overview", icon: (size: number) => <IconChart size={size} />, match: (p: string) => p === "/" },
   { href: "/enquiries", label: "Leads", icon: (size: number) => <IconLeads size={size} />, match: (p: string) => p === "/enquiries" },
   { href: "/bookings", label: "Bookings", icon: (size: number) => <IconBookings size={size} />, match: (p: string) => p === "/bookings" },
-  {
-    href: "/more",
-    label: "More",
-    icon: (size: number) => <IconMore size={size} />,
-    match: (p: string) => !["/", "/enquiries", "/bookings"].includes(p),
-  },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {
@@ -117,11 +107,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
             background: "rgb(255,255,255)",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 12, height: 52, padding: "12px 8px", boxSizing: "border-box" }}>
-            <div style={{ width: 28, height: 28, borderRadius: 80, flexShrink: 0, background: "url(/rapidscreen-mark.png) center / cover no-repeat" }} />
-            <span style={{ font: "400 14px/20px Inter,sans-serif", fontStyle: "italic", color: "var(--text-sidebar)", whiteSpace: "nowrap" }}>
-              TYRES4U.WASUP
-            </span>
+          <div style={{ display: "flex", alignItems: "center", minHeight: 52, padding: "10px 4px 14px", boxSizing: "border-box" }}>
+            <BrandLogo size="sidebar" />
           </div>
           <nav style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, paddingTop: 8 }}>
             {NAV.map((item) => {

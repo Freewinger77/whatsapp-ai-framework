@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatUkPhone, leadDisplayName, listPages, whatsappHref } from "./display";
+import { formatUkPhone, leadDisplayName, listPages, periodKpiLabel, periodScope, whatsappHref } from "./display";
 
 test("formats UK mobiles the way the handoff shows them", () => {
   assert.equal(formatUkPhone("07701448992"), "07701 448992");
@@ -21,4 +21,10 @@ test("list pages match SMT pager math used in the handoff", () => {
   assert.equal(listPages(275, 20), 14);
   assert.equal(listPages(80, 20), 4);
   assert.equal(listPages(28, 10), 3);
+});
+
+test("period KPI labels follow the 7 / 30 / 90 chips", () => {
+  assert.equal(periodKpiLabel("Leads", 7), "Leads this week");
+  assert.equal(periodKpiLabel("Bookings", 30), "Bookings last 30 days");
+  assert.equal(periodScope(90), "the last 90 days");
 });
