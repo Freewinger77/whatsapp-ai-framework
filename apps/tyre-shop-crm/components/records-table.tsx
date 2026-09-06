@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { TyreLoader } from "./tyre-loader";
 
 export type Filter = "all" | "new" | "needs";
 
@@ -71,8 +72,9 @@ export function RecordsTable<T extends { smt_id: string }>({
         </div>
       ) : null}
       {error ? <p className="err">{error}</p> : null}
-      <div className="rs-table-wrap">
-        <table className="data">
+      <div className="rs-table-wrap" style={{ position: "relative", minHeight: loading ? 220 : undefined }}>
+        {loading ? <TyreLoader size={128} /> : null}
+        <table className="data" style={loading ? { opacity: 0.45 } : undefined }>
           <thead>
             <tr>
               {columns.map((c) => (
