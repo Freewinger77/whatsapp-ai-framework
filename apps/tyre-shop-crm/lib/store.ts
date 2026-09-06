@@ -1,5 +1,5 @@
 import { buildDashboardSeries } from "./analytics-series";
-import { buildLeadConversion } from "./conversion";
+import { buildLeadConversion, leadsInLondonWindow } from "./conversion";
 import { npsHeadline } from "./hours";
 import { memory, memoryEnabled } from "./memory";
 import { adminClient, supabaseConfigured } from "./supabase/admin";
@@ -568,19 +568,21 @@ async function buildAnalytics(
   };
 }
 
-export async function leadConversion() {
+export async function leadConversion(days?: number) {
   const [leads, customers] = await Promise.all([listTable("smt_enquiries"), listTable("smt_customers")]);
+  const typed = leads as Array<{
+    smt_id: string;
+    name: string | null;
+    phone: string | null;
+    phone_e164: string | null;
+    email: string | null;
+    channel: string | null;
+    enquired_at: string | null;
+    message: string | null;
+  }>;
+  const windowed = days ? leadsInLondonWindow(typed, days) : typed;
   return buildLeadConversion(
-    leads as Array<{
-      smt_id: string;
-      name: string | null;
-      phone: string | null;
-      phone_e164: string | null;
-      email: string | null;
-      channel: string | null;
-      enquired_at: string | null;
-      message: string | null;
-    }>,
+    windowed,
     customers as Array<{
       smt_id: string;
       name: string | null;

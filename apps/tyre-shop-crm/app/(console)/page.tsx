@@ -24,7 +24,7 @@ export default function DashboardPage() {
           fetch(`/api/analytics?days=${days}`).then((r) => r.json()),
           fetch("/api/enquiries?limit=200").then((r) => r.json()),
           fetch("/api/events?limit=8").then((r) => r.json()),
-          fetch("/api/conversion").then((r) => r.json()),
+          fetch(`/api/conversion?days=${days}`).then((r) => r.json()),
           fetch("/api/status").then((r) => r.json()),
         ]);
         if (cancelled) return;

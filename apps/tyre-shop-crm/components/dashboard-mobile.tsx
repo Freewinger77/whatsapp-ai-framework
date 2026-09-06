@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { BrandLogo } from "./brand-logo";
 import { ChangeLine, Chip, CountPill, Dot, RsLineChart, WhatsAppButton } from "./rs";
-import { formatCallbackWhen, formatUkPhone, leadDisplayName, periodTitle, periodVsLabel, whatsappHref } from "@/lib/display";
+import { formatCallbackWhen, formatUkPhone, leadDisplayName, periodKpiLabel, periodScope, periodTitle, periodVsLabel, whatsappHref } from "@/lib/display";
 import { callbacks, chartLabels, npsLabel, type AnalyticsData, type ConversionData, type EnquiryRow } from "@/lib/dashboard-model";
 import { DashboardMobileSkeleton } from "./skeleton";
 
@@ -57,7 +57,7 @@ export function DashboardMobile({
         ) : (
           <>
         <div style={{ background: "var(--surface-inverse)", borderRadius: 20, padding: 20, display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ font: "500 14px/20px Inter,sans-serif", color: "rgba(255,255,255,0.8)" }}>Leads this week</span>
+          <span style={{ font: "500 14px/20px Inter,sans-serif", color: "rgba(255,255,255,0.8)" }}>{periodKpiLabel("Leads", days)}</span>
           <span style={{ font: "600 44px/52px Inter,sans-serif", letterSpacing: "-0.02em", color: "rgb(255,255,255)" }}>{mix?.leads ?? "—"}</span>
           <span style={{ font: "400 12px/16px Inter,sans-serif", color: "rgba(255,255,255,0.8)" }}>
             <ChangeLine light value={pct?.vsPrevious.leads} vs={vs} extra={prev ? `${prev.leads} lead${prev.leads === 1 ? "" : "s"}` : undefined} />
@@ -66,7 +66,7 @@ export function DashboardMobile({
 
         <div style={{ display: "flex", gap: 12 }}>
           <Mini label="Bookings" value={mix?.bookings ?? "—"} sub={<ChangeLine value={pct?.vsPrevious.bookings} vs={vs} />} />
-          <Mini label="Lead → booked" value={conversion ? `${conversion.peoplePct}%` : "—"} sub={`${conversion?.uniqueBooked ?? "—"} of ${conversion?.uniqueLeadPeople ?? "—"} people`} />
+          <Mini label="Lead → booked" value={conversion ? `${conversion.peoplePct}%` : "—"} sub={`${conversion?.uniqueBooked ?? "—"} of ${conversion?.uniqueLeadPeople ?? "—"} who emailed ${periodScope(days)}`} />
         </div>
 
         <div style={{ background: "var(--background-2)", borderRadius: 16, boxShadow: "inset 0 0 0 1px var(--black-4)", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>

@@ -22,6 +22,8 @@ import {
   formatUkPhone,
   leadDisplayName,
   listPages,
+  periodKpiLabel,
+  periodScope,
   periodTitle,
   periodVsLabel,
   whatsappHref,
@@ -81,12 +83,12 @@ export function DashboardDesktop({
         <>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
         <Hero
-          label="Leads this week"
+          label={periodKpiLabel("Leads", days)}
           value={mix?.leads ?? "—"}
           sub={<ChangeLine value={pct?.vsPrevious.leads} vs={vs} extra={prev ? `${prev.leads} lead${prev.leads === 1 ? "" : "s"}` : undefined} />}
         />
         <Hero
-          label="Bookings this week"
+          label={periodKpiLabel("Bookings", days)}
           value={mix?.bookings ?? "—"}
           sub={<ChangeLine value={pct?.vsPrevious.bookings} vs={vs} extra={prev ? `${prev.bookings} created` : undefined} />}
         />
@@ -94,7 +96,7 @@ export function DashboardDesktop({
           invert
           label="Lead → booked"
           value={conversion ? `${conversion.peoplePct}%` : "—"}
-          sub={`${conversion?.uniqueBooked ?? "—"} of ${conversion?.uniqueLeadPeople ?? "—"} unique people who emailed`}
+          sub={`${conversion?.uniqueBooked ?? "—"} of ${conversion?.uniqueLeadPeople ?? "—"} unique people who emailed ${periodScope(days)}`}
         />
       </div>
 
@@ -272,7 +274,7 @@ export function DashboardDesktop({
       </div>
 
       <div style={{ background: "var(--background-2)", borderRadius: 16, boxShadow: "inset 0 0 0 1px var(--black-4)", padding: 16, boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 4 }}>
-        <h2 style={{ font: "500 14px/20px Inter,sans-serif", color: "rgb(28,28,28)", margin: 0 }}>Email enquiry → booked</h2>
+        <h2 style={{ font: "500 14px/20px Inter,sans-serif", color: "rgb(28,28,28)", margin: 0 }}>Email enquiry → booked · {periodTitle(days)}</h2>
         <div style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)", textWrap: "pretty" }}>
           Same phone or email on the Customers list. This is not a proven “booked after the enquiry” timestamp — SMT does not give that.
         </div>
