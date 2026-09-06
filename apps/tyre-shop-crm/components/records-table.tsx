@@ -22,6 +22,7 @@ export function RecordsTable<T extends { smt_id: string }>({
   const [selected, setSelected] = useState<T | null>(null);
   const [events, setEvents] = useState<unknown[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const qs = new URLSearchParams();
@@ -32,12 +33,14 @@ export function RecordsTable<T extends { smt_id: string }>({
         if (k) qs.set(k, decodeURIComponent(v || ""));
       }
     }
+    setLoading(true);
     fetch(`${endpoint}?${qs}`)
       .then((r) => r.json())
       .then((data) => {
         setRows((data.bookings || data.customers || data.enquiries || data.nps || data.testimonials || []) as T[]);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoading(false));
   }, [endpoint, extraQuery, filter]);
 
   async function open(row: T) {
@@ -85,7 +88,18 @@ export function RecordsTable<T extends { smt_id: string }>({
                 ))}
               </tr>
             ))}
-            {!rows.length ? (
+            {loading ? (
+              Array.from({ length: 8 }).map((_, i) => (
+                <tr key={`sk-${i}`}>
+                  {columns.map((c) => (
+                    <td key={c.key}>
+                      <span className="rs-skel" style={{ display: "block", height: 14, width: i % 2 ? "56%" : "78%", borderRadius: 6 }} />
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : null}
+            {!loading && !rows.length ? (
               <tr>
                 <td colSpan={columns.length} className="hint" style={{ padding: 20 }}>
                   No rows yet. Run Scrape now or npm run backfill.

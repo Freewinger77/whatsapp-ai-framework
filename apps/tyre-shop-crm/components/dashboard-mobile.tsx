@@ -5,10 +5,12 @@ import { BrandLogo } from "./brand-logo";
 import { ChangeLine, Chip, CountPill, Dot, RsLineChart, WhatsAppButton } from "./rs";
 import { formatCallbackWhen, formatUkPhone, leadDisplayName, periodTitle, periodVsLabel, whatsappHref } from "@/lib/display";
 import { callbacks, chartLabels, npsLabel, type AnalyticsData, type ConversionData, type EnquiryRow } from "@/lib/dashboard-model";
+import { DashboardMobileSkeleton } from "./skeleton";
 
 export function DashboardMobile({
   days,
   setDays,
+  loading,
   data,
   enquiries,
   conversion,
@@ -16,6 +18,7 @@ export function DashboardMobile({
 }: {
   days: number;
   setDays: (n: number) => void;
+  loading?: boolean;
   data: AnalyticsData | null;
   enquiries: EnquiryRow[];
   conversion: ConversionData | null;
@@ -49,6 +52,10 @@ export function DashboardMobile({
           <Chip height={36} on={days === 90} onClick={() => setDays(90)}>90 days</Chip>
         </div>
 
+        {loading ? (
+          <DashboardMobileSkeleton />
+        ) : (
+          <>
         <div style={{ background: "var(--surface-inverse)", borderRadius: 20, padding: 20, display: "flex", flexDirection: "column", gap: 2 }}>
           <span style={{ font: "500 14px/20px Inter,sans-serif", color: "rgba(255,255,255,0.8)" }}>Leads this week</span>
           <span style={{ font: "600 44px/52px Inter,sans-serif", letterSpacing: "-0.02em", color: "rgb(255,255,255)" }}>{mix?.leads ?? "—"}</span>
@@ -114,6 +121,8 @@ export function DashboardMobile({
         >
           See the full dashboard
         </Link>
+          </>
+        )}
       </div>
     </div>
   );

@@ -29,15 +29,11 @@ export default function LoginPage() {
   return (
     <div className="gate">
       <section className="gate-brand">
-        <BrandLogo size="login" subtitle="SMT CRM" />
+        <BrandLogo size="login" />
         <div className="gate-copy">
           <h1>
             Every lead and every booking for the <em>tyre fitting</em> shop, in one place.
           </h1>
-          <p className="gate-bullet">
-            <i />
-            Tyres 4 U · Sell More Tyres
-          </p>
         </div>
         <p className="gate-foot">Internal tool. Authorised users only.</p>
       </section>

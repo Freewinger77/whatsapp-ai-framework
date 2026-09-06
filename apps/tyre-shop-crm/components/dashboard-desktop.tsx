@@ -27,10 +27,12 @@ import {
   whatsappHref,
 } from "@/lib/display";
 import { callbacks, chartLabels, npsLabel, recentLeads, type AnalyticsData, type ConversionData, type EnquiryRow, type EventRow } from "@/lib/dashboard-model";
+import { DashboardDesktopSkeleton } from "./skeleton";
 
 export function DashboardDesktop({
   days,
   setDays,
+  loading,
   data,
   enquiries,
   events,
@@ -38,6 +40,7 @@ export function DashboardDesktop({
 }: {
   days: number;
   setDays: (n: number) => void;
+  loading?: boolean;
   data: AnalyticsData | null;
   enquiries: EnquiryRow[];
   events: EventRow[];
@@ -72,6 +75,10 @@ export function DashboardDesktop({
         </div>
       </div>
 
+      {loading ? (
+        <DashboardDesktopSkeleton />
+      ) : (
+        <>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
         <Hero
           label="Leads this week"
@@ -375,6 +382,8 @@ export function DashboardDesktop({
           <RecRow label="Testimonials" value={`${kpi?.testimonials ?? 0} quotes`} />
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

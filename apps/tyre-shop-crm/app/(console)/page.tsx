@@ -13,9 +13,11 @@ export default function DashboardPage() {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [conversion, setConversion] = useState<ConversionData | null>(null);
   const [pollClock, setPollClock] = useState("—");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
     async function load() {
       try {
         const [a, e, v, c, s] = await Promise.all([
@@ -34,6 +36,8 @@ export default function DashboardPage() {
         setPollClock(at ? formatPollClock(at) : "—");
       } catch {
         /* keep last good frame */
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }
     void load();
@@ -45,10 +49,10 @@ export default function DashboardPage() {
   return (
     <>
       <div className="desk-only">
-        <DashboardDesktop days={days} setDays={setDays} data={data} enquiries={enquiries} events={events} conversion={conversion} />
+        <DashboardDesktop days={days} setDays={setDays} loading={loading} data={data} enquiries={enquiries} events={events} conversion={conversion} />
       </div>
       <div className="mob-only flush-mob" style={{ height: "100%" }}>
-        <DashboardMobile days={days} setDays={setDays} data={data} enquiries={enquiries} conversion={conversion} pollClock={pollClock} />
+        <DashboardMobile days={days} setDays={setDays} loading={loading} data={data} enquiries={enquiries} conversion={conversion} pollClock={pollClock} />
       </div>
     </>
   );
