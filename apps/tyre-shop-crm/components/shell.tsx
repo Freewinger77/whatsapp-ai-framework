@@ -14,7 +14,6 @@ import {
   IconMore,
   IconNps,
   IconScraper,
-  IconTestimonials,
 } from "./icons";
 import { BrandLogo } from "./brand-logo";
 import { CountPill } from "./rs";
@@ -27,7 +26,6 @@ const NAV = [
   { href: "/enquiries", label: "Leads", icon: <IconLeads />, badge: true },
   { href: "/conversion", label: "Lead → booked", icon: <IconConvert /> },
   { href: "/nps", label: "NPS", icon: <span style={{ width: 20, height: 20, display: "grid", placeItems: "center", flexShrink: 0 }}><IconNps /></span> },
-  { href: "/testimonials", label: "Testimonials", icon: <IconTestimonials /> },
   { href: "/activity", label: "Activity", icon: <span style={{ width: 20, height: 20, display: "grid", placeItems: "center", flexShrink: 0 }}><IconActivity /></span> },
   { href: "/scraper", label: "Scraper", icon: <IconScraper /> },
   { href: "/docs", label: "API docs", icon: <IconDocs /> },
@@ -40,7 +38,6 @@ const TITLES: Record<string, string> = {
   "/enquiries": "Leads",
   "/conversion": "Lead → booked",
   "/nps": "NPS",
-  "/testimonials": "Testimonials",
   "/activity": "Activity",
   "/scraper": "Scraper",
   "/docs": "API docs",

@@ -14,6 +14,7 @@
     "import:bookings": "tsx --env-file=.env.local scripts/import-bookings.ts"
   },
   "dependencies": {
+    "@lottiefiles/dotlottie-react": "^0.19.16",
     "@supabase/supabase-js": "^2.115.0",
     "next": "15.5.9",
     "react": "19.1.0",

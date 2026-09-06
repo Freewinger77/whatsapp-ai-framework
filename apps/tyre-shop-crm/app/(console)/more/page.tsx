@@ -8,14 +8,12 @@ import {
   IconDocs,
   IconNps,
   IconScraper,
-  IconTestimonials,
 } from "@/components/icons";
 
 const ITEMS = [
   { href: "/customers", label: "Customers", icon: <IconCustomers size={22} /> },
   { href: "/conversion", label: "Lead → booked", icon: <IconConvert size={22} /> },
   { href: "/nps", label: "NPS", icon: <span style={{ width: 22, height: 22, display: "grid", placeItems: "center" }}><IconNps size={17} /></span> },
-  { href: "/testimonials", label: "Testimonials", icon: <IconTestimonials size={22} /> },
   { href: "/activity", label: "Activity", icon: <span style={{ width: 22, height: 22, display: "grid", placeItems: "center" }}><IconActivity size={17} /></span> },
   { href: "/scraper", label: "Scraper", icon: <IconScraper size={22} /> },
   { href: "/docs", label: "API docs", icon: <IconDocs size={22} /> },

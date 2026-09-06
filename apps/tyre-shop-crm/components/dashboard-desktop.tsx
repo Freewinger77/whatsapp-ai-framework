@@ -379,7 +379,6 @@ export function DashboardDesktop({
           <RecRow label="Enquiries" value={`${listPages(kpi?.emailLeads ?? 0, 20)} pages · ${kpi?.emailLeads ?? 0} View ids`} />
           <RecRow label="NPS rows" value={`${listPages(kpi?.nps ?? 0, 10)} pages · ${kpi?.nps ?? 0} scores · SMT headline ${data?.smtHeadlineNps ?? kpi?.npsHeadline ?? "—"}%`} />
           <RecRow label="Bookings export" value={`${kpi?.bookings ?? 0} orders · ${kpi?.fitted ?? 0} fitted · ${kpi?.abandoned ?? 0} abandoned · ${kpi?.cancelled ?? 0} cancelled`} />
-          <RecRow label="Testimonials" value={`${kpi?.testimonials ?? 0} quotes`} />
         </div>
       </div>
         </>

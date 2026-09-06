@@ -34,7 +34,7 @@ export default function DocsPage() {
         {[
           ["GET", "/api/health", "Liveness + config flags.", JSON.stringify(health, null, 2)],
           ["GET", "/api/status", "SMT ping, counts, latest poll.", ""],
-          ["GET", "/api/customers?format=csv", "Customers. Also /enquiries /nps /testimonials.", ""],
+          ["GET", "/api/customers?format=csv", "Customers. Also /enquiries /nps.", ""],
           ["GET", "/api/analytics?days=7", "Filled London-day series: leads, email, phone, customers, in/out hours, donut mix, % vs previous period.", ""],
           ["GET", "/api/bookings", "SMT bookings export, unique OrderID. Filters: fitted / new / abandoned / cancelled.", ""],
           ["GET", "/api/conversion", "Email leads matched to booked customers by phone or email.", ""],
