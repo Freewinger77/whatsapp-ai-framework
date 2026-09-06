@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { TyreLoader } from "./tyre-loader";
 
 export function Bone({
   width = "100%",
@@ -125,7 +126,10 @@ export function DashboardDesktopSkeleton() {
 
 export function DashboardMobileSkeleton() {
   return (
-    <div className="rs-skel-wrap">
+    <div className="rs-skel-wrap rs-card-load">
+      <div className="rs-card-load-tyre">
+        <TyreLoader />
+      </div>
       <div className="rs-skel-stack">
       <SkCard basis={300} pad={20} invert>
         <Bone width={100} height={14} light />

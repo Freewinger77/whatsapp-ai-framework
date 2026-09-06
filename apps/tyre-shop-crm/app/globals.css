@@ -193,6 +193,23 @@ td.phone { font-weight: 600; }
   place-items: center;
   background: rgba(0, 0, 0, 0.25);
 }
+.rs-card-load {
+  position: relative;
+}
+.rs-card-load .rs-skel-stack {
+  opacity: 0.45;
+}
+.rs-card-load-tyre {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 2;
+  pointer-events: none;
+}
+@media (max-width: 860px) {
+  .rs-page-load { display: none !important; }
+}
 
 .gate {
   min-height: 100vh;

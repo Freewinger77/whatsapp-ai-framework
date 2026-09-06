@@ -56,7 +56,7 @@ export default function DashboardPage() {
         <DashboardDesktop days={days} setDays={setDays} loading={firstPaint} data={data} enquiries={enquiries} events={events} conversion={conversion} />
       </div>
       <div className="mob-only flush-mob" style={{ height: "100%" }}>
-        <DashboardMobile days={days} setDays={setDays} loading={firstPaint} data={data} enquiries={enquiries} conversion={conversion} pollClock={pollClock} />
+        <DashboardMobile days={days} setDays={setDays} loading={loading} data={data} enquiries={enquiries} conversion={conversion} pollClock={pollClock} />
       </div>
     </>
   );

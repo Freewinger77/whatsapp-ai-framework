@@ -11,7 +11,6 @@ import {
   IconCustomers,
   IconDocs,
   IconLeads,
-  IconMore,
   IconNps,
   IconScraper,
 } from "./icons";
@@ -41,19 +40,12 @@ const TITLES: Record<string, string> = {
   "/activity": "Activity",
   "/scraper": "Scraper",
   "/docs": "API docs",
-  "/more": "More",
 };
 
 const MOBILE_TABS = [
   { href: "/", label: "Overview", icon: (size: number) => <IconChart size={size} />, match: (p: string) => p === "/" },
   { href: "/enquiries", label: "Leads", icon: (size: number) => <IconLeads size={size} />, match: (p: string) => p === "/enquiries" },
   { href: "/bookings", label: "Bookings", icon: (size: number) => <IconBookings size={size} />, match: (p: string) => p === "/bookings" },
-  {
-    href: "/more",
-    label: "More",
-    icon: (size: number) => <IconMore size={size} />,
-    match: (p: string) => !["/", "/enquiries", "/bookings"].includes(p),
-  },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {
