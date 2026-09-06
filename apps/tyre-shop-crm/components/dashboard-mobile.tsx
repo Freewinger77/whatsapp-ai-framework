@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { BrandLogo } from "./brand-logo";
 import { ChangeLine, Chip, CountPill, Dot, RsLineChart, WhatsAppButton } from "./rs";
 import { formatCallbackWhen, formatUkPhone, leadDisplayName, periodTitle, periodVsLabel, whatsappHref } from "@/lib/display";
 import { callbacks, chartLabels, npsLabel, type AnalyticsData, type ConversionData, type EnquiryRow } from "@/lib/dashboard-model";
@@ -33,7 +34,7 @@ export function DashboardMobile({
   return (
     <div style={{ height: "100%", boxSizing: "border-box", padding: 0, display: "flex", flexDirection: "column", background: "rgb(255,255,255)" }}>
       <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "8px 16px 12px", borderBottom: "1px solid var(--black-4)" }}>
-        <div style={{ width: 28, height: 28, borderRadius: 80, flexShrink: 0, background: "url(/rapidscreen-mark.png) center / cover no-repeat" }} />
+        <BrandLogo height={28} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ font: "600 16px/20px Inter,sans-serif" }}>{periodTitle(days)}</div>
           <div style={{ font: "400 10px/14px Inter,sans-serif", color: "var(--black-40)" }}>Tyres 4 U · poller live · {pollClock}</div>
@@ -61,6 +62,21 @@ export function DashboardMobile({
           <Mini label="Lead → booked" value={conversion ? `${conversion.peoplePct}%` : "—"} sub={`${conversion?.uniqueBooked ?? "—"} of ${conversion?.uniqueLeadPeople ?? "—"} people`} />
         </div>
 
+        <div style={{ background: "var(--background-2)", borderRadius: 16, boxShadow: "inset 0 0 0 1px var(--black-4)", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+            <span style={{ font: "500 14px/20px Inter,sans-serif" }}>After hours / store hours</span>
+            <span style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>{mix?.leads ?? 0} leads</span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, font: "400 12px/16px Inter,sans-serif", color: "var(--black-80)" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Dot color="rgb(28,28,30)" />Store hours {mix?.inHours ?? 0}</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Dot color="var(--logo-2)" />After hours {mix?.outHours ?? 0}</span>
+          </div>
+          <RsLineChart series={[series.map((d) => d.inHours), series.map((d) => d.outHours)]} colors={["rgb(28,28,30)", "rgb(79,80,127)"]} labels={labels} height={120} labelSize={10} />
+          <span style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>
+            {pct?.afterHours != null ? `${pct.afterHours}% arrive outside store hours.` : "No leads in this period."}
+          </span>
+        </div>
+
         <Link
           href="/enquiries"
           style={{
@@ -84,21 +100,6 @@ export function DashboardMobile({
           </span>
           <CountPill n={callList.length} height={24} />
         </Link>
-
-        <div style={{ background: "var(--background-2)", borderRadius: 16, boxShadow: "inset 0 0 0 1px var(--black-4)", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-            <span style={{ font: "500 14px/20px Inter,sans-serif" }}>After hours / store hours</span>
-            <span style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>{mix?.leads ?? 0} leads</span>
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, font: "400 12px/16px Inter,sans-serif", color: "var(--black-80)" }}>
-            <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Dot color="rgb(28,28,30)" />Store hours {mix?.inHours ?? 0}</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Dot color="var(--logo-2)" />After hours {mix?.outHours ?? 0}</span>
-          </div>
-          <RsLineChart series={[series.map((d) => d.inHours), series.map((d) => d.outHours)]} colors={["rgb(28,28,30)", "rgb(79,80,127)"]} labels={labels} height={120} labelSize={10} />
-          <span style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>
-            {pct?.afterHours != null ? `${pct.afterHours}% arrive outside store hours.` : "No leads in this period."}
-          </span>
-        </div>
 
         <div style={{ display: "flex", gap: 12 }}>
           <Mini label="Email leads" value={kpi?.emailLeads ?? "—"} />

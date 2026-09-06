@@ -16,6 +16,7 @@ import {
   IconScraper,
   IconTestimonials,
 } from "./icons";
+import { BrandLogo } from "./brand-logo";
 import { CountPill } from "./rs";
 import { formatPollTime } from "@/lib/display";
 
@@ -117,11 +118,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
             background: "rgb(255,255,255)",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 12, height: 52, padding: "12px 8px", boxSizing: "border-box" }}>
-            <div style={{ width: 28, height: 28, borderRadius: 80, flexShrink: 0, background: "url(/rapidscreen-mark.png) center / cover no-repeat" }} />
-            <span style={{ font: "400 14px/20px Inter,sans-serif", fontStyle: "italic", color: "var(--text-sidebar)", whiteSpace: "nowrap" }}>
-              TYRES4U.WASUP
-            </span>
+          <div style={{ display: "flex", alignItems: "center", minHeight: 52, padding: "10px 4px 14px", boxSizing: "border-box" }}>
+            <BrandLogo height={32} />
           </div>
           <nav style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, paddingTop: 8 }}>
             {NAV.map((item) => {
