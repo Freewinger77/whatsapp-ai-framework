@@ -198,7 +198,7 @@ export function DashboardDesktop({
               Leads that came in outside store hours, so nobody answered the phone. Oldest at the top.
             </div>
             <div style={{ display: "flex", flexDirection: "column", marginTop: 8 }}>
-              <div style={{ ...callbackGrid, minHeight: 32, padding: "4px 0" }}>
+              <div style={{ ...callbackGrid, height: 32 }}>
                 <span style={callbackHead}>Name</span>
                 <span style={callbackHead}>Phone</span>
                 <span style={callbackHead}>Received</span>
@@ -216,7 +216,7 @@ export function DashboardDesktop({
                     <div style={{ ...callbackCell, display: "flex", alignItems: "center", gap: 6, color: "var(--black-80)", whiteSpace: "nowrap" }}>
                       <Dot color="var(--logo-2)" />After hours
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
                       <WhatsAppButton href={whatsappHref(row.phone)} />
                     </div>
                   </div>
@@ -468,8 +468,8 @@ const callbackGrid: CSSProperties = {
   gridTemplateColumns: "minmax(140px, 1.4fr) 148px 158px 118px 150px",
   alignItems: "center",
   columnGap: 16,
-  minHeight: 48,
-  padding: "8px 0",
+  height: 52,
+  padding: 0,
   borderTop: "1px solid var(--black-4)",
   boxSizing: "border-box",
 };
@@ -477,6 +477,9 @@ const callbackGrid: CSSProperties = {
 const callbackHead: CSSProperties = {
   font: "500 12px/16px Inter,sans-serif",
   color: "var(--black-40)",
+  display: "flex",
+  alignItems: "center",
+  height: "100%",
 };
 
 const callbackCell: CSSProperties = {
@@ -484,6 +487,10 @@ const callbackCell: CSSProperties = {
   minWidth: 0,
   overflow: "hidden",
   textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  display: "flex",
+  alignItems: "center",
+  height: "100%",
 };
 
 function RecRow({ label, value }: { label: string; value: string }) {

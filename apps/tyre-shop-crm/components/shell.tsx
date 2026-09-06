@@ -119,7 +119,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", minHeight: 52, padding: "10px 4px 14px", boxSizing: "border-box" }}>
-            <BrandLogo height={32} />
+            <BrandLogo height={36} />
           </div>
           <nav style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, paddingTop: 8 }}>
             {NAV.map((item) => {
