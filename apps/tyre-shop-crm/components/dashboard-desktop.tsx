@@ -59,7 +59,7 @@ export function DashboardDesktop({
   const recent = recentLeads(enquiries, 5);
   const after = pct?.afterHours;
   const range = data ? formatDayRange(data.from, data.to) : "";
-  const [callbacksOpen, setCallbacksOpen] = useState(false);
+  const [callbacksOpen, setCallbacksOpen] = useState(true);
 
   return (
     <div style={{ flex: 1, padding: "25px 23px 46px 33px", boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 28 }}>

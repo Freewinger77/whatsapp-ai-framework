@@ -31,7 +31,8 @@ export function DashboardMobile({
   const series = data?.series ?? [];
   const labels = chartLabels(series);
   const vs = periodVsLabel(days);
-  const callList = callbacks(enquiries, data?.from, data?.to);
+  const inPeriod = callbacks(enquiries, data?.from, data?.to);
+  const callList = inPeriod.length ? inPeriod : latestFirst(callbacks(enquiries)).slice(0, 8);
   const oldest = callList[0];
 
   return (
@@ -70,14 +71,11 @@ export function DashboardMobile({
         </div>
 
         <div style={{ borderRadius: 16, boxShadow: "inset 0 0 0 1px var(--black-10)", overflow: "hidden" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px" }}>
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ display: "block", font: "500 14px/20px Inter,sans-serif" }}>Needs calling back</span>
-              <span style={{ display: "block", font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>
-                After hours first{oldest ? ` · oldest ${formatCallbackWhen(oldest.enquired_at)}` : ""}
-              </span>
+          <div style={{ padding: "12px 16px" }}>
+            <span style={{ display: "block", font: "500 14px/20px Inter,sans-serif" }}>Needs calling back · {callList.length}</span>
+            <span style={{ display: "block", font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>
+              After-hours leads to chase{oldest ? ` · oldest ${formatCallbackWhen(oldest.enquired_at)}` : ""}
             </span>
-            <CountPill n={callList.length} height={24} />
           </div>
           {callList.length ? callList.map((row) => {
             const name = leadDisplayName(row.name);
