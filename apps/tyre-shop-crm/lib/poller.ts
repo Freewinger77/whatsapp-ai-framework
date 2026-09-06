@@ -88,7 +88,7 @@ export async function tick(opts: TickOptions = {}, client?: SmtClient): Promise<
     kind: "customers" | "enquiries" | "nps" | "testimonials",
     event: "customer.created" | "enquiry.created" | "nps.created" | "testimonial.created",
     table: string,
-    record: { id: string; name: string; phone: string | null; at: string | null },
+    record: { id: string; name: string; phone: string | null; at: string | null; extra?: Record<string, unknown> },
     isNew: boolean,
   ) => {
     if (!isNew) return;
@@ -152,7 +152,21 @@ export async function tick(opts: TickOptions = {}, client?: SmtClient): Promise<
             "enquiries",
             "enquiry.created",
             "smt_enquiries",
-            { id: row.smtId, name: row.name, phone: row.phoneE164 || row.phone, at: row.enquiredAt },
+            {
+              id: row.smtId,
+              name: row.name,
+              phone: row.phoneE164 || row.phone,
+              at: row.enquiredAt,
+              extra: {
+                email: row.email,
+                channel: row.channel,
+                source: row.source,
+                status: row.status,
+                message: row.message,
+                notes: row.notes,
+                tags: row.tags,
+              },
+            },
             isNew,
           );
           return isNew ? "new" : "refresh";
@@ -220,7 +234,21 @@ export async function tick(opts: TickOptions = {}, client?: SmtClient): Promise<
               "enquiries",
               "enquiry.created",
               "smt_enquiries",
-              { id: row.smtId, name: row.name, phone: row.phoneE164 || row.phone, at: row.enquiredAt },
+              {
+                id: row.smtId,
+                name: row.name,
+                phone: row.phoneE164 || row.phone,
+                at: row.enquiredAt,
+                extra: {
+                  email: row.email,
+                  channel: row.channel,
+                  source: row.source,
+                  status: row.status,
+                  message: row.message,
+                  notes: row.notes,
+                  tags: row.tags,
+                },
+              },
               true,
             );
           } else refreshed += 1;

@@ -29,6 +29,18 @@ export async function POST(_request: Request, { params }: { params: Promise<{ ty
       name: row.name || id,
       phone: row.phone_e164 || row.phone,
       at: row.enquired_at || row.scored_at || row.published_at || row.first_seen_at,
+      extra:
+        spec.type === "enquiry"
+          ? {
+              email: row.email,
+              channel: row.channel,
+              source: row.source,
+              status: row.status,
+              message: row.message,
+              notes: row.notes,
+              tags: row.tags,
+            }
+          : undefined,
     },
     { force: true },
   );
