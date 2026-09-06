@@ -69,21 +69,6 @@ export function DashboardMobile({
           <Mini label="Lead → booked" value={conversion ? `${conversion.peoplePct}%` : "—"} sub={`${conversion?.uniqueBooked ?? "—"} of ${conversion?.uniqueLeadPeople ?? "—"} who emailed ${periodScope(days)}`} />
         </div>
 
-        <div style={{ background: "var(--background-2)", borderRadius: 16, boxShadow: "inset 0 0 0 1px var(--black-4)", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-            <span style={{ font: "500 14px/20px Inter,sans-serif" }}>After hours / store hours</span>
-            <span style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>{mix?.leads ?? 0} leads</span>
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, font: "400 12px/16px Inter,sans-serif", color: "var(--black-80)" }}>
-            <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Dot color="rgb(28,28,30)" />Store hours {mix?.inHours ?? 0}</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Dot color="var(--logo-2)" />After hours {mix?.outHours ?? 0}</span>
-          </div>
-          <RsLineChart series={[series.map((d) => d.inHours), series.map((d) => d.outHours)]} colors={["rgb(28,28,30)", "rgb(79,80,127)"]} labels={labels} height={120} labelSize={10} />
-          <span style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>
-            {pct?.afterHours != null ? `${pct.afterHours}% arrive outside store hours.` : "No leads in this period."}
-          </span>
-        </div>
-
         <div style={{ borderRadius: 16, boxShadow: "inset 0 0 0 1px var(--black-10)", overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px" }}>
             <span style={{ flex: 1, minWidth: 0 }}>
@@ -117,6 +102,21 @@ export function DashboardMobile({
               No after-hours leads in this period.
             </div>
           )}
+        </div>
+
+        <div style={{ background: "var(--background-2)", borderRadius: 16, boxShadow: "inset 0 0 0 1px var(--black-4)", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+            <span style={{ font: "500 14px/20px Inter,sans-serif" }}>After hours / store hours</span>
+            <span style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>{mix?.leads ?? 0} leads</span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, font: "400 12px/16px Inter,sans-serif", color: "var(--black-80)" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Dot color="rgb(28,28,30)" />Store hours {mix?.inHours ?? 0}</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Dot color="var(--logo-2)" />After hours {mix?.outHours ?? 0}</span>
+          </div>
+          <RsLineChart series={[series.map((d) => d.inHours), series.map((d) => d.outHours)]} colors={["rgb(28,28,30)", "rgb(79,80,127)"]} labels={labels} height={120} labelSize={10} />
+          <span style={{ font: "400 12px/16px Inter,sans-serif", color: "var(--black-40)" }}>
+            {pct?.afterHours != null ? `${pct.afterHours}% arrive outside store hours.` : "No leads in this period."}
+          </span>
         </div>
 
         <div style={{ display: "flex", gap: 12 }}>
