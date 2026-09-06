@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { DashboardDesktop } from "@/components/dashboard-desktop";
 import { DashboardMobile } from "@/components/dashboard-mobile";
+import { PageLoader } from "@/components/tyre-loader";
 import { formatPollClock } from "@/lib/display";
 import type { AnalyticsData, ConversionData, EnquiryRow, EventRow } from "@/lib/dashboard-model";
 
@@ -46,13 +47,16 @@ export default function DashboardPage() {
     };
   }, [days]);
 
+  const firstPaint = loading && !data;
+
   return (
     <>
+      {loading ? <PageLoader /> : null}
       <div className="desk-only">
-        <DashboardDesktop days={days} setDays={setDays} loading={loading} data={data} enquiries={enquiries} events={events} conversion={conversion} />
+        <DashboardDesktop days={days} setDays={setDays} loading={firstPaint} data={data} enquiries={enquiries} events={events} conversion={conversion} />
       </div>
       <div className="mob-only flush-mob" style={{ height: "100%" }}>
-        <DashboardMobile days={days} setDays={setDays} loading={loading} data={data} enquiries={enquiries} conversion={conversion} pollClock={pollClock} />
+        <DashboardMobile days={days} setDays={setDays} loading={firstPaint} data={data} enquiries={enquiries} conversion={conversion} pollClock={pollClock} />
       </div>
     </>
   );
